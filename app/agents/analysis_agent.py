@@ -1,11 +1,12 @@
+import asyncio
 import json
-import re
+import logging
 import time
 from sqlalchemy.orm import Session
 from app.agents.base import BaseAgent
 from app.database import crud
 from app.services.ollama_client import OllamaClient
-from app.schemas.verdict import AnalysisOutput
+from app.schemas.verdict import AnalysisOutput, BANTScores
 from app.config import settings
 
 
@@ -47,6 +48,7 @@ class AnalysisAgent(BaseAgent):
 
     def __init__(self):
         self._ollama = OllamaClient()
+        self.logger = logging.getLogger(__name__)
 
     def run(self, db: Session, lead_id: str, input_data: dict) -> dict:
         profile_json = json.dumps(input_data, indent=2)
@@ -60,7 +62,30 @@ class AnalysisAgent(BaseAgent):
 
         raw_response = self._call_with_retry(prompt)
         parsed = self._parse_json(raw_response)
-        validated = AnalysisOutput(**parsed)
+        
+        # Ensure required fields are present with defaults
+        parsed.setdefault("bant_scores", {
+            "budget": "Unknown",
+            "authority": "Unknown", 
+            "need": "Unknown",
+            "timeline": "Unknown"
+        })
+        parsed.setdefault("icp_match", False)
+        parsed.setdefault("reasoning", "Analysis completed")
+        
+        try:
+            validated = AnalysisOutput(**parsed)
+        except Exception as e:
+            self.logger.error(f"Analysis validation failed for lead {lead_id}: {e}")
+            self.logger.error(f"Raw LLM response: {raw_response}")
+            self.logger.error(f"Parsed data: {parsed}")
+            # Create a fallback response
+            validated = AnalysisOutput(
+                verdict=parsed.get("verdict", "Cold"),
+                reasoning=parsed.get("reasoning", "Analysis failed - using defaults"),
+                bant_scores=BANTScores(**parsed.get("bant_scores", {})),
+                icp_match=parsed.get("icp_match", False)
+            )
 
         verdict_data = {
             "analysis_verdict": validated.verdict,
@@ -80,18 +105,16 @@ class AnalysisAgent(BaseAgent):
         last_error = None
         for attempt in range(max_attempts):
             try:
-                return self._ollama.generate(prompt)
+                # Try async call if in async context, fallback to sync
+                try:
+                    loop = asyncio.get_running_loop()
+                    return loop.run_until_complete(self._ollama.generate_async(prompt))
+                except RuntimeError:
+                    # Not in async context, use sync method
+                    return self._ollama.generate(prompt)
             except Exception as e:
                 last_error = e
                 if attempt < max_attempts - 1:
                     time.sleep(2 ** attempt)
         raise last_error
 
-    def _parse_json(self, text: str) -> dict:
-        # Strip markdown code fences if present
-        text = re.sub(r"```(?:json)?\s*", "", text).strip()
-        # Find first JSON object in the response
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if not match:
-            raise ValueError(f"No JSON object found in LLM response: {text[:200]}")
-        return json.loads(match.group())

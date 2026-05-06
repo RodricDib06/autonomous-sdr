@@ -1,3 +1,5 @@
+import asyncio
+import aiohttp
 import requests
 from app.config import settings
 
@@ -12,6 +14,7 @@ class OllamaClient:
         self.model = model or settings.OLLAMA_MODEL
 
     def generate(self, prompt: str, model: str = None) -> str:
+        """Synchronous generate method for backward compatibility"""
         url = f"{self.base_url}/api/generate"
         payload = {
             "model": model or self.model,
@@ -26,3 +29,25 @@ class OllamaClient:
             raise OllamaConnectionError(f"Cannot reach Ollama at {self.base_url}: {e}") from e
         except requests.Timeout as e:
             raise OllamaConnectionError(f"Ollama request timed out: {e}") from e
+
+    async def generate_async(self, prompt: str, model: str = None) -> str:
+        """Async generate method"""
+        url = f"{self.base_url}/api/generate"
+        payload = {
+            "model": model or self.model,
+            "prompt": prompt,
+            "stream": False,
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=120)) as response:
+                    response.raise_for_status()
+                    result = await response.json()
+                    return result["response"]
+        except aiohttp.ClientError as e:
+            raise OllamaConnectionError(f"Cannot reach Ollama at {self.base_url}: {e}") from e
+
+    async def generate_batch(self, prompts: list[str], model: str = None) -> list[str]:
+        """Generate responses for multiple prompts concurrently"""
+        tasks = [self.generate_async(prompt, model) for prompt in prompts]
+        return await asyncio.gather(*tasks, return_exceptions=True)

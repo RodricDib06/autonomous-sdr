@@ -24,80 +24,407 @@ Lead Form → FastAPI Webhook → Redis Queue → Worker
 | Database | PostgreSQL 18 |
 | ORM | SQLAlchemy 2 |
 | Validation | Pydantic v2 |
+| Testing | pytest |
 
 ## Prerequisites
 
-- Python 3.11+
-- Homebrew (macOS)
-- Ollama installed and running
+- **Python 3.11+** - Download from python.org
+- **Homebrew** (macOS) - `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
+- **Ollama** - Download from ollama.ai
+- **Redis** - For job queue
+- **PostgreSQL 18** - For data persistence
 
-## Setup
+## Quick Start (Automated Setup)
 
 ```bash
-# 1. Install and start infrastructure
-brew install redis && brew services start redis
-brew services start postgresql@18
-psql -U <your-user> -p 5433 postgres -c "CREATE USER sdr_user WITH PASSWORD 'sdrpassword';"
-psql -U <your-user> -p 5433 postgres -c "CREATE DATABASE sdr_db OWNER sdr_user;"
+# One command to setup everything and choose what to run
+bash scripts/setup_and_run.sh
+```
 
-# 2. Pull Ollama model
+This script:
+✓ Checks Python version
+✓ Creates virtual environment
+✓ Installs dependencies
+✓ Validates all services (Redis, PostgreSQL, Ollama)
+✓ Initializes database
+✓ Opens interactive menu
+
+## Manual Setup
+
+### 1. Install Infrastructure
+
+```bash
+# Install and start Redis
+brew install redis
+brew services start redis
+
+# Install and start PostgreSQL 18
+brew install postgresql@18
+brew services start postgresql@18
+
+# Verify PostgreSQL is running
+psql -U postgres -h localhost -p 5433 -c "SELECT version();"
+```
+
+### 2. Create Database and User
+
+```bash
+# Connect to PostgreSQL
+psql -U postgres -h localhost -p 5433
+
+# Inside psql, run:
+CREATE USER sdr_user WITH PASSWORD 'sdrpassword';
+CREATE DATABASE sdr_db OWNER sdr_user;
+\q
+```
+
+Or as a single command:
+```bash
+psql -U postgres -h localhost -p 5433 postgres << EOF
+CREATE USER sdr_user WITH PASSWORD 'sdrpassword';
+CREATE DATABASE sdr_db OWNER sdr_user;
+EOF
+```
+
+### 3. Install and Configure Ollama
+
+```bash
+# Install Ollama (download from ollama.ai or use brew)
+brew install ollama
+
+# Start Ollama service (in another terminal, or as background)
+ollama serve
+
+# In another terminal, pull the Mistral model
 ollama pull mistral
 
-# 3. Create virtualenv and install dependencies
-python3 -m venv venv && source venv/bin/activate
+# Verify it's working
+curl http://localhost:11434/api/tags | grep mistral
+```
+
+### 4. Setup Python Environment
+
+```bash
+# Create and activate virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
 
-# 4. Configure environment
-cp .env.example .env  # or edit .env directly
+# Initialize database (creates tables)
+python scripts/init_db.py
 ```
 
-## Daily Development Workflow
+### 5. Configure Environment Variables
 
-Terminal 1 — Worker:
+The `.env` file is already configured with defaults:
+```bash
+DATABASE_URL=postgresql://sdr_user:sdrpassword@localhost:5433/sdr_db
+REDIS_URL=redis://localhost:6379
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=mistral
+APP_ENV=development
+ICP_MIN_COMPANY_SIZE=50
+ICP_MAX_COMPANY_SIZE=500
+ICP_INDUSTRIES=SaaS,Technology,Software,FinTech,DevTools
+ICP_MIN_SENIORITY=Manager
+```
+
+If you changed any defaults, update `.env` accordingly.
+
+## Running the System
+
+### Option A: Use the Interactive Setup Script (Recommended)
+
+```bash
+bash scripts/setup_and_run.sh
+```
+
+Follow the menu to:
+- Start API server
+- Start worker
+- Run tests
+- Generate test data
+
+### Option B: Manual Terminal-by-Terminal
+
+**Terminal 1 - Background Worker** (processes leads):
 ```bash
 source venv/bin/activate
-python -m app.worker.lead_worker
+python app/worker/lead_worker.py
 ```
 
-Terminal 2 — API server:
+You should see:
+```
+INFO - Worker started. Waiting for jobs...
+```
+
+**Terminal 2 - API Server** (receives webhooks):
 ```bash
 source venv/bin/activate
-uvicorn app.main:app --reload
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Open http://localhost:8000/docs for interactive API docs.
+You should see:
+```
+INFO:     Uvicorn running on http://0.0.0.0:8000
+INFO:     AutonomousSDR ready to accept leads
+```
 
-## Demo
-
-Submit a lead:
+**Terminal 3 - Client Operations** (submit and test):
 ```bash
+source venv/bin/activate
+
+# Submit a test lead
 curl -X POST http://localhost:8000/leads \
   -H "Content-Type: application/json" \
-  -d '{"name":"Sarah Chen","email":"sarah.chen@stripe.com","company":"Stripe"}'
+  -d '{"name":"Sarah Chen","email":"sarah.chen@stripe.com","company":"Stripe","source":"web_form"}'
+
+# Response: {"id":"...","name":"Sarah Chen","email":"sarah.chen@stripe.com","company":"Stripe","status":"processing","created_at":"..."}
 ```
 
-Wait ~10 seconds, then retrieve the result:
+## Testing the Pipeline
+
+### 1. Submit a Single Lead
+
 ```bash
-curl http://localhost:8000/leads/<lead-id>
+LEAD_ID=$(curl -s -X POST http://localhost:8000/leads \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "John Smith",
+    "email": "john.smith@techstartup.io",
+    "company": "TechStartup"
+  }' | jq -r '.id')
+
+echo "Submitted lead: $LEAD_ID"
 ```
 
-Generate 100 test leads:
+### 2. Monitor Processing
+
+The worker logs will show:
+```
+[John Smith] Starting pipeline
+[John Smith] Enriched → SaaS, Senior
+[John Smith] Analysis → verdict=Hot
+[John Smith] Validated → final=Hot confidence=0.92
+[John Smith] Pipeline complete ✓
+```
+
+### 3. Retrieve Results
+
 ```bash
+# Get enrichment and verdict for the lead
+curl http://localhost:8000/leads/$LEAD_ID | jq '.enrichment, .verdict'
+```
+
+### 4. Generate Batch Test Data
+
+```bash
+# Generate and submit 100 test leads
 python scripts/generate_test_data.py
+
+# Query results
+curl http://localhost:8000/leads?limit=10 | jq '.[] | {id, name, status}'
 ```
 
-Load analytics views (for Metabase/Power BI):
+## API Endpoints
+
+### Health Check
 ```bash
-psql postgresql://sdr_user:sdrpassword@localhost:5433/sdr_db \
-  -f database/analytics_views.sql
+GET /health
 ```
+
+### Submit a Lead
+```bash
+POST /leads
+Content-Type: application/json
+
+{
+  "name": "string",
+  "email": "user@example.com",
+  "company": "string",
+  "source": "web_form|linkedin|outbound|etc"  # optional, defaults to "webhook"
+}
+```
+
+### List Leads
+```bash
+GET /leads?skip=0&limit=100
+
+# Parameters:
+# skip: pagination offset (default: 0)
+# limit: results per page (default: 100, max: 1000)
+```
+
+### Get Lead Details
+```bash
+GET /leads/{lead_id}
+
+# Returns:
+# - Lead info
+# - Enrichment data (job title, seniority, company size, industry, revenue, tech stack, confidence)
+# - Verdict (analysis result, validation, BANT scores, final verdict, confidence score)
+# - Agent logs
+```
+
+## Interactive API Documentation
+
+FastAPI automatically generates interactive docs:
+
+```bash
+# Swagger UI
+http://localhost:8000/docs
+
+# ReDoc
+http://localhost:8000/redoc
+```
+
+Click on any endpoint to:
+- Read description
+- Try it out
+- See request/response schemas
 
 ## Running Tests
 
 ```bash
 source venv/bin/activate
+
+# Run all tests
+pytest tests/ -v
+
+# Run specific test file
+pytest tests/test_enrichment.py -v
+
+# Run with coverage
+pytest tests/ --cov=app --cov-report=html
+
+# Run only fast tests (no Ollama required)
+pytest tests/test_enrichment.py tests/test_analysis_agent.py -v
+```
+
+## Architecture
+
+### Agents
+
+1. **EnrichmentAgent**
+   - Input: Email, company name
+   - Output: Job title, seniority, company size, industry, revenue, tech stack
+   - Method: Domain heuristics + database lookup
+
+2. **AnalysisAgent**
+   - Input: Enriched lead data
+   - Output: BANT scores, ICP match, verdict (Hot/Warm/Cold)
+   - Method: Mistral 7B via Ollama
+
+3. **ValidatorAgent**
+   - Input: Lead profile + analysis verdict
+   - Output: Final verdict with confidence score, consistency check
+   - Method: LLM-as-judge via Ollama
+
+### Database Schema
+
+**leads** - Core lead records
+**enrichments** - Enrichment results (1+ per lead)
+**verdicts** - Analysis and validation results (1+ per lead)
+**agent_logs** - Audit trail of agent executions
+
+### Queue & Worker
+
+- **Redis Queue**: FastAPI pushes lead IDs when received
+- **Worker**: Polls queue, processes lead through 3-agent pipeline
+- **Logging**: Structured logs to console, agent execution logged to database
+
+## Troubleshooting
+
+### "Cannot reach Ollama at http://localhost:11434"
+```bash
+# Check if Ollama is running
+curl http://localhost:11434/api/tags
+
+# If not, start it
+ollama serve
+
+# If mistral is not available, pull it
+ollama pull mistral
+```
+
+### "Redis connection error"
+```bash
+# Check Redis is running
+redis-cli ping  # Should print PONG
+
+# If not, start it
+brew services start redis
+
+# Or start manually
+redis-server
+```
+
+### "PostgreSQL connection error"
+```bash
+# Check PostgreSQL is running
+psql -U postgres -h localhost -p 5433 -c "SELECT 1"
+
+# If not, start it
+brew services start postgresql@18
+
+# Check database exists
+psql -U sdr_user -h localhost -p 5433 -d sdr_db -c "SELECT count(*) FROM leads;"
+```
+
+### "ModuleNotFoundError: No module named 'app'"
+```bash
+# Make sure you're in the project root and venv is activated
+cd ~/autonomous-sdr
+source venv/bin/activate
+python -c "import app; print('OK')"
+```
+
+### Tests failing with "database is locked"
+```bash
+# Tests use in-memory SQLite by default
+# If you see lock errors, rebuild environment
+rm -rf .pytest_cache
 pytest tests/ -v
 ```
+
+## Daily Workflow Tips
+
+1. **Keep three terminals open**:
+   - Worker (python app/worker/lead_worker.py)
+   - API (uvicorn app.main:app --reload)
+   - Tests/client (pytest or curl)
+
+2. **Monitor logs**:
+   - Worker logs show pipeline progress
+   - API logs show request traffic
+   - Database logs in `/var/log/postgresql/`
+
+3. **Reload behavior**:
+   - API server auto-reloads on code changes (--reload flag)
+   - Worker needs manual restart
+
+4. **Test data**:
+   - Use real company domains (stripe.com, notion.so) for high-confidence enrichment
+   - Use fake domains for testing fallback logic
+
+## Next Steps
+
+- [ ] Add Slack/Email notifications on Hot leads
+- [ ] Build analytics dashboard (Metabase/Power BI)
+- [ ] Add more enrichment sources (Hunter.io, RocketReach)
+- [ ] Deploy to Docker containers
+- [ ] Add authentication to API endpoints
+- [ ] Implement CRM webhook integration
+
+## Support
+
+For issues or questions:
+1. Check the Troubleshooting section above
+2. Review logs in worker and API terminals
+3. Check database with: `psql -U sdr_user -h localhost -p 5433 -d sdr_db`
+4. Run tests to verify components: `pytest tests/ -v`
 
 ## Architecture
 

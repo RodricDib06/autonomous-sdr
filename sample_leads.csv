@@ -1,0 +1,11 @@
+name,email,company,source
+John Smith,john.smith@acme.com,Acme Corporation,linkedin
+Jane Doe,jane.doe@techcorp.com,Tech Corp Inc,referral
+Michael Johnson,m.johnson@startupai.com,StartupAI,sales_team
+Sarah Williams,sarah@innovations.io,Innovations Inc,event
+David Brown,david.brown@enterprise.com,Enterprise Solutions,outbound
+Emily Davis,emily.davis@cloudtech.com,CloudTech,website
+Robert Miller,r.miller@dataworks.com,DataWorks,cold_outreach
+Lisa Anderson,lisa.anderson@softcore.com,SoftCore Systems,linkedin
+James Wilson,j.wilson@globaltech.com,GlobalTech Inc,referral
+Maria Garcia,maria@futuretech.com,FutureTech,sales_team

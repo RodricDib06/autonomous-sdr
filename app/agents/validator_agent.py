@@ -1,5 +1,4 @@
 import json
-import re
 import time
 from sqlalchemy.orm import Session
 from app.agents.base import BaseAgent
@@ -97,9 +96,3 @@ class ValidatorAgent(BaseAgent):
                     time.sleep(2 ** attempt)
         raise last_error
 
-    def _parse_json(self, text: str) -> dict:
-        text = re.sub(r"```(?:json)?\s*", "", text).strip()
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if not match:
-            raise ValueError(f"No JSON object found in LLM response: {text[:200]}")
-        return json.loads(match.group())

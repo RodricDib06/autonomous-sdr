@@ -66,8 +66,28 @@ FALLBACK_SIZE_WEIGHTS = [15, 35, 35, 15]
 
 
 class SyntheticEnrichmentProvider(EnrichmentProvider):
+    def __init__(self):
+        self._cache = {}  # Cache for domain enrichments
+        
     def enrich(self, email: str, company: str) -> dict:
         domain = self._extract_domain(email)
+        
+        # Check cache first
+        if domain in self._cache:
+            cached = self._cache[domain].copy()
+            # Add some randomization for non-cached fields
+            seniority = random.choices(SENIORITY_LEVELS, SENIORITY_WEIGHTS)[0]
+            job_title = random.choice(JOB_TITLES_BY_SENIORITY[seniority])
+            tech_stack = random.choice(TECH_STACKS)
+            
+            cached.update({
+                "job_title": job_title,
+                "seniority": seniority,
+                "tech_stack": tech_stack,
+                "confidence": round(cached["confidence"] + random.uniform(-0.05, 0.05), 2),
+            })
+            return cached
+        
         known = KNOWN_DOMAINS.get(domain)
         confidence = 0.5
 
@@ -90,7 +110,7 @@ class SyntheticEnrichmentProvider(EnrichmentProvider):
         job_title = random.choice(JOB_TITLES_BY_SENIORITY[seniority])
         tech_stack = random.choice(TECH_STACKS)
 
-        return {
+        result = {
             "job_title": job_title,
             "seniority": seniority,
             "company_size": size_range,
@@ -100,6 +120,17 @@ class SyntheticEnrichmentProvider(EnrichmentProvider):
             "confidence": round(confidence + random.uniform(-0.05, 0.05), 2),
             "enrichment_source": "domain_heuristics_v1",
         }
+        
+        # Cache the result for this domain (without personalized fields)
+        self._cache[domain] = {
+            "company_size": size_range,
+            "industry": industry,
+            "revenue_estimate": revenue_estimate,
+            "confidence": confidence,
+            "enrichment_source": "domain_heuristics_v1",
+        }
+        
+        return result
 
     def _extract_domain(self, email: str) -> str:
         return email.split("@")[-1].lower().strip()

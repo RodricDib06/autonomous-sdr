@@ -19,7 +19,8 @@ def get_all_leads(db: Session, limit: int = 100) -> list[Lead]:
 
 
 def update_lead_status(db: Session, lead_id: str, status: str) -> None:
-    db.query(Lead).filter(Lead.id == lead_id).update({"status": status})
+    from datetime import datetime
+    db.query(Lead).filter(Lead.id == lead_id).update({"status": status, "updated_at": datetime.utcnow()})
     db.commit()
 
 

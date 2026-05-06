@@ -19,11 +19,23 @@ class Lead(Base):
     company: Mapped[str] = mapped_column(String(255))
     source: Mapped[str] = mapped_column(String(100), default="webhook")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="processing")
+    completeness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    data_quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quality_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    tags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    assigned_to_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    conversion_status: Mapped[str] = mapped_column(String(50), default="unqualified")
+    conversion_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    conversion_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    enrichments: Mapped[list["Enrichment"]] = relationship(back_populates="lead")
-    verdicts: Mapped[list["Verdict"]] = relationship(back_populates="lead")
-    agent_logs: Mapped[list["AgentLog"]] = relationship(back_populates="lead")
+    enrichments: Mapped[list["Enrichment"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
+    verdicts: Mapped[list["Verdict"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
+    agent_logs: Mapped[list["AgentLog"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
+    history: Mapped[list["LeadHistory"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
+    assigned_to: Mapped["User | None"] = relationship(foreign_keys=[assigned_to_id])
 
 
 class Enrichment(Base):
@@ -78,3 +90,61 @@ class AgentLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     lead: Mapped["Lead"] = relationship(back_populates="agent_logs")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(String(20), default="rep")  # admin | manager | rep
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    api_keys: Mapped[list["APIKey"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+
+class APIKey(Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(100))          # human label e.g. "CI Pipeline"
+    key_prefix: Mapped[str] = mapped_column(String(12))     # first 12 chars of raw key (for display)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)  # SHA-256 hex
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="api_keys")
+
+
+class ImportHistory(Base):
+    __tablename__ = "import_history"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    filename: Mapped[str] = mapped_column(String(255))
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    successful: Mapped[int] = mapped_column(Integer, default=0)
+    failed: Mapped[int] = mapped_column(Integer, default=0)
+    duplicates: Mapped[int] = mapped_column(Integer, default=0)
+    imported_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class LeadHistory(Base):
+    __tablename__ = "lead_history"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    lead_id: Mapped[str] = mapped_column(String(36), ForeignKey("leads.id"), index=True)
+    event_type: Mapped[str] = mapped_column(String(50))  # status_changed, assigned, verdict_updated, conversion_updated
+    old_value: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    new_value: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    changed_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    lead: Mapped["Lead"] = relationship(back_populates="history")
+    changed_by: Mapped["User | None"] = relationship(foreign_keys=[changed_by_id])

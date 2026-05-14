@@ -1,6 +1,20 @@
+## AutonomousSDR — full-stack compose
+##
+## Quick start (zero paid APIs):
+##   docker compose up --build
+##   → API:      http://localhost:8000
+##   → Docs:     http://localhost:8000/docs
+##   → Frontend: http://localhost:5173
+##
+## With Ollama (local AI):
+##   docker compose --profile ollama up --build
+##   docker compose exec ollama ollama pull mistral
+##
+## Default login: admin@autonomoussdr.com / changeme123
+
 services:
 
-  # ── Infrastructure ────────────────────────────────────────────────────────────
+  # ── Infrastructure ────────────────────────────────────────────────────────
 
   postgres:
     image: postgres:16-alpine
@@ -16,7 +30,7 @@ services:
       test: ["CMD", "pg_isready", "-U", "sdr_user"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -28,11 +42,9 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Ollama (local AI) ─────────────────────────────────────────────────────────
-  # Only started when using AI_PROVIDER=ollama (the default).
-  # Skip with: docker compose --profile claude up
-  # First run: docker compose exec ollama ollama pull mistral
-
+  # ── Ollama (local AI — optional) ──────────────────────────────────────────
+  # Start with: docker compose --profile ollama up
+  # First run:  docker compose exec ollama ollama pull mistral
   ollama:
     image: ollama/ollama
     ports:
@@ -42,38 +54,95 @@ services:
     profiles:
       - ollama
 
-  # ── Application ───────────────────────────────────────────────────────────────
+  # ── Migrations + demo data seeder (runs once then exits) ──────────────────
+  migrate:
+    build: .
+    command: bash scripts/docker_migrate.sh
+    env_file:
+      - path: .env
+        required: false        # optional — env vars below are enough for demo
+    environment:
+      DATABASE_URL: postgresql://sdr_user:sdrpassword@postgres:5432/sdr_db
+      REDIS_URL: redis://redis:6379
+      OLLAMA_BASE_URL: http://ollama:11434
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      ENRICHMENT_PROVIDER: ${ENRICHMENT_PROVIDER:-synthetic}
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-admin@autonomoussdr.com}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-changeme123}
+      SECRET_KEY: ${SECRET_KEY:-demo-secret-key-change-in-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
 
+  # ── API server ────────────────────────────────────────────────────────────
   api:
     build: .
     ports:
       - "8000:8000"
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql://sdr_user:sdrpassword@postgres:5432/sdr_db
       REDIS_URL: redis://redis:6379
       OLLAMA_BASE_URL: http://ollama:11434
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      ENRICHMENT_PROVIDER: ${ENRICHMENT_PROVIDER:-synthetic}
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-admin@autonomoussdr.com}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-changeme123}
+      SECRET_KEY: ${SECRET_KEY:-demo-secret-key-change-in-production}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
+  # ── LangGraph worker ──────────────────────────────────────────────────────
   worker:
     build: .
-    command: python app/worker/lead_worker.py
+    command: python -m app.worker.lead_worker
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql://sdr_user:sdrpassword@postgres:5432/sdr_db
       REDIS_URL: redis://redis:6379
       OLLAMA_BASE_URL: http://ollama:11434
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      ENRICHMENT_PROVIDER: ${ENRICHMENT_PROVIDER:-synthetic}
+      SECRET_KEY: ${SECRET_KEY:-demo-secret-key-change-in-production}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # ── React frontend (nginx) ────────────────────────────────────────────────
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:8000
+    ports:
+      - "5173:80"
+    depends_on:
+      api:
         condition: service_healthy
     restart: unless-stopped
 

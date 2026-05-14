@@ -3,9 +3,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Search, Filter, Download, X, ChevronRight,
   Building2, Tag, Archive, Trash2, RefreshCw,
+  Mail, Calendar, MessageSquare, GitBranch, Zap,
+  CheckCircle2, XCircle, Clock,
 } from "lucide-react";
 import { toast } from "sonner";
-import { leadsApi } from "../lib/api";
+import { leadsApi, intentApi, outreachApi, bookingApi, conversationsApi, pipelineApi } from "../lib/api";
 import type { LeadDetail } from "../types";
 import { Header } from "../components/layout/Header";
 import { Button } from "../components/ui/button";
@@ -24,20 +26,386 @@ const STATUS_COLORS: Record<string, string> = {
   failed: "destructive",
 };
 
-function LeadDetailPanel({ lead, onClose }: { lead: LeadDetail; onClose: () => void }) {
+// ── Tab definitions ────────────────────────────────────────────────────────
+
+const TABS = [
+  { id: "profile",  label: "Profile",  icon: Building2 },
+  { id: "intent",   label: "Intent",   icon: Zap },
+  { id: "outreach", label: "Outreach", icon: Mail },
+  { id: "activity", label: "Activity", icon: MessageSquare },
+  { id: "trace",    label: "Trace",    icon: GitBranch },
+] as const;
+
+type TabId = typeof TABS[number]["id"];
+
+// ── Tab content components ─────────────────────────────────────────────────
+
+function ProfileTab({ lead }: { lead: LeadDetail }) {
   const bant = lead.verdict?.bant_scores;
+  return (
+    <div className="space-y-6">
+      {/* Verdict + confidence */}
+      <div className="flex items-center gap-3">
+        <VerdictBadge verdict={lead.verdict?.final_verdict} />
+        {lead.verdict?.confidence_score != null && (
+          <div className="flex items-center gap-2 flex-1">
+            <Progress
+              value={(lead.verdict.confidence_score ?? 0) * 100}
+              className="h-2 flex-1"
+              indicatorClassName={
+                lead.verdict.confidence_score >= 0.7 ? "bg-emerald-500" :
+                lead.verdict.confidence_score >= 0.4 ? "bg-orange-500" : "bg-red-500"
+              }
+            />
+            <span className="text-sm font-medium w-10 text-right">
+              {Math.round(lead.verdict.confidence_score * 100)}%
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Contact */}
+      <section className="space-y-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Contact</h3>
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          {[
+            ["Company", lead.company],
+            ["Source", lead.source?.replace(/_/g, " ")],
+            ["Status", null],
+            ["Created", formatDate(lead.created_at)],
+          ].map(([label, value]) => (
+            <div key={label as string}>
+              <p className="text-muted-foreground text-xs mb-0.5">{label}</p>
+              {label === "Status" ? (
+                <Badge variant={STATUS_COLORS[lead.status] as any}>{lead.status}</Badge>
+              ) : (
+                <p className="font-medium capitalize">{value ?? "—"}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Enrichment */}
+      {lead.enrichment && (
+        <section className="space-y-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Enrichment</h3>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            {[
+              ["Job Title", lead.enrichment.job_title],
+              ["Seniority", lead.enrichment.seniority],
+              ["Company Size", lead.enrichment.company_size],
+              ["Industry", lead.enrichment.industry],
+              ["Revenue", lead.enrichment.revenue_estimate],
+            ].map(([label, value]) =>
+              value ? (
+                <div key={label as string}>
+                  <p className="text-muted-foreground text-xs mb-0.5">{label}</p>
+                  <p className="font-medium">{value}</p>
+                </div>
+              ) : null
+            )}
+          </div>
+          {lead.enrichment.tech_stack && lead.enrichment.tech_stack.length > 0 && (
+            <div>
+              <p className="text-muted-foreground text-xs mb-1.5">Tech Stack</p>
+              <div className="flex flex-wrap gap-1.5">
+                {lead.enrichment.tech_stack.map((t) => (
+                  <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* BANT */}
+      {bant && Object.keys(bant).length > 0 && (
+        <section className="space-y-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">BANT Analysis</h3>
+          <div className="space-y-2.5">
+            {Object.entries(bant).map(([key, score]) => {
+              const s = typeof score === "number" ? score : 0.5;
+              return (
+                <div key={key} className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="capitalize text-muted-foreground">{key}</span>
+                    <span className={cn("font-medium", s >= 0.7 ? "text-emerald-400" : s >= 0.4 ? "text-orange-400" : "text-red-400")}>
+                      {Math.round(s * 100)}%
+                    </span>
+                  </div>
+                  <Progress value={s * 100} className="h-1.5"
+                    indicatorClassName={s >= 0.7 ? "bg-emerald-500" : s >= 0.4 ? "bg-orange-400" : "bg-red-500"} />
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* AI reasoning */}
+      {lead.verdict?.reasoning && (
+        <section className="space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI Reasoning</h3>
+          <p className="text-sm text-muted-foreground leading-relaxed bg-secondary/50 rounded-lg p-3">
+            {lead.verdict.reasoning}
+          </p>
+        </section>
+      )}
+
+      {/* Quality */}
+      <section className="space-y-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Data Quality</h3>
+        <div className="grid grid-cols-2 gap-3">
+          {[
+            ["Quality Score", lead.data_quality_score],
+            ["Completeness", lead.completeness_score],
+          ].map(([label, v]) => (
+            <div key={label as string} className="rounded-lg bg-secondary/50 p-3 text-center">
+              <p className={cn("text-2xl font-bold", scoreColor(v as number | null))}>
+                {v != null ? Math.round((v as number) * 100) : "—"}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Tags */}
+      {lead.tags && lead.tags.length > 0 && (
+        <section className="space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</h3>
+          <div className="flex flex-wrap gap-1.5">
+            {lead.tags.map((t) => (
+              <Badge key={t} variant="default" className="text-xs gap-1">
+                <Tag className="w-2.5 h-2.5" />{t}
+              </Badge>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function IntentTab({ leadId }: { leadId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["intent", leadId],
+    queryFn: () => intentApi.get(leadId),
+    enabled: !!leadId,
+  });
+
+  if (isLoading) return <div className="space-y-2">{[...Array(4)].map((_, i) => <div key={i} className="skeleton h-10 rounded" />)}</div>;
+  if (!data) return <p className="text-sm text-muted-foreground">No intent data yet.</p>;
 
   return (
-    <div className="fixed inset-y-0 right-0 z-40 w-[480px] bg-card border-l border-border shadow-2xl flex flex-col animate-slide-in">
+    <div className="space-y-5">
+      <div className="flex items-center gap-3 p-4 rounded-xl bg-violet-500/10 border border-violet-500/20">
+        <Zap className="w-5 h-5 text-violet-400 shrink-0" />
+        <div>
+          <p className="text-xs text-muted-foreground">Total Intent Score</p>
+          <p className="text-2xl font-bold text-violet-400">{Math.round(data.total_score * 100)}%</p>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Signals</h3>
+        {data.signals.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No signals captured.</p>
+        ) : (
+          data.signals.map((s, i) => (
+            <div key={i} className="flex items-center gap-3 rounded-lg px-3 py-2.5 bg-secondary/30 text-xs">
+              <div className="w-1.5 h-1.5 rounded-full bg-violet-400 shrink-0" />
+              <span className="flex-1 text-muted-foreground font-mono">{s.type.replace(/_/g, " ")}</span>
+              <Badge variant="secondary" className="text-[10px]">{s.source}</Badge>
+              <span className="font-semibold text-violet-400 w-10 text-right">+{Math.round(s.score * 100)}%</span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OutreachTab({ leadId }: { leadId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["outreach", leadId],
+    queryFn: () => outreachApi.list(leadId),
+    enabled: !!leadId,
+  });
+
+  if (isLoading) return <div className="space-y-2">{[...Array(3)].map((_, i) => <div key={i} className="skeleton h-16 rounded" />)}</div>;
+
+  const emails = data?.emails ?? (Array.isArray(data) ? (data as any[]) : []);
+
+  if (!emails.length) return (
+    <div className="text-center py-8">
+      <Mail className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
+      <p className="text-sm text-muted-foreground">No outreach scheduled yet.</p>
+    </div>
+  );
+
+  const STATUS_ICON: Record<string, JSX.Element> = {
+    sent: <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />,
+    opened: <CheckCircle2 className="w-3.5 h-3.5 text-violet-400" />,
+    replied: <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />,
+    scheduled: <Clock className="w-3.5 h-3.5 text-yellow-400" />,
+    failed: <XCircle className="w-3.5 h-3.5 text-red-400" />,
+  };
+
+  return (
+    <div className="space-y-3">
+      {emails.map((e: any) => (
+        <div key={e.id ?? e.step} className="rounded-lg border border-border p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {STATUS_ICON[e.status] ?? <Clock className="w-3.5 h-3.5 text-muted-foreground" />}
+              <span className="text-xs font-medium">Step {e.step_number ?? e.step}</span>
+            </div>
+            <Badge variant="secondary" className="text-[10px] capitalize">{e.status}</Badge>
+          </div>
+          <p className="text-xs font-medium truncate">{e.subject}</p>
+          <div className="flex gap-3 text-[10px] text-muted-foreground">
+            {e.sent_at && <span>Sent {new Date(e.sent_at).toLocaleDateString()}</span>}
+            {e.opened_at && <span>· Opened</span>}
+            {e.replied_at && <span>· Replied</span>}
+            {e.scheduled_at && !e.sent_at && <span>Scheduled {new Date(e.scheduled_at).toLocaleDateString()}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ActivityTab({ leadId }: { leadId: string }) {
+  const { data: convData, isLoading: convLoading } = useQuery({
+    queryKey: ["conversations", leadId],
+    queryFn: () => conversationsApi.list(leadId),
+    enabled: !!leadId,
+  });
+
+  const { data: bookingData, isLoading: bookingLoading } = useQuery({
+    queryKey: ["bookings", leadId],
+    queryFn: () => bookingApi.list(leadId),
+    enabled: !!leadId,
+  });
+
+  const convs = convData?.conversations ?? (Array.isArray(convData) ? (convData as any[]) : []);
+  const bookings = bookingData?.bookings ?? (Array.isArray(bookingData) ? (bookingData as any[]) : []);
+
+  return (
+    <div className="space-y-5">
+      {/* Bookings */}
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+          <Calendar className="w-3.5 h-3.5" /> Booking Requests
+        </h3>
+        {bookingLoading ? (
+          <div className="skeleton h-14 rounded" />
+        ) : bookings.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No bookings yet.</p>
+        ) : (
+          bookings.map((b: any) => (
+            <div key={b.id} className="rounded-lg border border-border p-3 text-xs space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-medium capitalize">{b.status}</span>
+                {b.booking_link && (
+                  <a href={b.booking_link} target="_blank" rel="noreferrer"
+                    className="text-violet-400 hover:underline text-[10px]">Cal link ↗</a>
+                )}
+              </div>
+              {b.start_time && <p className="text-muted-foreground">Meeting: {new Date(b.start_time).toLocaleString()}</p>}
+              <p className="text-muted-foreground">Created {new Date(b.created_at).toLocaleDateString()}</p>
+            </div>
+          ))
+        )}
+      </section>
+
+      {/* Conversations */}
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+          <MessageSquare className="w-3.5 h-3.5" /> Conversations
+        </h3>
+        {convLoading ? (
+          <div className="skeleton h-24 rounded" />
+        ) : convs.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No conversations yet.</p>
+        ) : (
+          convs.map((c: any) => (
+            <div key={c.id} className="rounded-lg border border-border p-3 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <Badge variant="secondary" className="text-[10px] capitalize">{c.channel}</Badge>
+                <span className="text-muted-foreground">{c.message_count} messages</span>
+              </div>
+              {c.summary && <p className="text-xs text-muted-foreground italic leading-relaxed">{c.summary}</p>}
+              {c.messages?.slice(-2).map((m: any, i: number) => (
+                <div key={i} className={cn("text-[10px] rounded px-2 py-1.5", m.role === "assistant" ? "bg-violet-500/10 text-violet-300" : "bg-secondary/50 text-foreground")}>
+                  <span className="font-semibold capitalize">{m.role}: </span>
+                  <span className="text-muted-foreground">{m.content?.slice(0, 100)}{(m.content?.length ?? 0) > 100 ? "…" : ""}</span>
+                </div>
+              ))}
+            </div>
+          ))
+        )}
+      </section>
+    </div>
+  );
+}
+
+function TraceTab({ leadId }: { leadId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["pipeline-trace", leadId],
+    queryFn: () => pipelineApi.trace(leadId),
+    enabled: !!leadId,
+  });
+
+  if (isLoading) return <div className="space-y-2">{[...Array(5)].map((_, i) => <div key={i} className="skeleton h-10 rounded" />)}</div>;
+  if (!data || !data.agent_logs?.length) return (
+    <div className="text-center py-8">
+      <GitBranch className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
+      <p className="text-sm text-muted-foreground">No pipeline trace available yet.</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-1.5">
+        {(data.nodes_executed ?? []).map((n) => (
+          <span key={n} className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">{n}</span>
+        ))}
+      </div>
+      <div className="space-y-1.5">
+        {data.agent_logs.map((log) => (
+          <div key={log.id} className="flex items-center gap-3 rounded-lg px-3 py-2 bg-secondary/30 text-xs">
+            {log.status === "success"
+              ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              : <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />}
+            <span className="font-mono font-medium w-28 shrink-0">{log.agent_name}</span>
+            <span className="text-muted-foreground flex-1 truncate">{log.error_message ?? log.status}</span>
+            {log.duration_ms != null && <span className="text-muted-foreground shrink-0">{log.duration_ms}ms</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Main drawer ────────────────────────────────────────────────────────────
+
+function LeadDetailPanel({ lead, onClose }: { lead: LeadDetail; onClose: () => void }) {
+  const [activeTab, setActiveTab] = useState<TabId>("profile");
+
+  return (
+    <div className="fixed inset-y-0 right-0 z-40 w-[520px] bg-card border-l border-border shadow-2xl flex flex-col animate-slide-in">
       {/* Header */}
-      <div className="flex items-center justify-between p-6 border-b border-border">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-border">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center text-white font-semibold">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center text-white font-semibold shrink-0">
             {lead.name.slice(0, 2).toUpperCase()}
           </div>
           <div>
-            <h2 className="font-semibold">{lead.name}</h2>
-            <p className="text-sm text-muted-foreground">{lead.email}</p>
+            <h2 className="font-semibold leading-tight">{lead.name}</h2>
+            <p className="text-xs text-muted-foreground">{lead.email} · {lead.company}</p>
           </div>
         </div>
         <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-secondary transition-colors">
@@ -45,161 +413,32 @@ function LeadDetailPanel({ lead, onClose }: { lead: LeadDetail; onClose: () => v
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {/* Verdict */}
-        <div className="flex items-center gap-3">
-          <VerdictBadge verdict={lead.verdict?.final_verdict} />
-          {lead.verdict?.confidence_score != null && (
-            <div className="flex items-center gap-2 flex-1">
-              <Progress
-                value={(lead.verdict.confidence_score ?? 0) * 100}
-                className="h-2 flex-1"
-                indicatorClassName={
-                  lead.verdict.confidence_score >= 0.7 ? "bg-emerald-500" :
-                  lead.verdict.confidence_score >= 0.4 ? "bg-orange-500" : "bg-red-500"
-                }
-              />
-              <span className="text-sm font-medium w-10 text-right">
-                {Math.round(lead.verdict.confidence_score * 100)}%
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Basic info */}
-        <section className="space-y-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Contact</h3>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <p className="text-muted-foreground text-xs mb-0.5">Company</p>
-              <p className="font-medium">{lead.company}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground text-xs mb-0.5">Source</p>
-              <p className="font-medium capitalize">{lead.source ?? "—"}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground text-xs mb-0.5">Status</p>
-              <Badge variant={STATUS_COLORS[lead.status] as any}>{lead.status}</Badge>
-            </div>
-            <div>
-              <p className="text-muted-foreground text-xs mb-0.5">Created</p>
-              <p className="font-medium">{formatDate(lead.created_at)}</p>
-            </div>
-          </div>
-        </section>
-
-        {/* Enrichment */}
-        {lead.enrichment && (
-          <section className="space-y-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Enrichment</h3>
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              {[
-                ["Job Title", lead.enrichment.job_title],
-                ["Seniority", lead.enrichment.seniority],
-                ["Company Size", lead.enrichment.company_size],
-                ["Industry", lead.enrichment.industry],
-                ["Revenue", lead.enrichment.revenue_estimate],
-              ].map(([label, value]) =>
-                value ? (
-                  <div key={label as string}>
-                    <p className="text-muted-foreground text-xs mb-0.5">{label}</p>
-                    <p className="font-medium">{value}</p>
-                  </div>
-                ) : null
-              )}
-            </div>
-            {lead.enrichment.tech_stack && lead.enrichment.tech_stack.length > 0 && (
-              <div>
-                <p className="text-muted-foreground text-xs mb-1.5">Tech Stack</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {lead.enrichment.tech_stack.map((t) => (
-                    <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
-                  ))}
-                </div>
-              </div>
+      {/* Tab bar */}
+      <div className="flex border-b border-border px-3">
+        {TABS.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            onClick={() => setActiveTab(id)}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors",
+              activeTab === id
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground"
             )}
-          </section>
-        )}
+          >
+            <Icon className="w-3.5 h-3.5" />
+            {label}
+          </button>
+        ))}
+      </div>
 
-        {/* BANT scores */}
-        {bant && Object.keys(bant).length > 0 && (
-          <section className="space-y-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">BANT Analysis</h3>
-            <div className="space-y-2.5">
-              {Object.entries(bant).map(([key, score]) => {
-                const s = typeof score === "number" ? score : 0.5;
-                const colorMap =
-                  s >= 0.7 ? "bg-emerald-500" :
-                  s >= 0.4 ? "bg-orange-400" :
-                  "bg-red-500";
-                const labelColorMap =
-                  s >= 0.7 ? "text-emerald-400" :
-                  s >= 0.4 ? "text-orange-400" :
-                  "text-red-400";
-                return (
-                  <div key={key} className="space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="capitalize text-muted-foreground">{key}</span>
-                      <span className={cn("font-medium", labelColorMap)}>
-                        {Math.round(s * 100)}%
-                      </span>
-                    </div>
-                    <Progress
-                      value={s * 100}
-                      className="h-1.5"
-                      indicatorClassName={colorMap}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {/* Reasoning */}
-        {lead.verdict?.reasoning && (
-          <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI Reasoning</h3>
-            <p className="text-sm text-muted-foreground leading-relaxed bg-secondary/50 rounded-lg p-3">
-              {lead.verdict.reasoning}
-            </p>
-          </section>
-        )}
-
-        {/* Quality */}
-        <section className="space-y-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Data Quality</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-lg bg-secondary/50 p-3 text-center">
-              <p className={cn("text-2xl font-bold", scoreColor(lead.data_quality_score))}>
-                {lead.data_quality_score != null ? Math.round(lead.data_quality_score * 100) : "—"}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">Quality Score</p>
-            </div>
-            <div className="rounded-lg bg-secondary/50 p-3 text-center">
-              <p className={cn("text-2xl font-bold", scoreColor(lead.completeness_score))}>
-                {lead.completeness_score != null ? Math.round(lead.completeness_score * 100) : "—"}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">Completeness</p>
-            </div>
-          </div>
-        </section>
-
-        {/* Tags */}
-        {lead.tags && lead.tags.length > 0 && (
-          <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</h3>
-            <div className="flex flex-wrap gap-1.5">
-              {lead.tags.map((t) => (
-                <Badge key={t} variant="default" className="text-xs gap-1">
-                  <Tag className="w-2.5 h-2.5" />
-                  {t}
-                </Badge>
-              ))}
-            </div>
-          </section>
-        )}
+      {/* Tab content */}
+      <div className="flex-1 overflow-y-auto p-5">
+        {activeTab === "profile"  && <ProfileTab lead={lead} />}
+        {activeTab === "intent"   && <IntentTab leadId={lead.id} />}
+        {activeTab === "outreach" && <OutreachTab leadId={lead.id} />}
+        {activeTab === "activity" && <ActivityTab leadId={lead.id} />}
+        {activeTab === "trace"    && <TraceTab leadId={lead.id} />}
       </div>
     </div>
   );

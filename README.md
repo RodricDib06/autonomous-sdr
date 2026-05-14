@@ -1,454 +1,279 @@
-# AutonomousSDR Multi-Agent
+# AutonomousSDR
 
-A local-first AI lead qualification system. Three specialized agents process inbound sales leads end-to-end — zero paid APIs, zero human involvement.
+A portfolio-grade, multi-agent AI sales development platform. Leads enter from five ingestion channels, flow through a **LangGraph state machine** of specialized agents, and exit as hot/warm/cold verdicts with personalized outreach sequences, meeting bookings, and CRM sync — all with zero paid API keys required.
 
 ```
-Lead Form → FastAPI Webhook → Redis Queue → Worker
-                                                ↓
-                                    EnrichmentAgent (domain heuristics)
-                                                ↓
-                                    AnalysisAgent (Mistral via Ollama)
-                                                ↓
-                                    ValidatorAgent (LLM-as-judge)
-                                                ↓
-                                         PostgreSQL
+5 Ingestion channels          LangGraph State Machine               Actions
+──────────────────            ──────────────────────────────────    ─────────────────────────────
+Website Form                  Orchestrate → Enrich                  Hot  → Booking Agent (Cal.com)
+Marketing Ads          →      → Intent Score → Analyse →    →       Warm → Outreach Agent (SMTP)
+Inbound Email                 Validate                              Cold → CRM Sync
+LinkedIn Signal               │                                          (HubSpot / Salesforce / Pipedrive)
+Event / Conference            ↓ Conditional routing by verdict      All  → Conversational Agent
+                         PostgreSQL + pgvector                           (SMS via Twilio / LinkedIn via Unipile)
 ```
+
+## What this demonstrates
+
+| Concept | Implementation |
+|---|---|
+| **Multi-agent orchestration** | LangGraph `StateGraph` with conditional edges; 9 agent nodes |
+| **BANT qualification** | Analysis + Validator agents with float scores, configurable weights |
+| **Self-optimization** | Weight rebalancing loop from conversion outcomes (learning rate 0.3) |
+| **A/B testing** | Chi-square significance test on outreach sequences; auto-promote winner |
+| **Buyer intent scoring** | Heuristic signal rules (source, enrichment, BANT, funding signals) |
+| **Semantic memory** | pgvector HNSW index + Ollama embeddings; keyword fallback |
+| **Email tracking** | 1×1 pixel open tracking + click redirect |
+| **5 enrichment sources** | Synthetic (default) · Hunter.io · People Data Labs · Crunchbase signals |
+| **5 ingestion channels** | REST webhooks with deduplication |
+| **Full auth** | JWT access + refresh tokens, role-based access (admin/manager/rep) |
+| **React dashboard** | Pipeline traces, A/B test results, outreach funnel, BANT weight chart |
+
+---
 
 ## Stack
 
 | Layer | Tool |
 |---|---|
-| API | FastAPI |
+| API | FastAPI 0.115 |
+| Agent framework | LangGraph 1.2 |
+| AI inference | Ollama + Mistral 7B (default, free) · Anthropic Claude (optional) |
+| Embeddings | Ollama `nomic-embed-text` (768-dim) |
+| Vector search | pgvector HNSW (cosine similarity) |
 | Queue | Redis |
-| AI Inference | Ollama + Mistral 7B |
-| Database | PostgreSQL 18 |
-| ORM | SQLAlchemy 2 |
-| Validation | Pydantic v2 |
-| Testing | pytest |
+| Database | PostgreSQL 13+ |
+| ORM | SQLAlchemy 2 + Pydantic v2 |
+| Frontend | React 18 + TypeScript + Vite + Tailwind + Recharts |
+| Auth | JWT (HS256) + bcrypt |
+| Tests | pytest (137 tests) |
 
-## Prerequisites
+---
 
-- **Python 3.11+** - Download from python.org
-- **Homebrew** (macOS) - `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
-- **Ollama** - Download from ollama.ai
-- **Redis** - For job queue
-- **PostgreSQL 18** - For data persistence
+## 5-Minute Setup (zero paid APIs)
 
-## Quick Start (Automated Setup)
+### Prerequisites
+
+- Python 3.11+
+- [Ollama](https://ollama.ai) — runs the LLM locally
+- PostgreSQL 13+
+- Redis
+
+### 1. Clone and configure
 
 ```bash
-# One command to setup everything and choose what to run
-bash scripts/setup_and_run.sh
+git clone https://github.com/RodricDib06/autonomous-sdr.git
+cd autonomous-sdr
+cp .env.example .env
 ```
 
-This script:
-✓ Checks Python version
-✓ Creates virtual environment
-✓ Installs dependencies
-✓ Validates all services (Redis, PostgreSQL, Ollama)
-✓ Initializes database
-✓ Opens interactive menu
-
-## Manual Setup
-
-### 1. Install Infrastructure
-
-```bash
-# Install and start Redis
-brew install redis
-brew services start redis
-
-# Install and start PostgreSQL 18
-brew install postgresql@18
-brew services start postgresql@18
-
-# Verify PostgreSQL is running
-psql -U postgres -h localhost -p 5433 -c "SELECT version();"
+The defaults in `.env` require **no changes** for local dev:
+```
+AI_PROVIDER=ollama          # free, local — no API key needed
+ENRICHMENT_PROVIDER=synthetic  # heuristic enrichment — no API key needed
 ```
 
-### 2. Create Database and User
+### 2. Pull the model
 
 ```bash
-# Connect to PostgreSQL
-psql -U postgres -h localhost -p 5433
-
-# Inside psql, run:
-CREATE USER sdr_user WITH PASSWORD 'sdrpassword';
-CREATE DATABASE sdr_db OWNER sdr_user;
-\q
+ollama pull mistral          # ~4 GB, one-time
+ollama pull nomic-embed-text # for semantic search — optional
 ```
 
-Or as a single command:
-```bash
-psql -U postgres -h localhost -p 5433 postgres << EOF
-CREATE USER sdr_user WITH PASSWORD 'sdrpassword';
-CREATE DATABASE sdr_db OWNER sdr_user;
-EOF
-```
-
-### 3. Install and Configure Ollama
+### 3. Install and initialise
 
 ```bash
-# Install Ollama (download from ollama.ai or use brew)
-brew install ollama
-
-# Start Ollama service (in another terminal, or as background)
-ollama serve
-
-# In another terminal, pull the Mistral model
-ollama pull mistral
-
-# Verify it's working
-curl http://localhost:11434/api/tags | grep mistral
-```
-
-### 4. Setup Python Environment
-
-```bash
-# Create and activate virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Initialize database (creates tables)
+# Create tables (run each migration in order — all are idempotent)
 python scripts/init_db.py
+python scripts/migrate_auth.py
+python scripts/migrate_phase2_fields.py
+python scripts/migrate_phase3_tables.py
+python scripts/migrate_phase4_pgvector.py   # needs pgvector installed — safe to skip
+python scripts/migrate_phase5_fields.py     # optional analytics fields
 ```
 
-### 5. Configure Environment Variables
+> **pgvector optional**: if your Postgres doesn't have the `vector` extension, skip `migrate_phase4_pgvector.py`. Semantic search falls back to keyword matching automatically.
 
-The `.env` file is already configured with defaults:
-```bash
-DATABASE_URL=postgresql://sdr_user:sdrpassword@localhost:5433/sdr_db
-REDIS_URL=redis://localhost:6379
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=mistral
-APP_ENV=development
-ICP_MIN_COMPANY_SIZE=50
-ICP_MAX_COMPANY_SIZE=500
-ICP_INDUSTRIES=SaaS,Technology,Software,FinTech,DevTools
-ICP_MIN_SENIORITY=Manager
-```
-
-If you changed any defaults, update `.env` accordingly.
-
-## Running the System
-
-### Option A: Use the Interactive Setup Script (Recommended)
+### 4. Start services
 
 ```bash
-bash scripts/setup_and_run.sh
+# Terminal 1 — API
+uvicorn app.main:app --reload --port 8000
+
+# Terminal 2 — LangGraph worker
+python -m app.worker.lead_worker
+
+# Terminal 3 — Frontend (optional)
+cd frontend && npm install && npm run dev
 ```
 
-Follow the menu to:
-- Start API server
-- Start worker
-- Run tests
-- Generate test data
+Open `http://localhost:5173` · Login with `admin@autonomoussdr.com` / `changeme123`
 
-### Option B: Manual Terminal-by-Terminal
+---
 
-**Terminal 1 - Background Worker** (processes leads):
+## Optional integrations (all have free tiers or are fully mocked)
+
+Set in `.env` — the app works without any of these:
+
+| Feature | Env var | Free tier |
+|---|---|---|
+| Anthropic Claude | `ANTHROPIC_API_KEY` | $5 credit on sign-up |
+| Real enrichment | `HUNTER_API_KEY` | 25 lookups/month |
+| People Data Labs | `PDL_API_KEY` | 100 calls/month |
+| SMS outreach | `TWILIO_*` | $15 trial credit |
+| LinkedIn DMs | `UNIPILE_API_KEY` | trial available |
+| Email delivery | `SMTP_*` | Gmail free (500/day) |
+| Meeting booking | `CAL_SCHEDULING_URL` | cal.com free |
+| Slack alerts | `SLACK_WEBHOOK_URL` | free |
+| HubSpot CRM | `HUBSPOT_API_KEY` | free tier |
+| Crunchbase signals | `CRUNCHBASE_API_KEY` | deterministic mock when absent |
+
+Switch providers with a single env var:
 ```bash
-source venv/bin/activate
-python app/worker/lead_worker.py
+AI_PROVIDER=claude              # ollama | claude
+ENRICHMENT_PROVIDER=hunter      # synthetic | hunter | pdl
 ```
 
-You should see:
-```
-INFO - Worker started. Waiting for jobs...
-```
+---
 
-**Terminal 2 - API Server** (receives webhooks):
-```bash
-source venv/bin/activate
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
+## Architecture deep-dive
 
-You should see:
+### LangGraph state machine (`app/agents/graph.py`)
+
 ```
-INFO:     Uvicorn running on http://0.0.0.0:8000
-INFO:     AutonomousSDR ready to accept leads
+orchestrate ──→ enrich ──→ score_intent ──→ analyse ──→ validate
+                                                            │
+                        ┌───────────────────────────────────┤
+                        ▼               ▼               ▼   ▼
+                     booking        outreach         sync_crm  human_handoff
+                   (Hot leads)    (Warm leads)      (Cold + all)
 ```
 
-**Terminal 3 - Client Operations** (submit and test):
-```bash
-source venv/bin/activate
+Routing is purely data-driven: the `validate` node sets `final_verdict` in the shared `LeadState` TypedDict, and `route_after_validate()` reads it to pick the next node. Adding a new agent = adding one function and one edge.
 
-# Submit a test lead
-curl -X POST http://localhost:8000/leads \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Sarah Chen","email":"sarah.chen@stripe.com","company":"Stripe","source":"web_form"}'
+### Buyer intent scoring (`app/services/intent_scoring.py`)
 
-# Response: {"id":"...","name":"Sarah Chen","email":"sarah.chen@stripe.com","company":"Stripe","status":"processing","created_at":"..."}
+Signals fire when conditions match enrichment data:
+- Source priority (LinkedIn signal → 0.20, event → 0.15, website → 0.10, …)
+- Seniority ≥ Director → +0.15
+- Company size 50–500 → +0.10
+- ICP industry match → +0.15
+- Recent funding round → +0.20
+- BANT-derived signals (hot budget, tight timeline) → up to +0.20
+
+### Self-optimization loop (`app/services/optimization_loop.py`)
+
+Every N leads, the loop:
+1. Splits leads into `converted` (Hot, booked) vs `lost`
+2. Computes mean BANT scores for each group
+3. Assigns higher weights to dimensions with the largest separation
+4. Blends: `new = old × 0.7 + computed × 0.3`
+5. Persists `OptimizationRun` for the A/B Tests → Optimization History panel
+
+### A/B email sequences (`app/services/ab_testing.py`)
+
+Two default sequences (Variant A: subject-focused, Variant B: value-led). Events are recorded per-email. Once `n ≥ 30` per variant, a chi-square test determines the winner. The "Promote winner" button in the UI marks the losing sequence inactive.
+
+---
+
+## API highlights
+
+```
+POST /ingest/{form|ads|email|linkedin|event}  — 5 ingestion webhooks
+GET  /leads/{id}/pipeline-trace              — per-lead LangGraph execution trace
+GET  /leads/{id}/intent                      — buyer intent signals
+GET  /leads/{id}/outreach                    — outreach email schedule
+POST /leads/{id}/chat                        — conversational agent turn
+GET  /ab-tests/results                       — variant comparison with significance
+POST /ab-tests/{id}/promote                  — promote winning sequence
+POST /optimization/run                       — trigger BANT weight rebalance
+GET  /optimization/weights                   — current live weights
+GET  /analytics/powerbi-export               — flat JSON export for Power BI
+GET  /analytics/powerbi-export.csv           — CSV version
+GET  /analytics/semantic-search?q=...        — pgvector similarity search
+GET  /track/open/{email_id}                  — open-tracking pixel (1×1 GIF)
+GET  /track/click/{email_id}?url=...         — click redirect + tracking
 ```
 
-## Testing the Pipeline
+Full interactive docs at `http://localhost:8000/docs`
 
-### 1. Submit a Single Lead
+---
 
-```bash
-LEAD_ID=$(curl -s -X POST http://localhost:8000/leads \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "John Smith",
-    "email": "john.smith@techstartup.io",
-    "company": "TechStartup"
-  }' | jq -r '.id')
-
-echo "Submitted lead: $LEAD_ID"
-```
-
-### 2. Monitor Processing
-
-The worker logs will show:
-```
-[John Smith] Starting pipeline
-[John Smith] Enriched → SaaS, Senior
-[John Smith] Analysis → verdict=Hot
-[John Smith] Validated → final=Hot confidence=0.92
-[John Smith] Pipeline complete ✓
-```
-
-### 3. Retrieve Results
-
-```bash
-# Get enrichment and verdict for the lead
-curl http://localhost:8000/leads/$LEAD_ID | jq '.enrichment, .verdict'
-```
-
-### 4. Generate Batch Test Data
-
-```bash
-# Generate and submit 100 test leads
-python scripts/generate_test_data.py
-
-# Query results
-curl http://localhost:8000/leads?limit=10 | jq '.[] | {id, name, status}'
-```
-
-## API Endpoints
-
-### Health Check
-```bash
-GET /health
-```
-
-### Submit a Lead
-```bash
-POST /leads
-Content-Type: application/json
-
-{
-  "name": "string",
-  "email": "user@example.com",
-  "company": "string",
-  "source": "web_form|linkedin|outbound|etc"  # optional, defaults to "webhook"
-}
-```
-
-### List Leads
-```bash
-GET /leads?skip=0&limit=100
-
-# Parameters:
-# skip: pagination offset (default: 0)
-# limit: results per page (default: 100, max: 1000)
-```
-
-### Get Lead Details
-```bash
-GET /leads/{lead_id}
-
-# Returns:
-# - Lead info
-# - Enrichment data (job title, seniority, company size, industry, revenue, tech stack, confidence)
-# - Verdict (analysis result, validation, BANT scores, final verdict, confidence score)
-# - Agent logs
-```
-
-## Interactive API Documentation
-
-FastAPI automatically generates interactive docs:
+## Running tests
 
 ```bash
-# Swagger UI
-http://localhost:8000/docs
-
-# ReDoc
-http://localhost:8000/redoc
-```
-
-Click on any endpoint to:
-- Read description
-- Try it out
-- See request/response schemas
-
-## Running Tests
-
-```bash
-source venv/bin/activate
-
-# Run all tests
 pytest tests/ -v
-
-# Run specific test file
-pytest tests/test_enrichment.py -v
-
-# Run with coverage
-pytest tests/ --cov=app --cov-report=html
-
-# Run only fast tests (no Ollama required)
-pytest tests/test_enrichment.py tests/test_analysis_agent.py -v
+# 137 tests, all passing
 ```
 
-## Architecture
+---
 
-### Agents
+## Project structure
 
-1. **EnrichmentAgent**
-   - Input: Email, company name
-   - Output: Job title, seniority, company size, industry, revenue, tech stack
-   - Method: Domain heuristics + database lookup
+```
+app/
+├── agents/
+│   ├── graph.py              # LangGraph state machine (entry point for worker)
+│   ├── orchestrator_agent.py # Deduplication, completeness gate, priority scoring
+│   ├── enrichment_agent.py   # Enrichment + Crunchbase intent signals
+│   ├── analysis_agent.py     # LLM BANT qualification (Ollama / Claude)
+│   ├── validator_agent.py    # LLM-as-judge consistency check
+│   ├── outreach_agent.py     # A/B sequences + SMTP delivery
+│   ├── booking_agent.py      # Cal.com booking link + Slack alert
+│   └── conversational_agent.py  # Multi-turn reply (SMS / LinkedIn / mock)
+├── services/
+│   ├── intent_scoring.py     # Buyer intent heuristics
+│   ├── ab_testing.py         # Chi-square A/B significance test
+│   ├── optimization_loop.py  # BANT weight self-optimization
+│   ├── embedding_service.py  # pgvector embeddings + semantic search
+│   ├── crm_sync.py           # HubSpot / Salesforce / Pipedrive adapters
+│   ├── memory_service.py     # Conversation history + summarization
+│   └── enrichment/
+│       ├── synthetic.py      # Heuristic enrichment (zero API, default)
+│       ├── hunter.py         # Hunter.io domain lookup
+│       ├── pdl.py            # People Data Labs person API
+│       └── crunchbase.py     # Crunchbase funding signals
+├── routers/
+│   └── ingest.py             # 5 ingestion channel webhooks
+├── worker/
+│   └── lead_worker.py        # LangGraph worker (concurrency + watchdog)
+└── main.py                   # FastAPI app + all REST endpoints
 
-2. **AnalysisAgent**
-   - Input: Enriched lead data
-   - Output: BANT scores, ICP match, verdict (Hot/Warm/Cold)
-   - Method: Mistral 7B via Ollama
+frontend/src/
+├── pages/
+│   ├── Dashboard.tsx         # KPI cards, pipeline funnel, hot leads feed
+│   ├── Pipeline.tsx          # LangGraph graph topology + per-lead trace
+│   ├── ABTests.tsx           # A/B variant comparison + BANT optimization
+│   ├── Analytics.tsx         # Outreach funnel, BANT weights, industry breakdown
+│   └── Leads.tsx             # Lead table with verdict/BANT filters
+scripts/
+├── init_db.py                # Create base tables
+├── migrate_phase3_tables.py  # Phase 3: outreach, booking, intent, conversations
+└── migrate_phase4_pgvector.py  # Phase 4: vector extension + HNSW index
 
-3. **ValidatorAgent**
-   - Input: Lead profile + analysis verdict
-   - Output: Final verdict with confidence score, consistency check
-   - Method: LLM-as-judge via Ollama
-
-### Database Schema
-
-**leads** - Core lead records
-**enrichments** - Enrichment results (1+ per lead)
-**verdicts** - Analysis and validation results (1+ per lead)
-**agent_logs** - Audit trail of agent executions
-
-### Queue & Worker
-
-- **Redis Queue**: FastAPI pushes lead IDs when received
-- **Worker**: Polls queue, processes lead through 3-agent pipeline
-- **Logging**: Structured logs to console, agent execution logged to database
-
-## Troubleshooting
-
-### "Cannot reach Ollama at http://localhost:11434"
-```bash
-# Check if Ollama is running
-curl http://localhost:11434/api/tags
-
-# If not, start it
-ollama serve
-
-# If mistral is not available, pull it
-ollama pull mistral
+tests/
+└── (137 tests, all passing)
 ```
 
-### "Redis connection error"
-```bash
-# Check Redis is running
-redis-cli ping  # Should print PONG
+---
 
-# If not, start it
-brew services start redis
+## Deployment
 
-# Or start manually
-redis-server
-```
+The app is stateless between the API and worker — both read from the same Postgres + Redis. A minimal production deploy needs only:
 
-### "PostgreSQL connection error"
-```bash
-# Check PostgreSQL is running
-psql -U postgres -h localhost -p 5433 -c "SELECT 1"
+1. A Postgres database with pgvector (Supabase / Railway / Neon all support it)
+2. A Redis instance (Railway / Upstash free tier)
+3. Two Dynos / containers: `uvicorn app.main:app` and `python -m app.worker.lead_worker`
+4. Set `SECRET_KEY`, `DATABASE_URL`, `REDIS_URL` in environment
 
-# If not, start it
-brew services start postgresql@18
+For real email delivery, replace the SMTP block with a [SendGrid](https://sendgrid.com) or [Mailgun](https://mailgun.com) adapter — the swap point is `OutreachAgent._send_email()` with production code already commented in.
 
-# Check database exists
-psql -U sdr_user -h localhost -p 5433 -d sdr_db -c "SELECT count(*) FROM leads;"
-```
+For production AI, set `AI_PROVIDER=claude` and add `ANTHROPIC_API_KEY`.
 
-### "ModuleNotFoundError: No module named 'app'"
-```bash
-# Make sure you're in the project root and venv is activated
-cd ~/autonomous-sdr
-source venv/bin/activate
-python -c "import app; print('OK')"
-```
+---
 
-### Tests failing with "database is locked"
-```bash
-# Tests use in-memory SQLite by default
-# If you see lock errors, rebuild environment
-rm -rf .pytest_cache
-pytest tests/ -v
-```
+## License
 
-## Daily Workflow Tips
-
-1. **Keep three terminals open**:
-   - Worker (python app/worker/lead_worker.py)
-   - API (uvicorn app.main:app --reload)
-   - Tests/client (pytest or curl)
-
-2. **Monitor logs**:
-   - Worker logs show pipeline progress
-   - API logs show request traffic
-   - Database logs in `/var/log/postgresql/`
-
-3. **Reload behavior**:
-   - API server auto-reloads on code changes (--reload flag)
-   - Worker needs manual restart
-
-4. **Test data**:
-   - Use real company domains (stripe.com, notion.so) for high-confidence enrichment
-   - Use fake domains for testing fallback logic
-
-## Next Steps
-
-- [ ] Add Slack/Email notifications on Hot leads
-- [ ] Build analytics dashboard (Metabase/Power BI)
-- [ ] Add more enrichment sources (Hunter.io, RocketReach)
-- [ ] Deploy to Docker containers
-- [ ] Add authentication to API endpoints
-- [ ] Implement CRM webhook integration
-
-## Support
-
-For issues or questions:
-1. Check the Troubleshooting section above
-2. Review logs in worker and API terminals
-3. Check database with: `psql -U sdr_user -h localhost -p 5433 -d sdr_db`
-4. Run tests to verify components: `pytest tests/ -v`
-
-## Architecture
-
-### Agents
-
-**EnrichmentAgent** — Builds a structured lead profile from email domain using rule-based heuristics and a local company database. Strategy Pattern: the provider is behind an abstract interface, swappable with real APIs (Clearbit, PDL).
-
-**AnalysisAgent** — Evaluates the enriched profile against configurable ICP and BANT criteria using Mistral 7B. Returns Hot/Warm/Cold verdict with reasoning and per-dimension BANT scores.
-
-**ValidatorAgent** — LLM-as-judge: a second Mistral call audits the Analysis Agent's decision for logical consistency. Assigns a confidence score (0–1) and can downgrade contradictory verdicts.
-
-### Database Schema
-
-- `leads` — raw webhook input
-- `enrichments` — structured profile per lead
-- `verdicts` — analysis + validation results
-- `agent_logs` — full audit trail of every agent execution
-
-### ICP Configuration
-
-Edit `.env` to tune the Ideal Customer Profile:
-```
-ICP_MIN_COMPANY_SIZE=50
-ICP_MAX_COMPANY_SIZE=500
-ICP_INDUSTRIES=SaaS,Technology,Software,FinTech,DevTools
-ICP_MIN_SENIORITY=Manager
-```
+MIT

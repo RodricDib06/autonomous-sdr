@@ -46,6 +46,17 @@ class SlackNotifier:
         self.enabled = True
         return True
     
+    def notify(self, text: str) -> bool:
+        """Send a plain-text message to Slack."""
+        if not self.enabled or not self.webhook_url:
+            return False
+        try:
+            response = requests.post(self.webhook_url, json={"text": text}, timeout=5)
+            return response.status_code == 200
+        except Exception as e:
+            log.error(f"Slack notify failed: {e}")
+            return False
+
     def test_webhook(self) -> bool:
         """Test if webhook is valid"""
         if not self.enabled or not self.webhook_url:

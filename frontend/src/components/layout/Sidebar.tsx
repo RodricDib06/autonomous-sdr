@@ -1,7 +1,7 @@
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard, Users2, Upload, BarChart3,
-  Settings, Zap, ChevronRight, LogOut,
+  Settings, Zap, ChevronRight, LogOut, GitBranch, FlaskConical,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
@@ -12,6 +12,8 @@ import { healthApi } from "../../lib/api";
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/leads", icon: Zap, label: "Leads" },
+  { to: "/pipeline", icon: GitBranch, label: "Pipeline" },
+  { to: "/ab-tests", icon: FlaskConical, label: "A/B Tests" },
   { to: "/import", icon: Upload, label: "Import" },
   { to: "/analytics", icon: BarChart3, label: "Analytics" },
 ];

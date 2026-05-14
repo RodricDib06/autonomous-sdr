@@ -1,0 +1,82 @@
+services:
+
+  # ── Infrastructure ────────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sdr_user
+      POSTGRES_PASSWORD: sdrpassword
+      POSTGRES_DB: sdr_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "sdr_user"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Ollama (local AI) ─────────────────────────────────────────────────────────
+  # Only started when using AI_PROVIDER=ollama (the default).
+  # Skip with: docker compose --profile claude up
+  # First run: docker compose exec ollama ollama pull mistral
+
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    profiles:
+      - ollama
+
+  # ── Application ───────────────────────────────────────────────────────────────
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://sdr_user:sdrpassword@postgres:5432/sdr_db
+      REDIS_URL: redis://redis:6379
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: python app/worker/lead_worker.py
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://sdr_user:sdrpassword@postgres:5432/sdr_db
+      REDIS_URL: redis://redis:6379
+      OLLAMA_BASE_URL: http://ollama:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  ollama_data:

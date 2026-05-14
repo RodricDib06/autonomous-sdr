@@ -21,9 +21,10 @@ from app.schemas.lead import LeadCreate, LeadResponse, LeadDetail, BatchRequest,
 from app.auth.dependencies import get_current_user, require_admin, require_manager, require_rep
 from app.database.models import User
 from app.routers.auth import router as auth_router
+from app.routers.ingest import router as ingest_router
 from app.config import settings
 from fastapi import UploadFile, File
-from fastapi.responses import Response
+from fastapi.responses import Response, RedirectResponse
 
 # Setup logging
 logging.basicConfig(
@@ -115,6 +116,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(ingest_router)
 
 # Global Slack notifier
 slack_notifier = SlackNotifier()
@@ -164,12 +166,32 @@ def list_leads(
     db: Session = Depends(get_db),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
+    verdict: str = Query(None, description="Filter by verdict: Hot, Warm, Cold"),
+    bant_authority: str = Query(None, description="Filter by BANT authority: High, Medium, Low"),
+    bant_budget: str = Query(None, description="Filter by BANT budget: High, Medium, Low"),
+    bant_need: str = Query(None, description="Filter by BANT need: High, Medium, Low"),
+    bant_timeline: str = Query(None, description="Filter by BANT timeline: High, Medium, Low"),
 ):
-    """List all leads with pagination"""
+    """List all leads with pagination and optional BANT/verdict filters"""
+    from sqlalchemy.orm import selectinload
     try:
-        leads = db.query(Lead).order_by(
-            Lead.created_at.desc()
-        ).offset(skip).limit(limit).all()
+        query = db.query(Lead).options(selectinload(Lead.verdicts))
+
+        bant_filters = {k: v for k, v in {
+            "authority": bant_authority,
+            "budget": bant_budget,
+            "need": bant_need,
+            "timeline": bant_timeline,
+        }.items() if v}
+
+        if verdict or bant_filters:
+            query = query.join(Verdict, Verdict.lead_id == Lead.id)
+            if verdict:
+                query = query.filter(Verdict.final_verdict == verdict)
+            for dim, val in bant_filters.items():
+                query = query.filter(Verdict.bant_scores[dim].astext == val)
+
+        leads = query.order_by(Lead.created_at.desc()).offset(skip).limit(limit).all()
         return leads
     except Exception as e:
         log.error(f"Failed to list leads: {e}")
@@ -856,9 +878,9 @@ def disable_slack(current_user: User = Depends(require_admin)):
         global slack_webhook_url
         slack_notifier.set_webhook(None)
         slack_webhook_url = None
-        
+
         log.info("Slack notifications disabled")
-        
+
         return {
             "status": "success",
             "message": "Slack notifications disabled",
@@ -867,3 +889,616 @@ def disable_slack(current_user: User = Depends(require_admin)):
     except Exception as e:
         log.error(f"Failed to disable Slack: {e}")
         raise HTTPException(status_code=500, detail="Failed to disable Slack")
+
+
+# ===========================================================================
+# Outreach endpoints
+# ===========================================================================
+
+@app.post("/leads/{lead_id}/outreach")
+def trigger_outreach(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Manually trigger outreach sequence for a qualified lead."""
+    from app.agents.outreach_agent import OutreachAgent
+    agent = OutreachAgent()
+    try:
+        result = agent._timed_run(db, lead_id, {"triggered_by": current_user.email})
+        return result
+    except Exception as e:
+        log.error(f"Outreach failed for {lead_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/leads/{lead_id}/outreach")
+def get_outreach_emails(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """List all outreach emails scheduled or sent for a lead."""
+    from app.database.models import OutreachEmail
+    emails = (
+        db.query(OutreachEmail)
+        .filter(OutreachEmail.lead_id == lead_id)
+        .order_by(OutreachEmail.step_number)
+        .all()
+    )
+    return [
+        {
+            "id": e.id,
+            "step": e.step_number,
+            "subject": e.subject,
+            "status": e.status,
+            "scheduled_at": e.scheduled_at.isoformat() if e.scheduled_at else None,
+            "sent_at": e.sent_at.isoformat() if e.sent_at else None,
+        }
+        for e in emails
+    ]
+
+
+@app.post("/outreach/emails/{email_id}/event")
+def track_email_event(
+    email_id: str,
+    event: str = Query(..., description="sent | opened | replied | booked | converted"),
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Record an engagement event on an outreach email (open, reply, etc.)."""
+    from app.services.ab_testing import record_event
+    try:
+        record_event(db, email_id, event)
+        return {"status": "recorded", "email_id": email_id, "event": event}
+    except Exception as e:
+        log.error(f"Failed to record event {event} on email {email_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===========================================================================
+# Booking endpoints
+# ===========================================================================
+
+@app.post("/leads/{lead_id}/book")
+def trigger_booking(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Send a booking link to a qualified lead."""
+    from app.agents.booking_agent import BookingAgent
+    agent = BookingAgent()
+    try:
+        result = agent._timed_run(db, lead_id, {})
+        return result
+    except Exception as e:
+        log.error(f"Booking failed for {lead_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/leads/{lead_id}/bookings")
+def get_bookings(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """List all booking requests for a lead."""
+    from app.database.models import BookingRequest
+    bookings = (
+        db.query(BookingRequest)
+        .filter(BookingRequest.lead_id == lead_id)
+        .order_by(BookingRequest.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": b.id,
+            "status": b.status,
+            "booking_link": b.booking_link,
+            "external_booking_id": b.external_booking_id,
+            "start_time": b.start_time.isoformat() if b.start_time else None,
+            "created_at": b.created_at.isoformat(),
+        }
+        for b in bookings
+    ]
+
+
+@app.patch("/leads/{lead_id}/bookings/{booking_id}")
+def update_booking_status(
+    lead_id: str,
+    booking_id: str,
+    status: str = Query(..., description="confirmed | cancelled | rescheduled | no_show"),
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Update booking status (e.g. after a Cal.com webhook fires)."""
+    from app.database.models import BookingRequest
+    booking = db.query(BookingRequest).filter(
+        BookingRequest.id == booking_id,
+        BookingRequest.lead_id == lead_id,
+    ).first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    booking.status = status
+    booking.updated_at = datetime.utcnow()
+    db.commit()
+    return {"status": "updated", "booking_id": booking_id, "new_status": status}
+
+
+# ===========================================================================
+# Conversational agent endpoints
+# ===========================================================================
+
+@app.post("/leads/{lead_id}/chat")
+def send_chat_message(
+    lead_id: str,
+    channel: str = Query("email", description="email | sms | chat | linkedin"),
+    mode: str = Query("reply", description="initiate | reply"),
+    message: str = Query("", description="Inbound message from the lead"),
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Generate and send a contextual reply to a lead message."""
+    from app.agents.conversational_agent import ConversationalAgent
+    agent = ConversationalAgent()
+    try:
+        result = agent._timed_run(db, lead_id, {
+            "channel": channel,
+            "mode": mode,
+            "message": message,
+        })
+        return result
+    except Exception as e:
+        log.error(f"Conversational agent failed for {lead_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/leads/{lead_id}/conversations")
+def get_conversations(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Return all conversation threads for a lead."""
+    from app.services.memory_service import get_all_conversations
+    convs = get_all_conversations(db, lead_id)
+    return [
+        {
+            "id": c.id,
+            "channel": c.channel,
+            "message_count": len(c.messages or []),
+            "summary": c.summary,
+            "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+            "messages": (c.messages or [])[-10:],  # last 10 messages
+        }
+        for c in convs
+    ]
+
+
+# ===========================================================================
+# Intent scoring endpoints
+# ===========================================================================
+
+@app.post("/leads/{lead_id}/intent")
+def compute_intent(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Run intent scoring for a lead and persist the signals."""
+    from app.services.intent_scoring import compute_intent_score
+    from app.database.models import Enrichment, Verdict
+    lead = crud.get_lead(db, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    enrichment = db.query(Enrichment).filter(Enrichment.lead_id == lead_id).first()
+    verdict = db.query(Verdict).filter(Verdict.lead_id == lead_id).first()
+    score = compute_intent_score(db, lead, enrichment, verdict)
+    return {"lead_id": lead_id, "intent_score": score}
+
+
+@app.get("/leads/{lead_id}/intent")
+def get_intent_signals(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Return all intent signals captured for a lead."""
+    from app.database.models import IntentSignal
+    signals = db.query(IntentSignal).filter(IntentSignal.lead_id == lead_id).all()
+    return {
+        "lead_id": lead_id,
+        "total_score": round(min(1.0, sum(s.score for s in signals)), 4),
+        "signals": [
+            {
+                "type": s.signal_type,
+                "score": s.score,
+                "source": s.source,
+                "captured_at": s.captured_at.isoformat(),
+            }
+            for s in signals
+        ],
+    }
+
+
+# ===========================================================================
+# CRM sync endpoints
+# ===========================================================================
+
+@app.post("/leads/{lead_id}/crm-sync")
+def sync_to_crm(
+    lead_id: str,
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """Push a lead to the configured CRM (or log mock if none configured)."""
+    from app.services.crm_sync import sync_lead_to_crm
+    try:
+        result = sync_lead_to_crm(db, lead_id)
+        return result
+    except Exception as e:
+        log.error(f"CRM sync failed for {lead_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===========================================================================
+# A/B testing endpoints
+# ===========================================================================
+
+@app.get("/ab-tests/results")
+def get_ab_results(
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """Return per-variant conversion metrics for all outreach sequences."""
+    from app.services.ab_testing import get_test_results, find_winner
+    results = get_test_results(db)
+    winner = find_winner(db)
+    return {"variants": results, "winner": winner}
+
+
+@app.post("/ab-tests/promote-winner")
+def promote_ab_winner(
+    sequence_id: str = Query(...),
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Deactivate all other sequences and promote this one as the winner."""
+    from app.services.ab_testing import promote_winner
+    promote_winner(db, sequence_id)
+    return {"status": "promoted", "winning_sequence_id": sequence_id}
+
+
+# ===========================================================================
+# Self-optimization endpoints
+# ===========================================================================
+
+@app.post("/optimization/run")
+def run_optimization(
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Trigger a scoring weight optimization cycle based on conversion outcomes."""
+    from app.services.optimization_loop import run_optimization as _run
+    try:
+        result = _run(db)
+        return result
+    except Exception as e:
+        log.error(f"Optimization run failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/optimization/history")
+def get_optimization_history(
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """Return recent optimization runs with old/new weights and improvement scores."""
+    from app.services.optimization_loop import get_optimization_history
+    return get_optimization_history(db, limit=limit)
+
+
+@app.get("/optimization/weights")
+def get_current_weights_endpoint(
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Return the BANT weights currently used for scoring."""
+    from app.services.optimization_loop import get_current_weights
+    return {"weights": get_current_weights(db)}
+
+
+# ===========================================================================
+# Email tracking — open pixel + click redirect
+# ===========================================================================
+
+# 1×1 transparent GIF — served for every open-tracking request
+_TRACKING_PIXEL = (
+    b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!"
+    b"\xf9\x04\x00\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00"
+    b"\x00\x02\x02D\x01\x00;"
+)
+
+
+@app.get("/track/open/{email_id}", include_in_schema=False)
+def track_open(email_id: str, db: Session = Depends(get_db)):
+    """
+    Called when a lead opens an email (via embedded <img> tag).
+    Records the open time and returns a transparent 1×1 GIF so the
+    email client doesn't display a broken image.
+
+    Embed in outreach HTML body:
+      <img src="{BASE_URL}/track/open/{email_id}" width="1" height="1" />
+    """
+    from app.database.models import OutreachEmail
+    from app.services.ab_testing import record_event
+    try:
+        email = db.query(OutreachEmail).filter(OutreachEmail.id == email_id).first()
+        if email and not email.opened_at:
+            email.opened_at = datetime.utcnow()
+            email.status = "opened"
+            db.commit()
+            record_event(db, email_id, "opened")
+            log.info(f"[track/open] Email {email_id} opened")
+    except Exception as e:
+        log.warning(f"[track/open] Failed to record open for {email_id}: {e}")
+    return Response(content=_TRACKING_PIXEL, media_type="image/gif")
+
+
+@app.get("/track/click/{email_id}", include_in_schema=False)
+def track_click(
+    email_id: str,
+    url: str = Query(..., description="Destination URL after click is recorded"),
+    db: Session = Depends(get_db),
+):
+    """
+    Called when a lead clicks a tracked link.
+    Records the click, then redirects to the real destination URL.
+
+    Wrap links in outreach body:
+      href="{BASE_URL}/track/click/{email_id}?url={urllib.parse.quote(real_url)}"
+    """
+    from app.database.models import OutreachEmail
+    from app.services.ab_testing import record_event
+    try:
+        email = db.query(OutreachEmail).filter(OutreachEmail.id == email_id).first()
+        if email:
+            if not email.opened_at:
+                email.opened_at = datetime.utcnow()
+                email.status = "opened"
+                record_event(db, email_id, "opened")
+            db.commit()
+            log.info(f"[track/click] Email {email_id} clicked → {url[:80]}")
+    except Exception as e:
+        log.warning(f"[track/click] Failed to record click for {email_id}: {e}")
+    return RedirectResponse(url=url, status_code=302)
+
+
+# ===========================================================================
+# Power BI / analytics export
+# ===========================================================================
+
+@app.get("/analytics/powerbi-export")
+def powerbi_export(
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+    limit: int = Query(5000, ge=1, le=50000),
+):
+    """
+    Flat JSON export optimised for Power BI Desktop's 'Get Data > Web' connector.
+
+    How to connect in Power BI Desktop:
+      1. Get Data → Web
+      2. URL: http://localhost:8000/analytics/powerbi-export
+      3. Add header: Authorization: Bearer {your_jwt_token}
+      4. Power BI will parse the JSON array into a table automatically.
+      5. Use 'Transform Data' to set column types, then build visuals.
+
+    Recommended Power BI measures to create:
+      - Hot Rate       = DIVIDE(COUNTIF([verdict],"Hot"), COUNT([id]))
+      - Avg Confidence = AVERAGE([confidence_score])
+      - Intent P75     = PERCENTILE([intent_score], 0.75)
+      - Conversion Rate= DIVIDE(COUNTIF([conversion_status],"converted"), COUNT([id]))
+    """
+    from app.database.models import OutreachEmail, IntentSignal, BookingRequest
+    from sqlalchemy.orm import selectinload
+
+    leads = (
+        db.query(Lead)
+        .options(
+            selectinload(Lead.enrichments),
+            selectinload(Lead.verdicts),
+            selectinload(Lead.outreach_emails),
+            selectinload(Lead.intent_signals),
+            selectinload(Lead.booking_requests),
+        )
+        .order_by(Lead.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    rows = []
+    for lead in leads:
+        enrichment = lead.enrichments[0] if lead.enrichments else None
+        verdict = lead.verdicts[0] if lead.verdicts else None
+        intent_score = round(min(1.0, sum(s.score for s in lead.intent_signals)), 4)
+
+        emails = lead.outreach_emails or []
+        emails_sent    = sum(1 for e in emails if e.status in ("sent", "opened", "replied"))
+        emails_opened  = sum(1 for e in emails if e.opened_at)
+        emails_replied = sum(1 for e in emails if e.replied_at)
+
+        bookings = lead.booking_requests or []
+        meeting_booked = any(b.status in ("confirmed", "link_sent") for b in bookings)
+
+        bant = verdict.bant_scores or {} if verdict else {}
+
+        rows.append({
+            # Lead
+            "id":                  lead.id,
+            "name":                lead.name,
+            "email":               lead.email,
+            "company":             lead.company,
+            "source":              lead.source,
+            "status":              lead.status,
+            "conversion_status":   lead.conversion_status,
+            "created_at":          lead.created_at.isoformat() if lead.created_at else None,
+            "archived":            lead.archived,
+
+            # Enrichment
+            "job_title":           enrichment.job_title if enrichment else None,
+            "seniority":           enrichment.seniority if enrichment else None,
+            "company_size":        enrichment.company_size if enrichment else None,
+            "industry":            enrichment.industry if enrichment else None,
+            "revenue_estimate":    enrichment.revenue_estimate if enrichment else None,
+            "enrichment_source":   enrichment.enrichment_source if enrichment else None,
+
+            # Qualification
+            "verdict":             verdict.final_verdict if verdict else None,
+            "confidence_score":    verdict.confidence_score if verdict else None,
+            "bant_budget":         bant.get("budget") if bant else None,
+            "bant_authority":      bant.get("authority") if bant else None,
+            "bant_need":           bant.get("need") if bant else None,
+            "bant_timeline":       bant.get("timeline") if bant else None,
+            "icp_match":           verdict.icp_match if verdict else None,
+
+            # Intent
+            "intent_score":        intent_score,
+
+            # Outreach
+            "emails_sent":         emails_sent,
+            "emails_opened":       emails_opened,
+            "emails_replied":      emails_replied,
+            "open_rate":           round(emails_opened / emails_sent, 4) if emails_sent else 0,
+            "reply_rate":          round(emails_replied / emails_sent, 4) if emails_sent else 0,
+
+            # Booking
+            "meeting_booked":      meeting_booked,
+
+            # Quality
+            "data_quality_score":  lead.data_quality_score,
+            "completeness_score":  lead.completeness_score,
+        })
+
+    return rows
+
+
+@app.get("/analytics/powerbi-export.csv")
+def powerbi_export_csv(
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+    limit: int = Query(5000, ge=1, le=50000),
+):
+    """Same data as /analytics/powerbi-export but as CSV download for Excel / manual import."""
+    rows = powerbi_export(current_user=current_user, db=db, limit=limit)
+    from app.services.export_service import to_csv_bytes
+    csv_bytes = to_csv_bytes(rows)
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=sdr_pipeline_export.csv"},
+    )
+
+
+@app.get("/analytics/semantic-search")
+def semantic_search(
+    query: str = Query(..., description="Natural language search across conversation history"),
+    lead_id: str = Query(None, description="Scope search to a specific lead"),
+    limit: int = Query(10, ge=1, le=50),
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """
+    Search conversation history by meaning using pgvector.
+    Falls back to keyword search if pgvector is not enabled.
+
+    Example queries:
+      - 'leads who mentioned pricing concerns'
+      - 'prospects interested in enterprise features'
+      - 'companies evaluating competitors'
+    """
+    from app.services.embedding_service import semantic_search_conversations
+    results = semantic_search_conversations(db, query, lead_id=lead_id, limit=limit)
+    return {"query": query, "results": results, "count": len(results)}
+
+
+# ===========================================================================
+# Pipeline trace — LangGraph per-lead execution breakdown
+# ===========================================================================
+
+@app.get("/leads/{lead_id}/pipeline-trace")
+def get_pipeline_trace(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """
+    Return the agent execution trace for a lead.
+    Shows which LangGraph nodes ran, their duration, and any errors.
+    """
+    from app.database.models import AgentLog
+    lead = crud.get_lead(db, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    logs = (
+        db.query(AgentLog)
+        .filter(AgentLog.lead_id == lead_id)
+        .order_by(AgentLog.created_at)
+        .all()
+    )
+
+    verdict = lead.verdicts[0] if lead.verdicts else None
+    nodes_executed = list(dict.fromkeys(l.agent_name for l in logs if l.success))
+
+    return {
+        "lead_id": lead_id,
+        "lead_name": lead.name,
+        "status": lead.status,
+        "final_verdict": verdict.final_verdict if verdict else None,
+        "nodes_executed": nodes_executed,
+        "agent_logs": [
+            {
+                "id": l.id,
+                "agent_name": l.agent_name,
+                "status": "success" if l.success else "failed",
+                "duration_ms": l.duration_ms,
+                "error_message": l.error_message,
+                "created_at": l.created_at.isoformat() if l.created_at else None,
+            }
+            for l in logs
+        ],
+    }
+
+
+# ===========================================================================
+# Outreach aggregate stats (for dashboard KPI cards)
+# ===========================================================================
+
+@app.get("/outreach/stats")
+def get_outreach_stats(
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """Aggregate email engagement stats across all sequences."""
+    from app.database.models import OutreachEmail as OutreachEmailModel
+    from sqlalchemy import func
+
+    rows = db.query(OutreachEmailModel).all()
+    total_sent = sum(1 for r in rows if r.status in ("sent", "opened", "replied"))
+    total_opened = sum(1 for r in rows if r.status in ("opened", "replied"))
+    total_replied = sum(1 for r in rows if r.status == "replied")
+
+    return {
+        "total_sent": total_sent,
+        "total_opened": total_opened,
+        "total_replied": total_replied,
+        "open_rate": round(total_opened / total_sent, 4) if total_sent else 0.0,
+        "reply_rate": round(total_replied / total_sent, 4) if total_sent else 0.0,
+        "emails_by_status": {
+            status: sum(1 for r in rows if r.status == status)
+            for status in ("scheduled", "sent", "opened", "replied", "failed")
+        },
+    }

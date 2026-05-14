@@ -7,6 +7,8 @@ import Dashboard from "./pages/Dashboard";
 import Leads from "./pages/Leads";
 import Import from "./pages/Import";
 import Analytics from "./pages/Analytics";
+import Pipeline from "./pages/Pipeline";
+import ABTests from "./pages/ABTests";
 import Users from "./pages/Users";
 import Settings from "./pages/Settings";
 
@@ -26,6 +28,8 @@ export default function App() {
             <Route element={<Layout />}>
               <Route index element={<Dashboard />} />
               <Route path="leads" element={<Leads />} />
+              <Route path="pipeline" element={<Pipeline />} />
+              <Route path="ab-tests" element={<ABTests />} />
               <Route element={<ProtectedRoute requireManager />}>
                 <Route path="import" element={<Import />} />
                 <Route path="analytics" element={<Analytics />} />

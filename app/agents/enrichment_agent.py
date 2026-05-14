@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from app.agents.base import BaseAgent
 from app.database import crud
-from app.services.enrichment.synthetic import SyntheticEnrichmentProvider
+from app.services.enrichment.synthetic import SyntheticEnrichmentProvider  # swap for HunterEnrichmentProvider via app/services/providers.py
 from app.schemas.enrichment import EnrichmentOutput
 
 
@@ -9,7 +9,7 @@ class EnrichmentAgent(BaseAgent):
     name = "enrichment"
 
     def __init__(self):
-        self._provider = SyntheticEnrichmentProvider()
+        self._provider = SyntheticEnrichmentProvider()  # production: replace with get_enrichment_provider() from app.services.providers
 
     def run(self, db: Session, lead_id: str, input_data: dict) -> dict:
         email = input_data["email"]

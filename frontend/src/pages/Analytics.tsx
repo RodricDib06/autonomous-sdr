@@ -3,8 +3,8 @@ import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
 } from "recharts";
-import { TrendingUp, Flame, Target, Award } from "lucide-react";
-import { leadsApi } from "../lib/api";
+import { TrendingUp, Flame, Target, Award, Mail } from "lucide-react";
+import { leadsApi, outreachApi, optimizationApi } from "../lib/api";
 import { Header } from "../components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { formatPercent } from "../lib/utils";
@@ -39,6 +39,8 @@ export default function Analytics() {
   const { data: stats } = useQuery({ queryKey: ["stats"], queryFn: leadsApi.stats, refetchInterval: 30_000 });
   const { data: quality } = useQuery({ queryKey: ["quality"], queryFn: leadsApi.qualityReport });
   const { data: hotData } = useQuery({ queryKey: ["hot"], queryFn: () => leadsApi.hot(100) });
+  const { data: outreachStats } = useQuery({ queryKey: ["outreach-stats"], queryFn: outreachApi.stats });
+  const { data: weights } = useQuery({ queryKey: ["optimization-weights"], queryFn: optimizationApi.currentWeights });
 
   const verdictData = stats
     ? [
@@ -93,6 +95,24 @@ export default function Analytics() {
   const seniorityData = Object.entries(seniorityMap)
     .sort((a, b) => b[1] - a[1])
     .map(([name, value]) => ({ name, value, fill: COLORS.indigo }));
+
+  // Outreach funnel
+  const funnelData = outreachStats
+    ? [
+        { name: "Sent", value: outreachStats.total_sent, fill: COLORS.violet },
+        { name: "Opened", value: outreachStats.total_opened, fill: COLORS.indigo },
+        { name: "Replied", value: outreachStats.total_replied, fill: COLORS.emerald },
+      ]
+    : [];
+
+  // BANT weights
+  const weightsData = weights
+    ? Object.entries(weights).map(([k, v]) => ({
+        name: k.charAt(0).toUpperCase() + k.slice(1),
+        value: +(v * 100).toFixed(1),
+        fill: COLORS.violet,
+      }))
+    : [];
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -218,7 +238,80 @@ export default function Analytics() {
           </Card>
         </div>
 
-        {/* Row 3: Industry + Seniority */}
+        {/* Row 3: Outreach funnel + BANT weights */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Mail className="w-4 h-4 text-violet-400" />
+                Outreach Funnel
+              </CardTitle>
+              <CardDescription>Email engagement across all sequences</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {funnelData.length > 0 && funnelData[0].value > 0 ? (
+                <>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={funnelData} barSize={48}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(217 33% 16%)" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <Tooltip content={<CustomTooltip />} />
+                      {funnelData.map((d, i) => (
+                        <Bar key={i} dataKey="value" fill={d.fill} radius={[4, 4, 0, 0]} name={d.name} />
+                      ))}
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div className="grid grid-cols-3 gap-2 mt-2 text-center">
+                    {outreachStats && [
+                      { label: "Open rate", value: formatPercent(outreachStats.open_rate) },
+                      { label: "Reply rate", value: formatPercent(outreachStats.reply_rate) },
+                      { label: "Sent", value: outreachStats.total_sent },
+                    ].map(({ label, value }) => (
+                      <div key={label} className="rounded-lg bg-secondary/30 py-2">
+                        <p className="text-sm font-semibold">{value}</p>
+                        <p className="text-[10px] text-muted-foreground">{label}</p>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">
+                  No outreach data yet
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-violet-400" />
+                BANT Qualification Weights
+              </CardTitle>
+              <CardDescription>Self-optimized from conversion outcomes</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {weightsData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={weightsData} barSize={36}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(217 33% 16%)" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis unit="%" tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Bar dataKey="value" fill={COLORS.violet} radius={[4, 4, 0, 0]} name="Weight %" />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">
+                  No optimization data yet
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Row 4: Industry + Seniority */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
             <CardHeader className="pb-2">

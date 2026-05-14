@@ -3,8 +3,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from "recharts";
-import { Flame, Users2, CheckCircle2, Clock, AlertCircle, Zap } from "lucide-react";
-import { leadsApi } from "../lib/api";
+import { Flame, Users2, CheckCircle2, Clock, AlertCircle, Zap, Mail, Calendar } from "lucide-react";
+import { leadsApi, outreachApi, bookingApi, abTestApi } from "../lib/api";
 import { Header } from "../components/layout/Header";
 import { StatCard } from "../components/StatCard";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
@@ -31,6 +31,18 @@ export default function Dashboard() {
   const { data: quality } = useQuery({
     queryKey: ["quality"],
     queryFn: leadsApi.qualityReport,
+    refetchInterval: 60_000,
+  });
+
+  const { data: outreachStats } = useQuery({
+    queryKey: ["outreach-stats"],
+    queryFn: outreachApi.stats,
+    refetchInterval: 60_000,
+  });
+
+  const { data: abResults } = useQuery({
+    queryKey: ["ab-test-results"],
+    queryFn: abTestApi.results,
     refetchInterval: 60_000,
   });
 
@@ -91,6 +103,38 @@ export default function Dashboard() {
             icon={stats?.failed ? AlertCircle : Clock}
             accent={stats?.failed ? "orange" : "blue"}
             loading={statsLoading}
+          />
+        </div>
+
+        {/* Outreach KPI row */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard
+            title="Emails Sent"
+            value={outreachStats?.total_sent ?? "—"}
+            sub="all time"
+            icon={Mail}
+            accent="blue"
+          />
+          <StatCard
+            title="Open Rate"
+            value={outreachStats ? formatPercent(outreachStats.open_rate) : "—"}
+            sub={`${outreachStats?.total_opened ?? 0} opened`}
+            icon={Mail}
+            accent="violet"
+          />
+          <StatCard
+            title="Reply Rate"
+            value={outreachStats ? formatPercent(outreachStats.reply_rate) : "—"}
+            sub={`${outreachStats?.total_replied ?? 0} replied`}
+            icon={Mail}
+            accent="emerald"
+          />
+          <StatCard
+            title="A/B Winner"
+            value={abResults?.winner ? `Variant ${abResults.winner}` : "—"}
+            sub={abResults?.significant ? "statistically significant" : "collecting data…"}
+            icon={Calendar}
+            accent={abResults?.significant ? "emerald" : "orange"}
           />
         </div>
 

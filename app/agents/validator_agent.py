@@ -3,7 +3,7 @@ import time
 from sqlalchemy.orm import Session
 from app.agents.base import BaseAgent
 from app.database import crud
-from app.services.ollama_client import OllamaClient
+from app.services.ollama_client import OllamaClient  # swap for ClaudeClient via app/services/providers.py
 from app.schemas.verdict import ValidatedOutput
 
 
@@ -15,41 +15,49 @@ Lead profile:
 AI qualification verdict:
 {verdict_json}
 
-Your job: Check whether the verdict is logically consistent with the lead profile.
+Your job: Validate that the verdict aligns with the BANT scores and lead profile.
 
-Questions to consider:
-- Does the final verdict (Hot/Warm/Cold) align with the enriched profile data?
-- Are the BANT scores consistent with each other and with the reasoning?
-- Does the company size match the ICP requirements for the given verdict?
-- Are there any contradictions (e.g., calling a 3-person company "Hot" when ICP needs 50+ employees)?
+Key checks:
+1. BANT-Verdict alignment:
+   - Hot verdict requires: authority >0.6, need >0.7, overall_score >0.75
+   - Warm verdict requires: authority >0.4 or need >0.4, overall_score 0.5-0.75
+   - Cold verdict: overall_score <0.5
 
-Assign a confidence_score from 0.0 to 1.0:
-- 0.9-1.0: verdict is clearly correct and well-reasoned
-- 0.7-0.9: verdict is likely correct with minor uncertainties
-- 0.5-0.7: verdict is plausible but questionable
-- Below 0.5: verdict has significant inconsistencies
+2. Internal consistency:
+   - Are the four BANT scores logically consistent with each other?
+   - Does the reasoning justify the scores?
 
-If the verdict has major contradictions, set validated=false and downgrade the verdict one level (Hot→Warm, Warm→Cold).
+3. ICP match:
+   - Does the company size align with the ICP min/max?
+   - Is the seniority at least the minimum ICP level?
 
-Respond with ONLY valid JSON — no markdown, no explanation outside the JSON:
+Assign a confidence_score (0-1):
+- 0.9-1.0: verdict clearly correct, all checks pass
+- 0.7-0.9: verdict likely correct, minor questions
+- 0.5-0.7: verdict plausible but some inconsistencies
+- <0.5: verdict has contradictions
+
+If the verdict fails core checks, downgrade: Hot→Warm, Warm→Cold.
+
+Respond with ONLY valid JSON:
 {{
   "validated": true,
   "final_verdict": "Hot",
   "confidence_score": 0.88,
-  "consistency_check": "...",
+  "consistency_check": "VP at SaaS: authority 0.9, need 0.95, timeline 0.8 all support Hot verdict",
   "flags": []
 }}
 
 final_verdict must be exactly one of: Hot, Warm, Cold
 confidence_score must be a float between 0.0 and 1.0
-flags is a list of strings describing any issues found (empty list if none)"""
+flags is a list of strings describing any issues found"""
 
 
 class ValidatorAgent(BaseAgent):
     name = "validator"
 
     def __init__(self):
-        self._ollama = OllamaClient()
+        self._ollama = OllamaClient()  # production: replace with get_ai_client() from app.services.providers
 
     def run(self, db: Session, lead_id: str, input_data: dict) -> dict:
         profile = {k: v for k, v in input_data.items() if k not in ("verdict_id", "enrichment_id")}

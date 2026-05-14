@@ -15,11 +15,12 @@ def make_good_response(verdict="Hot"):
         "verdict": verdict,
         "reasoning": "Strong ICP match. VP-level decision maker at a 200-person SaaS company.",
         "bant_scores": {
-            "budget": "High",
-            "authority": "High",
-            "need": "Medium",
-            "timeline": "Unknown"
+            "budget": 0.85,
+            "authority": 0.9,
+            "need": 0.75,
+            "timeline": 0.8
         },
+        "overall_score": 0.825,
         "icp_match": True
     })
 
@@ -45,10 +46,11 @@ def test_analysis_output_validation():
     data = json.loads(make_good_response("Cold"))
     validated = AnalysisOutput(**data)
     assert validated.verdict == "Cold"
-    assert validated.bant_scores.budget == "High"
+    assert validated.bant_scores.budget == 0.85
 
 
 def test_bant_coercion_unknown_value():
+    # Non-numeric strings cannot be coerced to float, so the validator falls back to 0.5
     data = {
         "verdict": "Warm",
         "reasoning": "Partial match.",
@@ -61,6 +63,6 @@ def test_bant_coercion_unknown_value():
         "icp_match": False
     }
     validated = AnalysisOutput(**data)
-    assert validated.bant_scores.budget == "Unknown"
-    assert validated.bant_scores.timeline == "Unknown"
-    assert validated.bant_scores.authority == "High"
+    assert validated.bant_scores.budget == 0.5
+    assert validated.bant_scores.timeline == 0.5
+    assert validated.bant_scores.authority == 0.5

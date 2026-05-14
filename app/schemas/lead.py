@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, model_validator
 
 
 class LeadCreate(BaseModel):
@@ -15,10 +15,42 @@ class LeadResponse(BaseModel):
     name: str
     email: str
     company: str
+    source: str | None = None
     status: str
     created_at: datetime
+    updated_at: datetime | None = None
+    data_quality_score: float | None = None
+    completeness_score: float | None = None
+    tags: list | None = None
+    archived: bool = False
+    final_verdict: str | None = None
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_final_verdict(cls, v):
+        if hasattr(v, "verdicts"):
+            try:
+                fv = v.verdicts[0].final_verdict if v.verdicts else None
+            except Exception:
+                fv = None
+            return {
+                "id": v.id,
+                "name": v.name,
+                "email": v.email,
+                "company": v.company,
+                "source": v.source,
+                "status": v.status,
+                "created_at": v.created_at,
+                "updated_at": v.updated_at,
+                "data_quality_score": v.data_quality_score,
+                "completeness_score": v.completeness_score,
+                "tags": v.tags,
+                "archived": v.archived,
+                "final_verdict": fv,
+            }
+        return v
 
 
 class LeadDetail(LeadResponse):

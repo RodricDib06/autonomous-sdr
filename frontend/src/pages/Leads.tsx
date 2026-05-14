@@ -127,22 +127,32 @@ function LeadDetailPanel({ lead, onClose }: { lead: LeadDetail; onClose: () => v
           <section className="space-y-3">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">BANT Analysis</h3>
             <div className="space-y-2.5">
-              {Object.entries(bant).map(([key, score]) => (
-                <div key={key} className="space-y-1">
-                  <div className="flex justify-between text-xs">
-                    <span className="capitalize text-muted-foreground">{key}</span>
-                    <span className="font-medium">{Math.round((score as number) * 100)}%</span>
+              {Object.entries(bant).map(([key, score]) => {
+                const s = typeof score === "number" ? score : 0.5;
+                const colorMap =
+                  s >= 0.7 ? "bg-emerald-500" :
+                  s >= 0.4 ? "bg-orange-400" :
+                  "bg-red-500";
+                const labelColorMap =
+                  s >= 0.7 ? "text-emerald-400" :
+                  s >= 0.4 ? "text-orange-400" :
+                  "text-red-400";
+                return (
+                  <div key={key} className="space-y-1">
+                    <div className="flex justify-between text-xs">
+                      <span className="capitalize text-muted-foreground">{key}</span>
+                      <span className={cn("font-medium", labelColorMap)}>
+                        {Math.round(s * 100)}%
+                      </span>
+                    </div>
+                    <Progress
+                      value={s * 100}
+                      className="h-1.5"
+                      indicatorClassName={colorMap}
+                    />
                   </div>
-                  <Progress
-                    value={(score as number) * 100}
-                    className="h-1.5"
-                    indicatorClassName={
-                      (score as number) >= 0.7 ? "bg-emerald-500" :
-                      (score as number) >= 0.4 ? "bg-orange-500" : "bg-red-500"
-                    }
-                  />
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         )}
@@ -401,7 +411,9 @@ export default function Leads() {
                           {lead.status}
                         </Badge>
                       </td>
-                      <td className="px-4 py-3">—</td>
+                      <td className="px-4 py-3">
+                        <VerdictBadge verdict={lead.final_verdict} />
+                      </td>
                       <td className="px-4 py-3">
                         <span className={cn("font-semibold", scoreColor(lead.data_quality_score))}>
                           {lead.data_quality_score != null ? Math.round(lead.data_quality_score * 100) : "—"}

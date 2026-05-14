@@ -12,6 +12,15 @@ import type {
   ImportHistory,
   QualityReport,
   HealthStatus,
+  IntentData,
+  OutreachEmail,
+  BookingRequest,
+  Conversation,
+  ABTestResult,
+  OptimizationRun,
+  PipelineTrace,
+  SemanticSearchResult,
+  OutreachStats,
 } from "../types";
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -125,6 +134,72 @@ export const leadsApi = {
 
   reprocessFailed: () =>
     api.post<{ requeued: number; message: string }>("/leads/reprocess-failed").then((r) => r.data),
+};
+
+// ── Pipeline ──────────────────────────────────────────────────────────────────
+export const pipelineApi = {
+  trace: (leadId: string) =>
+    api.get<PipelineTrace>(`/leads/${leadId}/pipeline-trace`).then((r) => r.data),
+};
+
+// ── Intent ────────────────────────────────────────────────────────────────────
+export const intentApi = {
+  get: (leadId: string) =>
+    api.get<IntentData>(`/leads/${leadId}/intent`).then((r) => r.data),
+};
+
+// ── Outreach ──────────────────────────────────────────────────────────────────
+export const outreachApi = {
+  list: (leadId: string) =>
+    api.get<{ emails: OutreachEmail[]; count: number }>(`/leads/${leadId}/outreach`).then((r) => r.data),
+
+  stats: () =>
+    api.get<OutreachStats>("/outreach/stats").then((r) => r.data),
+
+  sendNow: (leadId: string) =>
+    api.post(`/leads/${leadId}/outreach/send`).then((r) => r.data),
+};
+
+// ── Booking ───────────────────────────────────────────────────────────────────
+export const bookingApi = {
+  list: (leadId: string) =>
+    api.get<{ bookings: BookingRequest[]; count: number }>(`/leads/${leadId}/bookings`).then((r) => r.data),
+};
+
+// ── Conversations ─────────────────────────────────────────────────────────────
+export const conversationsApi = {
+  list: (leadId: string) =>
+    api.get<{ conversations: Conversation[]; count: number }>(`/leads/${leadId}/conversations`).then((r) => r.data),
+};
+
+// ── A/B Tests ─────────────────────────────────────────────────────────────────
+export const abTestApi = {
+  results: () => api.get<ABTestResult>("/ab-tests/results").then((r) => r.data),
+  promoteWinner: (sequenceId: string) =>
+    api.post(`/ab-tests/${sequenceId}/promote`).then((r) => r.data),
+};
+
+// ── Optimization ──────────────────────────────────────────────────────────────
+export const optimizationApi = {
+  history: (limit = 10) =>
+    api.get<{ runs: OptimizationRun[]; count: number }>("/optimization/history", { params: { limit } }).then((r) => r.data),
+
+  currentWeights: () =>
+    api.get<Record<string, number>>("/optimization/weights").then((r) => r.data),
+
+  runNow: () => api.post("/optimization/run").then((r) => r.data),
+};
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+export const analyticsApi = {
+  semanticSearch: (q: string, limit = 10) =>
+    api.get<{ results: SemanticSearchResult[]; count: number; query: string }>(
+      "/analytics/semantic-search",
+      { params: { q, limit } }
+    ).then((r) => r.data),
+
+  powerBiExport: () =>
+    api.get("/analytics/powerbi-export", { responseType: "blob" }).then((r) => r.data),
 };
 
 // ── Health ─────────────────────────────────────────────────────────────────────

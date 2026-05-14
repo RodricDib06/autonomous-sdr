@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Float, Boolean, Integer, Text, ForeignKey, DateTime
+from sqlalchemy import String, Float, Boolean, Integer, Text, ForeignKey, DateTime, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database.connection import Base
@@ -36,6 +36,10 @@ class Lead(Base):
     agent_logs: Mapped[list["AgentLog"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
     history: Mapped[list["LeadHistory"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
     assigned_to: Mapped["User | None"] = relationship(foreign_keys=[assigned_to_id])
+    outreach_emails: Mapped[list["OutreachEmail"]] = relationship(back_populates="lead", cascade="all, delete-orphan", foreign_keys="OutreachEmail.lead_id")
+    conversations: Mapped[list["Conversation"]] = relationship(back_populates="lead", cascade="all, delete-orphan", foreign_keys="Conversation.lead_id")
+    booking_requests: Mapped[list["BookingRequest"]] = relationship(back_populates="lead", cascade="all, delete-orphan", foreign_keys="BookingRequest.lead_id")
+    intent_signals: Mapped[list["IntentSignal"]] = relationship(back_populates="lead", cascade="all, delete-orphan", foreign_keys="IntentSignal.lead_id")
 
 
 class Enrichment(Base):
@@ -148,3 +152,153 @@ class LeadHistory(Base):
 
     lead: Mapped["Lead"] = relationship(back_populates="history")
     changed_by: Mapped["User | None"] = relationship(foreign_keys=[changed_by_id])
+
+
+# ---------------------------------------------------------------------------
+# Outreach
+# ---------------------------------------------------------------------------
+
+class OutreachSequence(Base):
+    """A named multi-step email sequence, optionally tagged for A/B testing."""
+    __tablename__ = "outreach_sequences"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    name: Mapped[str] = mapped_column(String(255))
+    # steps: list of {step: int, delay_days: int, subject_template: str, body_template: str}
+    steps: Mapped[list] = mapped_column(JSONB, default=list)
+    ab_variant: Mapped[str | None] = mapped_column(String(10), nullable=True)  # "A", "B", etc.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    emails: Mapped[list["OutreachEmail"]] = relationship(back_populates="sequence", cascade="all, delete-orphan")
+
+
+class OutreachEmail(Base):
+    """A single email in a sequence — scheduled, sent, or failed."""
+    __tablename__ = "outreach_emails"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    lead_id: Mapped[str] = mapped_column(String(36), ForeignKey("leads.id"), index=True)
+    sequence_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("outreach_sequences.id"), nullable=True)
+    step_number: Mapped[int] = mapped_column(Integer, default=1)
+    subject: Mapped[str] = mapped_column(String(500))
+    body: Mapped[str] = mapped_column(Text)
+    # status: scheduled | sent | opened | clicked | replied | bounced | failed
+    status: Mapped[str] = mapped_column(String(50), default="scheduled")
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    replied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    lead: Mapped["Lead"] = relationship(back_populates="outreach_emails", foreign_keys=[lead_id])
+    sequence: Mapped["OutreachSequence | None"] = relationship(back_populates="emails")
+
+
+# ---------------------------------------------------------------------------
+# Conversations (agent memory)
+# ---------------------------------------------------------------------------
+
+class Conversation(Base):
+    """Agent memory — full message history for a lead across any channel."""
+    __tablename__ = "conversations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    lead_id: Mapped[str] = mapped_column(String(36), ForeignKey("leads.id"), index=True)
+    # channel: email | sms | chat | linkedin | internal
+    channel: Mapped[str] = mapped_column(String(50), default="email")
+    # messages: list of {role: "agent"|"lead", content: str, timestamp: ISO str}
+    messages: Mapped[list] = mapped_column(JSONB, default=list)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)  # LLM-generated summary of conversation
+    # embedding: pgvector column for semantic search — nullable, populated by embedding_service
+    # Requires: CREATE EXTENSION IF NOT EXISTS vector; ALTER TABLE conversations ADD COLUMN embedding vector(768);
+    # Skipped in SQLAlchemy model definition to keep Postgres extension optional at startup.
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    lead: Mapped["Lead"] = relationship(back_populates="conversations", foreign_keys=[lead_id])
+
+
+# ---------------------------------------------------------------------------
+# Booking
+# ---------------------------------------------------------------------------
+
+class BookingRequest(Base):
+    """A meeting booking attempt — linked to Cal.com (or Calendly) externally."""
+    __tablename__ = "booking_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    lead_id: Mapped[str] = mapped_column(String(36), ForeignKey("leads.id"), index=True)
+    # status: pending | link_sent | confirmed | cancelled | rescheduled | no_show
+    status: Mapped[str] = mapped_column(String(50), default="pending")
+    booking_link: Mapped[str | None] = mapped_column(Text, nullable=True)
+    external_booking_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Cal.com / Calendly ID
+    meeting_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    lead: Mapped["Lead"] = relationship(back_populates="booking_requests", foreign_keys=[lead_id])
+
+
+# ---------------------------------------------------------------------------
+# Intent signals
+# ---------------------------------------------------------------------------
+
+class IntentSignal(Base):
+    """A buyer-intent data point captured for a lead."""
+    __tablename__ = "intent_signals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    lead_id: Mapped[str] = mapped_column(String(36), ForeignKey("leads.id"), index=True)
+    # signal_type: page_visit | pricing_page | competitor_research | job_posting | funding | news_mention
+    signal_type: Mapped[str] = mapped_column(String(100))
+    score: Mapped[float] = mapped_column(Float, default=0.0)  # 0.0–1.0 contribution
+    # source: heuristic | bombora | g2 | web_scrape
+    source: Mapped[str] = mapped_column(String(50), default="heuristic")
+    signal_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    lead: Mapped["Lead"] = relationship(back_populates="intent_signals", foreign_keys=[lead_id])
+
+
+# ---------------------------------------------------------------------------
+# A/B testing
+# ---------------------------------------------------------------------------
+
+class ABTestResult(Base):
+    """Aggregate conversion stats for a sequence variant — updated on each outcome."""
+    __tablename__ = "ab_test_results"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    sequence_id: Mapped[str] = mapped_column(String(36), ForeignKey("outreach_sequences.id"), index=True)
+    variant: Mapped[str] = mapped_column(String(10))  # "A", "B", etc.
+    emails_sent: Mapped[int] = mapped_column(Integer, default=0)
+    emails_opened: Mapped[int] = mapped_column(Integer, default=0)
+    replies: Mapped[int] = mapped_column(Integer, default=0)
+    meetings_booked: Mapped[int] = mapped_column(Integer, default=0)
+    conversions: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    sequence: Mapped["OutreachSequence"] = relationship()
+
+
+# ---------------------------------------------------------------------------
+# Self-optimization
+# ---------------------------------------------------------------------------
+
+class OptimizationRun(Base):
+    """Record of each ICP weight adjustment from the self-optimization loop."""
+    __tablename__ = "optimization_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    run_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # old/new ICP weights: {"budget": 0.25, "authority": 0.25, "need": 0.25, "timeline": 0.25}
+    old_weights: Mapped[dict] = mapped_column(JSONB, default=dict)
+    new_weights: Mapped[dict] = mapped_column(JSONB, default=dict)
+    improvement_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sample_size: Mapped[int] = mapped_column(Integer, default=0)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)

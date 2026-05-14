@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sdr_user
+          POSTGRES_PASSWORD: sdrpassword
+          POSTGRES_DB: sdr_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sdr_user"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://sdr_user:sdrpassword@localhost:5432/sdr_db
+      REDIS_URL: redis://localhost:6379
+      AI_PROVIDER: ollama
+      ENRICHMENT_PROVIDER: synthetic
+      SECRET_KEY: ci-test-secret-key
+      PYTHONDONTWRITEBYTECODE: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run migrations
+        run: |
+          alembic upgrade head
+        env:
+          DATABASE_URL: postgresql://sdr_user:sdrpassword@localhost:5432/sdr_db
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short --no-header -q 2>&1 | tee test-output.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-output.txt
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint
+        run: ruff check app/ --select E,F,W --ignore E501,W503

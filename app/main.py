@@ -991,7 +991,7 @@ def get_bookings(
         .order_by(BookingRequest.created_at.desc())
         .all()
     )
-    return [
+    rows = [
         {
             "id": b.id,
             "status": b.status,
@@ -1002,6 +1002,7 @@ def get_bookings(
         }
         for b in bookings
     ]
+    return {"bookings": rows, "count": len(rows)}
 
 
 @app.patch("/leads/{lead_id}/bookings/{booking_id}")
@@ -1063,7 +1064,7 @@ def get_conversations(
     """Return all conversation threads for a lead."""
     from app.services.memory_service import get_all_conversations
     convs = get_all_conversations(db, lead_id)
-    return [
+    rows = [
         {
             "id": c.id,
             "channel": c.channel,
@@ -1074,6 +1075,7 @@ def get_conversations(
         }
         for c in convs
     ]
+    return {"conversations": rows, "count": len(rows)}
 
 
 # ===========================================================================
@@ -1152,15 +1154,75 @@ def get_ab_results(
     db: Session = Depends(get_db),
 ):
     """Return per-variant conversion metrics for all outreach sequences."""
-    from app.services.ab_testing import get_test_results, find_winner
-    results = get_test_results(db)
-    winner = find_winner(db)
-    return {"variants": results, "winner": winner}
+    from app.services.ab_testing import get_test_results, find_winner, _chi_square_p, _MIN_SAMPLE
+    from app.database.models import OutreachSequence
+
+    raw = get_test_results(db)
+
+    # Attach sequence names and normalise field names for the frontend
+    seq_names: dict[str, str] = {
+        s.id: s.name
+        for s in db.query(OutreachSequence).all()
+    }
+    variants = [
+        {
+            "sequence_id": r["sequence_id"],
+            "sequence_name": seq_names.get(r["sequence_id"], r["sequence_id"]),
+            "variant": r["variant"],
+            "emails_sent": r["emails_sent"],
+            "opens": r["emails_opened"],
+            "replies": int(r["reply_rate"] * r["emails_sent"]) if r["emails_sent"] else 0,
+            "conversions": int(r["conversion_rate"] * r["emails_sent"]) if r["emails_sent"] else 0,
+            "open_rate": r["open_rate"],
+            "reply_rate": r["reply_rate"],
+            "conversion_rate": r["conversion_rate"],
+        }
+        for r in raw
+    ]
+
+    # Compute significance across the two most-sent variants
+    winner_variant: str | None = None
+    p_value: float | None = None
+    significant = False
+    total_sample = sum(v["emails_sent"] for v in variants)
+
+    eligible = [v for v in variants if v["emails_sent"] >= _MIN_SAMPLE]
+    if len(eligible) >= 2:
+        eligible.sort(key=lambda v: v["conversion_rate"], reverse=True)
+        best, second = eligible[0], eligible[1]
+        p = _chi_square_p(
+            best["conversions"], best["emails_sent"],
+            second["conversions"], second["emails_sent"],
+        )
+        p_value = round(p, 4)
+        if p < 0.05:
+            significant = True
+            winner_variant = best["variant"]
+
+    return {
+        "variants": variants,
+        "winner": winner_variant,
+        "p_value": p_value,
+        "significant": significant,
+        "sample_size": total_sample,
+    }
 
 
 @app.post("/ab-tests/promote-winner")
-def promote_ab_winner(
+def promote_ab_winner_legacy(
     sequence_id: str = Query(...),
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Legacy query-param route — prefer POST /ab-tests/{sequence_id}/promote."""
+    from app.services.ab_testing import promote_winner
+    promote_winner(db, sequence_id)
+    return {"status": "promoted", "winning_sequence_id": sequence_id}
+
+
+@app.post("/ab-tests/{sequence_id}/promote")
+def promote_ab_winner(
+    sequence_id: str,
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -1197,7 +1259,22 @@ def get_optimization_history(
 ):
     """Return recent optimization runs with old/new weights and improvement scores."""
     from app.services.optimization_loop import get_optimization_history
-    return get_optimization_history(db, limit=limit)
+    raw = get_optimization_history(db, limit=limit)
+    runs = []
+    for r in raw:
+        old_w = r.get("old_weights") or {}
+        new_w = r.get("new_weights") or {}
+        delta = {k: round(new_w.get(k, 0) - old_w.get(k, 0), 4) for k in set(old_w) | set(new_w)}
+        runs.append({
+            "id": r["id"],
+            "created_at": r["run_at"],
+            "leads_analysed": r.get("sample_size", 0),
+            "old_weights": old_w,
+            "new_weights": new_w,
+            "weight_delta": delta,
+            "notes": r.get("notes"),
+        })
+    return {"runs": runs, "count": len(runs)}
 
 
 @app.get("/optimization/weights")
@@ -1207,7 +1284,7 @@ def get_current_weights_endpoint(
 ):
     """Return the BANT weights currently used for scoring."""
     from app.services.optimization_loop import get_current_weights
-    return {"weights": get_current_weights(db)}
+    return get_current_weights(db)
 
 
 # ===========================================================================

@@ -22,6 +22,17 @@ class Settings:
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
+    # Groq — used when AI_PROVIDER=groq (free tier: 6 000 req/h, 500 k tok/min)
+    # Sign up at https://console.groq.com — no credit card for free tier
+    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
+
+    # ── Research / web search ─────────────────────────────────────────────────
+    # Tavily — used by ResearchAgent for real web search (free: 1 000 searches/mo)
+    # Sign up at https://tavily.com — no credit card for free tier
+    # Without a key, DuckDuckGo is used as a free fallback (no sign-up needed)
+    TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
+
     # ── Enrichment provider ────────────────────────────────────────────────────
     # "synthetic" (default, free, heuristic) | "hunter" (real company data)
     ENRICHMENT_PROVIDER: str = os.getenv("ENRICHMENT_PROVIDER", "synthetic")

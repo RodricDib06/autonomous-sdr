@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type JSX } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Search, Filter, Download, X, ChevronRight,
@@ -204,7 +204,7 @@ function IntentTab({ leadId }: { leadId: string }) {
         <Zap className="w-5 h-5 text-violet-400 shrink-0" />
         <div>
           <p className="text-xs text-muted-foreground">Total Intent Score</p>
-          <p className="text-2xl font-bold text-violet-400">{Math.round(data.total_score * 100)}%</p>
+          <p className="text-2xl font-bold text-violet-400">{Math.round(data.score * 100)}%</p>
         </div>
       </div>
 
@@ -216,9 +216,9 @@ function IntentTab({ leadId }: { leadId: string }) {
           data.signals.map((s, i) => (
             <div key={i} className="flex items-center gap-3 rounded-lg px-3 py-2.5 bg-secondary/30 text-xs">
               <div className="w-1.5 h-1.5 rounded-full bg-violet-400 shrink-0" />
-              <span className="flex-1 text-muted-foreground font-mono">{s.type.replace(/_/g, " ")}</span>
-              <Badge variant="secondary" className="text-[10px]">{s.source}</Badge>
-              <span className="font-semibold text-violet-400 w-10 text-right">+{Math.round(s.score * 100)}%</span>
+              <span className="flex-1 text-muted-foreground font-mono">{s.rule.replace(/_/g, " ")}</span>
+              <Badge variant="secondary" className="text-[10px]">{s.triggered ? "triggered" : "inactive"}</Badge>
+              <span className="font-semibold text-violet-400 w-10 text-right">+{Math.round(s.weight * 100)}%</span>
             </div>
           ))
         )}

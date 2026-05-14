@@ -226,7 +226,6 @@ export default function ABTests() {
                       <YAxis unit="%" tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
                       <Tooltip
                         contentStyle={{ background: "hsl(222 47% 9%)", border: "1px solid hsl(217 33% 16%)", borderRadius: 8 }}
-                        formatter={(v: number) => `${v}%`}
                       />
                       <Legend wrapperStyle={{ fontSize: "11px" }} />
                       <Bar dataKey="Open rate" fill={COLORS.bar[0]} radius={[4, 4, 0, 0]} />

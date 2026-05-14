@@ -2,15 +2,19 @@ from app.config import settings
 
 
 def get_ai_client():
-    """Return the configured AI client (OllamaClient or ClaudeClient).
+    """Return the configured AI client.
 
     Controlled by AI_PROVIDER env var:
-      ollama  — default, free, requires local Ollama + model
+      ollama  — default, free, requires local Ollama + a pulled model
+      groq    — free tier (6 000 req/h), requires GROQ_API_KEY
       claude  — production quality, requires ANTHROPIC_API_KEY
     """
     if settings.AI_PROVIDER == "claude":
         from app.services.claude_client import ClaudeClient
         return ClaudeClient()
+    if settings.AI_PROVIDER == "groq":
+        from app.services.groq_client import GroqClient
+        return GroqClient()
     from app.services.ollama_client import OllamaClient
     return OllamaClient()
 

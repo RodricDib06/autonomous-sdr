@@ -1,9 +1,19 @@
 import logging
+import json
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response, RedirectResponse, StreamingResponse
 from sqlalchemy.orm import Session
+
+# Configure structlog before any other imports that use logging
+from app.logging_config import configure_logging
+configure_logging()
+
+import structlog
+log = structlog.get_logger(__name__)
 
 from app.database.connection import get_db, create_all_tables
 from app.database import crud
@@ -24,15 +34,6 @@ from app.routers.auth import router as auth_router
 from app.routers.ingest import router as ingest_router
 from app.config import settings
 from fastapi import UploadFile, File
-from fastapi.responses import Response, RedirectResponse
-
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -45,7 +46,7 @@ async def lifespan(app: FastAPI):
         import os as _os
         _testing = bool(_os.getenv("TESTING"))
 
-        log.info("AutonomousSDR starting up...")
+        log.info("startup", service="AutonomousSDR")
         if not _testing:
             create_all_tables()
 
@@ -54,20 +55,22 @@ async def lifespan(app: FastAPI):
             try:
                 redis = get_redis()
                 redis.ping()
-                log.info("✓ Redis connection OK")
+                log.info("startup.redis", status="ok")
             except Exception as e:
-                log.error(f"✗ Redis connection failed: {e}")
+                log.error("startup.redis", status="failed", error=str(e))
                 raise
-        
-        # Validate Ollama connection (optional — skipped in test mode)
+
+        # Validate AI provider connection (optional — skipped in test mode)
         if not _testing:
             try:
-                from app.services.ollama_client import OllamaClient
-                client = OllamaClient()
-                client.generate("test")
-                log.info("✓ Ollama connection OK")
+                from app.services.providers import get_ai_client
+                client = get_ai_client()
+                client.generate("ping")
+                log.info("startup.ai_provider", provider=settings.AI_PROVIDER, status="ok")
             except OllamaConnectionError as e:
-                log.warning(f"⚠ Ollama not ready yet: {e}. Will retry on first request.")
+                log.warning("startup.ai_provider", provider=settings.AI_PROVIDER, status="not_ready", error=str(e))
+            except Exception as e:
+                log.warning("startup.ai_provider", provider=settings.AI_PROVIDER, status="not_ready", error=str(e))
         
         # Seed initial admin if no users exist (skipped in test mode)
         if not _testing:
@@ -87,18 +90,18 @@ async def lifespan(app: FastAPI):
                         )
                         db_seed.add(admin)
                         db_seed.commit()
-                        log.info(f"✓ Initial admin created: {settings.INITIAL_ADMIN_EMAIL}")
+                        log.info("startup.admin_seed", email=settings.INITIAL_ADMIN_EMAIL)
                     else:
-                        log.info("✓ Users table already populated — skipping admin seed")
+                        log.info("startup.admin_seed", status="already_exists")
                 finally:
                     db_seed.close()
             except Exception as e:
-                log.warning(f"⚠ Admin seed skipped (auth tables may not exist yet): {e}")
+                log.warning("startup.admin_seed", status="skipped", error=str(e))
 
-        log.info("AutonomousSDR ready to accept leads")
+        log.info("startup.ready", ai_provider=settings.AI_PROVIDER, enrichment_provider=settings.ENRICHMENT_PROVIDER)
         yield
 
-        log.info("AutonomousSDR shutting down...")
+        log.info("shutdown")
     except Exception as e:
         log.critical(f"Startup failed: {e}")
         raise
@@ -132,9 +135,97 @@ def health_check():
         "status": "healthy",
         "service": "AutonomousSDR",
         "version": "1.0.0",
+        "ai_provider": settings.AI_PROVIDER,
+        "enrichment_provider": settings.ENRICHMENT_PROVIDER,
         "worker_active": worker["worker_active"],
         "worker_last_seen": worker["worker_last_seen"],
     }
+
+
+@app.get("/metrics", include_in_schema=False)
+def prometheus_metrics():
+    """
+    Prometheus-format metrics endpoint.
+    Scrape with Grafana Agent or Prometheus: scrape_interval: 15s
+    Grafana Cloud free tier: https://grafana.com/products/cloud/
+    """
+    from app.metrics import metrics_response
+    body, content_type = metrics_response()
+    return Response(content=body, media_type=content_type)
+
+
+@app.get("/leads/{lead_id}/pipeline/stream", include_in_schema=False)
+async def stream_pipeline_events(
+    lead_id: str,
+    timeout: int = Query(120, ge=10, le=300, description="Max seconds to wait for completion"),
+    token: str = Query(None, description="JWT token (EventSource can't set Authorization header)"),
+    db: Session = Depends(get_db),
+):
+    """
+    Server-Sent Events stream for live pipeline execution updates.
+
+    Subscribes to the Redis pub/sub channel "pipeline:{lead_id}" and forwards
+    each node event to the browser as an SSE data frame.
+
+    Event shape (JSON):
+      {"node": "enrich", "status": "running"|"complete"|"error", "duration_ms": 142, ...}
+    Terminal event:
+      {"node": "pipeline", "status": "complete", "verdict": "Hot"}
+
+    Frontend usage:
+      const es = new EventSource(`/leads/${id}/pipeline/stream`);
+      es.onmessage = e => console.log(JSON.parse(e.data));
+      es.addEventListener('complete', () => es.close());
+    """
+    # Authenticate via query-param token (EventSource doesn't support headers)
+    if token:
+        from app.auth.dependencies import _user_from_jwt
+        user = _user_from_jwt(token, db)
+        if not user or not user.is_active:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    # (In dev/test, allow unauthenticated SSE when no token is provided)
+
+    async def event_generator():
+        import redis.asyncio as aioredis
+
+        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        pubsub = r.pubsub()
+        await pubsub.subscribe(f"pipeline:{lead_id}")
+
+        # Send an initial "connected" heartbeat so the client knows the stream is live
+        yield f"data: {json.dumps({'node': 'stream', 'status': 'connected', 'lead_id': lead_id})}\n\n"
+
+        deadline = asyncio.get_event_loop().time() + timeout
+        try:
+            async for message in pubsub.listen():
+                if asyncio.get_event_loop().time() > deadline:
+                    yield f"data: {json.dumps({'node': 'stream', 'status': 'timeout'})}\n\n"
+                    break
+
+                if message["type"] != "message":
+                    continue
+
+                data = message["data"]
+                yield f"data: {data}\n\n"
+
+                try:
+                    event = json.loads(data)
+                    if event.get("node") == "pipeline" and event.get("status") == "complete":
+                        break
+                except Exception:
+                    pass
+        finally:
+            await pubsub.unsubscribe(f"pipeline:{lead_id}")
+            await r.aclose()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # disable nginx proxy buffering
+        },
+    )
 
 
 @app.post("/leads", response_model=LeadResponse)

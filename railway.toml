@@ -1,0 +1,29 @@
+# AutonomousSDR — Railway deployment config
+# Docs: https://docs.railway.app/reference/config-as-code
+#
+# One-click deploy:
+#   1. Push this repo to GitHub
+#   2. railway login && railway link
+#   3. railway up
+#
+# Multi-service setup (Railway dashboard):
+#   Service "api"    → Root: . | Start: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+#   Service "worker" → Root: . | Start: python -m app.worker.lead_worker
+#
+# Required env vars (set in Railway dashboard or .env):
+#   DATABASE_URL, REDIS_URL, SECRET_KEY, AI_PROVIDER, GROQ_API_KEY
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "./Dockerfile"
+
+[deploy]
+# Overridden per-service in Railway dashboard; default here is the API server
+startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+# Railway injects $PORT automatically — do not hardcode it
+# Railway also provides $DATABASE_URL and $REDIS_URL if you add those plugins

@@ -70,6 +70,8 @@ services:
       GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-70b-versatile}
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       ENRICHMENT_PROVIDER: ${ENRICHMENT_PROVIDER:-synthetic}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      AUTO_PROCESS_DELAY_SECONDS: ${AUTO_PROCESS_DELAY_SECONDS:-60}
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-admin@autonomoussdr.com}
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-changeme123}
       SECRET_KEY: ${SECRET_KEY:-demo-secret-key-change-in-production}
@@ -97,6 +99,9 @@ services:
       GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-70b-versatile}
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       ENRICHMENT_PROVIDER: ${ENRICHMENT_PROVIDER:-synthetic}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      AUTO_PROCESS_DELAY_SECONDS: ${AUTO_PROCESS_DELAY_SECONDS:-60}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-admin@autonomoussdr.com}
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-changeme123}
       SECRET_KEY: ${SECRET_KEY:-demo-secret-key-change-in-production}
@@ -131,6 +136,8 @@ services:
       GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-70b-versatile}
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       ENRICHMENT_PROVIDER: ${ENRICHMENT_PROVIDER:-synthetic}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      AUTO_PROCESS_DELAY_SECONDS: ${AUTO_PROCESS_DELAY_SECONDS:-60}
       SECRET_KEY: ${SECRET_KEY:-demo-secret-key-change-in-production}
     depends_on:
       postgres:

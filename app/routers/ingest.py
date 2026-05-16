@@ -24,20 +24,48 @@ internal LeadCreate schema, deduplicates, then pushes to the processing queue.
 #   - Eventbrite:      https://www.eventbrite.com/platform/api#/reference/webhook
 """
 
+import hashlib
+import hmac
 import logging
+import re
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 from typing import Any
 
+import structlog
+
 from app.database.connection import get_db
 from app.database import crud
 from app.services.queue_service import push_lead_job
+from app.services.rate_limiter import limiter
 from app.config import settings
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/ingest", tags=["ingest"])
+
+# ---------------------------------------------------------------------------
+# Webhook secret verification
+# ---------------------------------------------------------------------------
+
+def _verify_webhook_secret(secret: str | None) -> None:
+    """
+    Validate the X-Webhook-Secret header against WEBHOOK_SECRET env var.
+    Skipped when WEBHOOK_SECRET is not configured (dev / open demo mode).
+
+    PRODUCTION: always set WEBHOOK_SECRET and verify on every ingest endpoint.
+    Use HMAC-SHA256 for platform-specific signatures (Meta, HubSpot, etc.):
+      computed = hmac.new(secret_bytes, raw_body, sha256).hexdigest()
+      if not hmac.compare_digest(computed, header_value): raise 403
+    """
+    configured = settings.WEBHOOK_SECRET
+    if not configured:
+        return   # no secret configured → open mode (dev / demo)
+    if not secret:
+        raise HTTPException(status_code=403, detail="Missing X-Webhook-Secret header")
+    if not hmac.compare_digest(configured, secret):
+        raise HTTPException(status_code=403, detail="Invalid webhook secret")
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -47,22 +75,41 @@ def _normalise_email(email: str) -> str:
     return email.strip().lower()
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
 def _create_and_queue(db: Session, name: str, email: str, company: str, source: str) -> dict:
-    """Deduplicate → create lead → push queue job. Returns result dict."""
+    """Deduplicate → validate → create lead → push queue job → track status in Redis."""
     email = _normalise_email(email)
 
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(status_code=422, detail=f"Invalid email address: {email}")
+
     # PoC dedup: check by email only
-    # PRODUCTION: use probabilistic matching on (email, name, domain, phone) via Clearbit's /v2/people/find
+    # PRODUCTION: probabilistic matching on (email, name, domain, phone) via Clearbit /v2/people/find
     from app.database.models import Lead
     existing = db.query(Lead).filter(Lead.email == email).first()
     if existing:
-        log.info(f"[ingest] Duplicate detected for {email} (existing={existing.id})")
+        log.info("ingest.duplicate", email=email, existing_id=existing.id[:8])
         return {"status": "duplicate", "lead_id": existing.id, "email": email}
 
     lead = crud.create_lead(db, name=name, email=email, company=company, source=source)
     push_lead_job(lead.id)
-    log.info(f"[ingest/{source}] New lead queued: {lead.id} ({email})")
-    return {"status": "queued", "lead_id": lead.id, "email": email}
+
+    # Track job status in Redis (TTL 24 h) so callers can poll GET /jobs/{lead_id}
+    try:
+        from app.services.queue_service import get_redis
+        import json as _json
+        get_redis().setex(
+            f"job:{lead.id}",
+            86_400,
+            _json.dumps({"lead_id": lead.id, "status": "queued", "source": source}),
+        )
+    except Exception:
+        pass
+
+    log.info("ingest.queued", source=source, lead_id=lead.id[:8], email=email)
+    return {"status": "queued", "job_id": lead.id, "lead_id": lead.id, "email": email}
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +144,10 @@ class FormPayload(BaseModel):
 def ingest_form(
     payload: FormPayload,
     db: Session = Depends(get_db),
+    x_webhook_secret: str | None = Header(None),
 ):
     """Accept a website form submission and queue it for qualification."""
+    _verify_webhook_secret(x_webhook_secret)
     try:
         result = _create_and_queue(
             db,
@@ -152,8 +201,10 @@ class AdsPayload(BaseModel):
 def ingest_ads(
     payload: AdsPayload,
     db: Session = Depends(get_db),
+    x_webhook_secret: str | None = Header(None),
 ):
     """Accept a lead from a marketing ad platform and queue it for qualification."""
+    _verify_webhook_secret(x_webhook_secret)
     try:
         company = payload.company or f"via {payload.platform} ad"
         result = _create_and_queue(
@@ -206,8 +257,10 @@ class EmailPayload(BaseModel):
 def ingest_email(
     payload: EmailPayload,
     db: Session = Depends(get_db),
+    x_webhook_secret: str | None = Header(None),
 ):
     """Accept a parsed inbound email and queue it for qualification."""
+    _verify_webhook_secret(x_webhook_secret)
     try:
         # Infer company from email domain when not given
         company = payload.company
@@ -260,8 +313,10 @@ class LinkedInPayload(BaseModel):
 def ingest_linkedin(
     payload: LinkedInPayload,
     db: Session = Depends(get_db),
+    x_webhook_secret: str | None = Header(None),
 ):
     """Accept a LinkedIn signal (profile visit / DM) and queue it for qualification."""
+    _verify_webhook_secret(x_webhook_secret)
     try:
         if not payload.email:
             # Without an email we can't deduplicate or enrich — log and skip.
@@ -317,8 +372,10 @@ class EventPayload(BaseModel):
 def ingest_event(
     payload: EventPayload,
     db: Session = Depends(get_db),
+    x_webhook_secret: str | None = Header(None),
 ):
     """Accept an event/webinar registration and queue it for qualification."""
+    _verify_webhook_secret(x_webhook_secret)
     try:
         company = payload.attendee_company or f"via event: {payload.event_name}"
         result = _create_and_queue(
@@ -332,3 +389,135 @@ def ingest_event(
     except Exception as e:
         log.error(f"[ingest/event] Failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to ingest event registration")
+
+
+# ---------------------------------------------------------------------------
+# 6. Universal webhook — auto-detects format (Typeform, Zapier, Make, n8n)
+# ---------------------------------------------------------------------------
+
+@router.post("/webhook")
+@limiter.limit("100/minute")
+async def ingest_universal_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+    x_webhook_secret: str | None = Header(None),
+):
+    """
+    Universal ingest endpoint — accepts any JSON payload and heuristically
+    extracts name / email / company.  Designed for Zapier, Make.com, n8n,
+    Typeform, and any tool that can send a generic webhook.
+
+    Field resolution order (first non-empty wins):
+      email   → email | Email | from | from_email | lead_email
+      name    → name | Name | full_name | first_name+last_name | fullName
+      company → company | Company | organization | org | account
+
+    Zapier example action:
+      URL: https://your-app.railway.app/ingest/webhook
+      Headers: X-Webhook-Secret: <your secret>
+      Body: { "email": "{{email}}", "name": "{{name}}", "company": "{{company}}" }
+
+    Typeform hidden fields:
+      Add a hidden field for `company`; map Typeform fields to the keys above.
+
+    # PRODUCTION: verify platform-specific HMAC signatures (Typeform uses
+    # sha256=<hex> in the Typeform-Signature header; compute and compare before
+    # calling _create_and_queue).
+    """
+    _verify_webhook_secret(x_webhook_secret)
+
+    try:
+        body: dict = await request.json()
+    except Exception:
+        raise HTTPException(status_code=422, detail="Request body must be valid JSON")
+
+    def _pick(*keys: str) -> str:
+        for k in keys:
+            v = body.get(k) or body.get(k.lower()) or body.get(k.title())
+            if v and str(v).strip():
+                return str(v).strip()
+        return ""
+
+    email = _pick("email", "Email", "from_email", "lead_email", "from")
+    if not email:
+        raise HTTPException(status_code=422, detail="Could not find an email field in the payload")
+
+    first = _pick("first_name", "firstName", "firstname")
+    last  = _pick("last_name",  "lastName",  "lastname")
+    name  = _pick("name", "Name", "full_name", "fullName") or f"{first} {last}".strip() or email.split("@")[0]
+    company = _pick("company", "Company", "organization", "org", "account", "firm")
+    if not company:
+        company = email.split("@")[-1].split(".")[0].title()
+
+    # Auto-detect source from payload hints
+    source = _pick("source", "channel", "form_name", "platform") or "website_form"
+    known_sources = {"inbound_email", "linkedin_signal", "event", "marketing_ad", "website_form"}
+    if source not in known_sources:
+        source = "website_form"
+
+    try:
+        result = _create_and_queue(db, name=name, email=email, company=company, source=source)
+        return {**result, "detected_source": source, "raw_keys": list(body.keys())}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("ingest.webhook.error", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to process webhook payload")
+
+
+# ---------------------------------------------------------------------------
+# 7. Job status — poll pipeline progress after ingest
+# ---------------------------------------------------------------------------
+
+@router.get("/jobs/{job_id}")
+def get_job_status(job_id: str, db: Session = Depends(get_db)):
+    """
+    Poll the processing status of a lead submitted via any /ingest/* endpoint.
+
+    Returns:
+      { job_id, status: queued|processing|complete|failed|not_found, lead_id, verdict? }
+
+    Typical polling loop (JS):
+      const poll = async (id) => {
+        const r = await fetch(`/ingest/jobs/${id}`);
+        const j = await r.json();
+        if (j.status === 'complete') return j.verdict;
+        setTimeout(() => poll(id), 3000);
+      };
+    """
+    import json as _json
+
+    # Check Redis cache first (fast path)
+    try:
+        from app.services.queue_service import get_redis
+        cached = get_redis().get(f"job:{job_id}")
+        if cached:
+            data = _json.loads(cached)
+            # Augment with live DB status if available
+            from app.database.models import Lead, Verdict
+            lead = db.query(Lead).filter(Lead.id == job_id).first()
+            if lead:
+                verdict_row = db.query(Verdict).filter(Verdict.lead_id == job_id).first()
+                return {
+                    "job_id": job_id,
+                    "lead_id": job_id,
+                    "status": lead.status,
+                    "verdict": verdict_row.final_verdict if verdict_row else None,
+                    "source": data.get("source"),
+                }
+    except Exception:
+        pass
+
+    # Fallback: DB lookup
+    from app.database.models import Lead, Verdict
+    lead = db.query(Lead).filter(Lead.id == job_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    verdict_row = db.query(Verdict).filter(Verdict.lead_id == job_id).first()
+    return {
+        "job_id": job_id,
+        "lead_id": job_id,
+        "status": lead.status,
+        "verdict": verdict_row.final_verdict if verdict_row else None,
+    }

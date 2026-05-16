@@ -3,9 +3,12 @@ import json
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, RedirectResponse, StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
 from sqlalchemy.orm import Session
 
 # Configure structlog before any other imports that use logging
@@ -32,6 +35,7 @@ from app.auth.dependencies import get_current_user, require_admin, require_manag
 from app.database.models import User
 from app.routers.auth import router as auth_router
 from app.routers.ingest import router as ingest_router
+from app.services.rate_limiter import limiter
 from app.config import settings
 from fastapi import UploadFile, File
 
@@ -98,9 +102,23 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 log.warning("startup.admin_seed", status="skipped", error=str(e))
 
+        # Start background scheduler (auto-requeue + metrics refresh)
+        scheduler = None
+        if not _testing:
+            try:
+                from app.services.scheduler import create_scheduler
+                scheduler = create_scheduler()
+                scheduler.start()
+                log.info("startup.scheduler", status="ok", jobs=len(scheduler.get_jobs()))
+            except Exception as e:
+                log.warning("startup.scheduler", status="failed", error=str(e))
+
         log.info("startup.ready", ai_provider=settings.AI_PROVIDER, enrichment_provider=settings.ENRICHMENT_PROVIDER)
         yield
 
+        if scheduler and scheduler.running:
+            scheduler.shutdown(wait=False)
+            log.info("shutdown.scheduler")
         log.info("shutdown")
     except Exception as e:
         log.critical(f"Startup failed: {e}")
@@ -109,9 +127,29 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AutonomousSDR", lifespan=lifespan)
 
+# Rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Security headers
+class _SecurityHeaders(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        if settings.APP_ENV == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+app.add_middleware(_SecurityHeaders)
+
+# CORS — localhost regex always active; production origins loaded from env
+_prod_origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()] if settings.ALLOWED_ORIGINS else []
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[],
+    allow_origins=_prod_origins,
     allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
@@ -960,6 +998,33 @@ def test_slack_webhook(current_user: User = Depends(require_admin)):
     except Exception as e:
         log.error(f"Failed to test Slack webhook: {e}")
         raise HTTPException(status_code=500, detail="Failed to test webhook")
+
+
+@app.get("/config/enrichment-provider")
+def get_enrichment_provider(current_user: User = Depends(require_admin)):
+    """Return the active enrichment provider."""
+    return {"enrichment_provider": settings.ENRICHMENT_PROVIDER}
+
+
+@app.post("/config/enrichment-provider")
+def set_enrichment_provider(
+    provider: str = Query(..., description="synthetic | hunter | pdl"),
+    current_user: User = Depends(require_admin),
+):
+    """
+    Toggle enrichment provider at runtime — no restart required.
+
+    Providers:
+      synthetic — default, free, heuristic (great for demos)
+      hunter    — Hunter.io real company data (25 free lookups/month)
+      pdl       — People Data Labs (100 free lookups/month)
+    """
+    _valid = {"synthetic", "hunter", "pdl"}
+    if provider not in _valid:
+        raise HTTPException(status_code=400, detail=f"Unknown provider. Valid options: {', '.join(sorted(_valid))}")
+    settings.ENRICHMENT_PROVIDER = provider
+    log.info("config.enrichment_provider.updated", provider=provider, changed_by=current_user.email)
+    return {"status": "updated", "enrichment_provider": provider}
 
 
 @app.post("/config/slack/disable")

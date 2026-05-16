@@ -114,6 +114,21 @@ class Settings:
     # Leave empty in local dev — tracking pixels won't embed but app still works
     APP_BASE_URL: str = os.getenv("APP_BASE_URL", "")
 
+    # ── Webhook security ──────────────────────────────────────────────────────
+    # Shared secret sent by callers in X-Webhook-Secret header.
+    # Leave empty for open / demo mode.
+    # Generate: python -c "import secrets; print(secrets.token_hex(32))"
+    WEBHOOK_SECRET: str = os.getenv("WEBHOOK_SECRET", "")
+
+    # Seconds a lead can sit in 'pending' before the scheduler auto-requeues it.
+    AUTO_PROCESS_DELAY_SECONDS: int = int(os.getenv("AUTO_PROCESS_DELAY_SECONDS", "60"))
+
+    # ── CORS — production allowed origins ─────────────────────────────────────
+    # Comma-separated list of exact origins allowed in production.
+    # Example: ALLOWED_ORIGINS=https://sdr.mycompany.com,https://app.mycompany.com
+    # Leave empty to use the default localhost regex (development / demo mode).
+    ALLOWED_ORIGINS: str = os.getenv("ALLOWED_ORIGINS", "")
+
     # ── Notifications ─────────────────────────────────────────────────────────
     SLACK_WEBHOOK_URL: str = os.getenv("SLACK_WEBHOOK_URL", "")
 

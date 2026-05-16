@@ -4,7 +4,8 @@ PYTHON := PYTHONPATH=. python
         db-init migrate migrate-auth migrate-phase2 \
         generate-data recover lint docs logs \
         create-admin token \
-        install-ui run-ui build-ui
+        install-ui run-ui build-ui \
+        dev build-docker deploy railway-logs secret fmt
 
 help:
 	@echo "AutonomousSDR - Available Commands"
@@ -145,3 +146,40 @@ logs:
 	@echo "  API logs    : stdout of 'make run-api'"
 	@echo "  Worker logs : stdout of 'make run-worker'"
 	@echo "  DB logs     : /var/log/postgresql/"
+
+# ---------------------------------------------------------------------------
+# Docker Compose (full stack — no local deps needed)
+# ---------------------------------------------------------------------------
+
+dev:
+	docker compose up --build
+
+build-docker:
+	docker compose build
+
+seed-docker:
+	docker compose run --rm migrate python scripts/seed_demo_data.py
+
+# ---------------------------------------------------------------------------
+# Railway deployment
+# ---------------------------------------------------------------------------
+
+deploy:
+	railway up
+
+railway-logs:
+	railway logs
+
+# ---------------------------------------------------------------------------
+# Code quality
+# ---------------------------------------------------------------------------
+
+fmt:
+	ruff format app/ tests/
+
+# ---------------------------------------------------------------------------
+# Security helpers
+# ---------------------------------------------------------------------------
+
+secret:
+	@python -c "import secrets; print(secrets.token_hex(32))"

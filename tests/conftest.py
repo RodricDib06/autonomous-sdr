@@ -1,9 +1,7 @@
-import os
 import pytest
-from sqlalchemy import create_engine, TypeDecorator, VARCHAR, JSON
+from sqlalchemy import create_engine, TypeDecorator, JSON
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from sqlalchemy.dialects.postgresql import JSONB as PostgreSQLJSONB
 
 # Use SQLite in-memory for tests
 TEST_SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"

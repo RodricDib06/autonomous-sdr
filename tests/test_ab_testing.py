@@ -1,5 +1,4 @@
 """Tests for A/B testing service: chi-square calculation, find_winner, record_event."""
-import pytest
 from unittest.mock import MagicMock, patch
 from app.services.ab_testing import _chi_square_p, _chi2_p_approx, find_winner, record_event
 

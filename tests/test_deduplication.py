@@ -1,7 +1,6 @@
 """
 Tests for the deduplication service
 """
-import pytest
 from app.services.deduplication import DeduplicationService
 from app.database.models import Lead
 

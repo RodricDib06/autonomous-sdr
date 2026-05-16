@@ -1,7 +1,6 @@
 """Tests for import history persistence."""
 from datetime import datetime
-import pytest
-from app.services.csv_import import CSVImportService, ImportResult, ImportRecord
+from app.services.csv_import import CSVImportService, ImportResult
 from app.database.models import ImportHistory
 
 

@@ -1,7 +1,6 @@
 """
 Tests for Slack notifier service
 """
-import pytest
 from unittest.mock import patch, MagicMock
 from app.services.slack_notifier import SlackNotifier, SlackConfig
 

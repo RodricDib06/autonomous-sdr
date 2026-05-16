@@ -1,7 +1,6 @@
 """
 Tests for CSV import service
 """
-import pytest
 from app.services.csv_import import CSVImportService
 from app.database.models import Lead
 

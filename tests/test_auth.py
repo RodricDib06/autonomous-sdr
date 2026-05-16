@@ -15,9 +15,7 @@ Coverage:
   - RBAC enforcement — rep cannot reach manager-only routes
 """
 import pytest
-from jose import jwt
 
-from app.config import settings
 from app.services.auth_service import (
     create_token,
     decode_token,

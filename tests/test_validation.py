@@ -1,8 +1,7 @@
 """
 Tests for email and domain validation service
 """
-import pytest
-from app.services.validation import EmailDomainValidator, EmailValidationResult
+from app.services.validation import EmailDomainValidator
 
 
 def test_valid_corporate_email():

@@ -1,6 +1,5 @@
 import json
 import pytest
-from unittest.mock import MagicMock, patch
 from app.agents.validator_agent import ValidatorAgent
 from app.schemas.verdict import ValidatedOutput
 

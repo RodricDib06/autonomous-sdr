@@ -1,6 +1,5 @@
 import json
 import pytest
-from unittest.mock import MagicMock, patch
 from app.agents.analysis_agent import AnalysisAgent
 from app.schemas.verdict import AnalysisOutput
 

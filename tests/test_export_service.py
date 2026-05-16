@@ -3,7 +3,6 @@ import csv
 import io
 from datetime import datetime
 from unittest.mock import MagicMock
-import pytest
 
 from app.services.export_service import (
     build_export_rows,

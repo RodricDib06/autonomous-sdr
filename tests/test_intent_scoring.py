@@ -1,6 +1,5 @@
 """Tests for intent scoring: signal rules, score accumulation, DB persistence."""
-import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 from app.services.intent_scoring import compute_intent_score, get_lead_intent_score
 
 

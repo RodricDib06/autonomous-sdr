@@ -121,7 +121,7 @@ async def lifespan(app: FastAPI):
             log.info("shutdown.scheduler")
         log.info("shutdown")
     except Exception as e:
-        log.critical(f"Startup failed: {e}")
+        log.critical("startup.failed", error=str(e))
         raise
 
 
@@ -282,10 +282,10 @@ def receive_lead(
             source=payload.source,
         )
         push_lead_job(lead.id)
-        log.info(f"Lead created: {lead.id} ({lead.email})")
+        log.info("lead.created", lead_id=lead.id[:8], email=lead.email)
         return lead
     except Exception as e:
-        log.error(f"Failed to create lead: {e}")
+        log.error("Failed to create lead", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to create lead")
 
 
@@ -323,7 +323,7 @@ def list_leads(
         leads = query.order_by(Lead.created_at.desc()).offset(skip).limit(limit).all()
         return leads
     except Exception as e:
-        log.error(f"Failed to list leads: {e}")
+        log.error("Failed to list leads", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to fetch leads")
 
 
@@ -357,7 +357,7 @@ def get_lead_stats(
             }
         }
     except Exception as e:
-        log.error(f"Failed to get stats: {e}")
+        log.error("Failed to get stats", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to get statistics")
 
 
@@ -371,7 +371,7 @@ def get_quality_report(
         report = DataQualityService().get_quality_report(db)
         return report
     except Exception as e:
-        log.error(f"Failed to get quality report: {e}")
+        log.error("Failed to get quality report", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to get quality report")
 
 
@@ -386,10 +386,10 @@ def backfill_quality_scores(
         service = DataQualityService()
         for lead in unscored:
             service.update_lead_quality(db, lead)
-        log.info(f"Quality backfill complete: {len(unscored)} leads scored")
+        log.info("quality.backfill.complete", scored=len(unscored))
         return {"scored": len(unscored)}
     except Exception as e:
-        log.error(f"Quality backfill failed: {e}")
+        log.error("Quality backfill failed", error=str(e))
         raise HTTPException(status_code=500, detail="Quality backfill failed")
 
 
@@ -425,7 +425,7 @@ def get_hot_leads(
         
         return {"hot_leads": results, "count": len(results)}
     except Exception as e:
-        log.error(f"Failed to get hot leads: {e}")
+        log.error("Failed to get hot leads", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to get hot leads")
 
 
@@ -488,7 +488,7 @@ def export_leads(
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"Failed to export leads: {e}")
+        log.error("Failed to export leads", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to export leads")
 
 
@@ -520,12 +520,12 @@ def import_csv_leads(
         if slack_notifier.enabled:
             slack_notifier.notify_import_complete(result.to_dict())
 
-        log.info(f"CSV import completed: {result.successful} successful, {result.failed} failed")
+        log.info("csv.import.complete", successful=result.successful, failed=result.failed)
 
         return result.to_dict()
     
     except Exception as e:
-        log.error(f"Failed to import CSV: {e}")
+        log.error("Failed to import CSV", error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to import CSV: {str(e)}")
 
 
@@ -544,7 +544,7 @@ def get_duplicate_report(
             "generated_at": datetime.utcnow().isoformat()
         }
     except Exception as e:
-        log.error(f"Failed to generate duplicate report: {e}")
+        log.error("Failed to generate duplicate report", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to generate duplicate report")
 
 
@@ -568,7 +568,7 @@ def get_import_history(
             "count": len(records),
         }
     except Exception as e:
-        log.error(f"Failed to get import history: {e}")
+        log.error("Failed to get import history", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to get import history")
 
 
@@ -589,7 +589,7 @@ def reprocess_failed(
         lead.updated_at = now
         push_lead_job(lead.id)
     db.commit()
-    log.info(f"Reprocessing {len(failed)} failed leads (triggered by {current_user.email})")
+    log.info("leads.reprocess", count=len(failed), triggered_by=current_user.email)
     return {"requeued": len(failed), "message": f"{len(failed)} leads re-queued for processing"}
 
 
@@ -606,7 +606,7 @@ def batch_leads(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        log.error(f"Batch action '{request.action}' failed: {e}")
+        log.error("Batch action '{request.action}' failed", error=str(e))
         raise HTTPException(status_code=500, detail="Batch action failed")
 
 
@@ -621,12 +621,12 @@ def assign_lead_endpoint(
     try:
         from app.services.assignment_service import assign_lead
         lead = assign_lead(db, lead_id, request.rep_id, changed_by_id=current_user.id)
-        log.info(f"Lead {lead_id} assigned to rep {request.rep_id} by {current_user.email}")
+        log.info("lead.assigned", lead_id=lead_id[:8], rep_id=request.rep_id, by=current_user.email)
         return {"success": True, "lead_id": lead_id, "assigned_to_id": lead.assigned_to_id}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        log.error(f"Failed to assign lead: {e}")
+        log.error("Failed to assign lead", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to assign lead")
 
 
@@ -640,12 +640,12 @@ def unassign_lead_endpoint(
     try:
         from app.services.assignment_service import unassign_lead
         unassign_lead(db, lead_id, changed_by_id=current_user.id)
-        log.info(f"Lead {lead_id} unassigned by {current_user.email}")
+        log.info("lead.unassigned", lead_id=lead_id[:8], by=current_user.email)
         return {"success": True, "lead_id": lead_id}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        log.error(f"Failed to unassign lead: {e}")
+        log.error("Failed to unassign lead", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to unassign lead")
 
 
@@ -666,12 +666,12 @@ def update_conversion_status_endpoint(
             notes=request.notes,
             changed_by_id=current_user.id,
         )
-        log.info(f"Lead {lead_id} conversion status updated to '{request.status}' by {current_user.email}")
+        log.info("lead.conversion.updated", lead_id=lead_id[:8], status=request.status, by=current_user.email)
         return {"success": True, "lead_id": lead_id, "conversion_status": lead.conversion_status}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        log.error(f"Failed to update conversion status: {e}")
+        log.error("Failed to update conversion status", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to update conversion status")
 
 
@@ -769,7 +769,7 @@ def get_lead(
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"Failed to fetch lead {lead_id}: {e}")
+        log.error("Failed to fetch lead {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to fetch lead")
 
 
@@ -796,7 +796,7 @@ def get_lead_quality_score(
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"Failed to get quality score for {lead_id}: {e}")
+        log.error("Failed to get quality score for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to get quality score")
 
 
@@ -841,7 +841,7 @@ def check_lead_duplicate(
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"Failed to check duplicates for {lead_id}: {e}")
+        log.error("Failed to check duplicates for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to check duplicates")
 
 
@@ -864,7 +864,7 @@ def merge_duplicate_leads(
         success = dedup_service.merge_leads(primary_id, duplicate_id)
         
         if success:
-            log.info(f"Merged lead {duplicate_id} into {primary_id}")
+            log.info("lead.merged", primary=primary_id[:8], duplicate=duplicate_id[:8])
             return {
                 "status": "success",
                 "message": f"Lead {duplicate_id} merged into {primary_id}",
@@ -876,7 +876,7 @@ def merge_duplicate_leads(
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"Failed to merge leads {primary_id} and {duplicate_id}: {e}")
+        log.error("Failed to merge leads {primary_id} and {duplicate_id}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to merge leads")
 
 
@@ -898,7 +898,7 @@ def validate_email(
             "issues": result['email']['issues'] + (result['domain']['issues'] if result['domain'] else [])
         }
     except Exception as e:
-        log.error(f"Failed to validate email {email}: {e}")
+        log.error("Failed to validate email {email}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to validate email")
 
 
@@ -927,7 +927,7 @@ def validate_email_batch(
             "results": results
         }
     except Exception as e:
-        log.error(f"Failed to validate email batch: {e}")
+        log.error("Failed to validate email batch", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to validate emails")
 
 
@@ -962,7 +962,7 @@ def set_slack_config(
         slack_notifier.set_webhook(webhook_url)
         slack_webhook_url = webhook_url
         
-        log.info("Slack webhook configured")
+        log.info("slack.webhook.configured")
         
         return {
             "status": "success",
@@ -972,7 +972,7 @@ def set_slack_config(
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"Failed to set Slack webhook: {e}")
+        log.error("Failed to set Slack webhook", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to configure Slack")
 
 
@@ -996,7 +996,7 @@ def test_slack_webhook(current_user: User = Depends(require_admin)):
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"Failed to test Slack webhook: {e}")
+        log.error("Failed to test Slack webhook", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to test webhook")
 
 
@@ -1035,7 +1035,7 @@ def disable_slack(current_user: User = Depends(require_admin)):
         slack_notifier.set_webhook(None)
         slack_webhook_url = None
 
-        log.info("Slack notifications disabled")
+        log.info("slack.webhook.disabled")
 
         return {
             "status": "success",
@@ -1043,7 +1043,7 @@ def disable_slack(current_user: User = Depends(require_admin)):
             "configured": False
         }
     except Exception as e:
-        log.error(f"Failed to disable Slack: {e}")
+        log.error("Failed to disable Slack", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to disable Slack")
 
 
@@ -1064,7 +1064,7 @@ def trigger_outreach(
         result = agent._timed_run(db, lead_id, {"triggered_by": current_user.email})
         return result
     except Exception as e:
-        log.error(f"Outreach failed for {lead_id}: {e}")
+        log.error("Outreach failed for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1108,7 +1108,7 @@ def track_email_event(
         record_event(db, email_id, event)
         return {"status": "recorded", "email_id": email_id, "event": event}
     except Exception as e:
-        log.error(f"Failed to record event {event} on email {email_id}: {e}")
+        log.error("Failed to record event {event} on email {email_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1129,7 +1129,7 @@ def trigger_booking(
         result = agent._timed_run(db, lead_id, {})
         return result
     except Exception as e:
-        log.error(f"Booking failed for {lead_id}: {e}")
+        log.error("Booking failed for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1207,7 +1207,7 @@ def send_chat_message(
         })
         return result
     except Exception as e:
-        log.error(f"Conversational agent failed for {lead_id}: {e}")
+        log.error("Conversational agent failed for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1296,7 +1296,7 @@ def sync_to_crm(
         result = sync_lead_to_crm(db, lead_id)
         return result
     except Exception as e:
-        log.error(f"CRM sync failed for {lead_id}: {e}")
+        log.error("CRM sync failed for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1403,7 +1403,7 @@ def run_optimization(
         result = _run(db)
         return result
     except Exception as e:
-        log.error(f"Optimization run failed: {e}")
+        log.error("Optimization run failed", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1476,7 +1476,7 @@ def track_open(email_id: str, db: Session = Depends(get_db)):
             record_event(db, email_id, "opened")
             log.info(f"[track/open] Email {email_id} opened")
     except Exception as e:
-        log.warning(f"[track/open] Failed to record open for {email_id}: {e}")
+        log.warning("[track/open] Failed to record open for {email_id}", error=str(e))
     return Response(content=_TRACKING_PIXEL, media_type="image/gif")
 
 
@@ -1505,7 +1505,7 @@ def track_click(
             db.commit()
             log.info(f"[track/click] Email {email_id} clicked → {url[:80]}")
     except Exception as e:
-        log.warning(f"[track/click] Failed to record click for {email_id}: {e}")
+        log.warning("[track/click] Failed to record click for {email_id}", error=str(e))
     return RedirectResponse(url=url, status_code=302)
 
 

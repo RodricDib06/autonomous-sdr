@@ -114,7 +114,7 @@ def _check_funding(company: str) -> dict:
 
 def _verify_icp(company: str, industry: str, size: str) -> dict:
     """Check whether this company falls within configured ICP parameters."""
-    icp_industries = [i.lower() for i in settings.ICP_INDUSTRIES]
+    icp_industries = [i.lower() for i in settings.icp_industries]
     industry_match = any(kw in industry.lower() for kw in icp_industries)
 
     size_map = {
@@ -128,7 +128,7 @@ def _verify_icp(company: str, industry: str, size: str) -> dict:
         "industry_match": industry_match,
         "size_match": size_match,
         "icp_fit": industry_match and size_match,
-        "icp_industries": settings.ICP_INDUSTRIES,
+        "icp_industries": settings.icp_industries,
         "icp_size_range": f"{settings.ICP_MIN_COMPANY_SIZE}–{settings.ICP_MAX_COMPANY_SIZE}",
     }
 

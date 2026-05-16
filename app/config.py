@@ -1,136 +1,121 @@
-import os
 import secrets
-from dotenv import load_dotenv
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-load_dotenv()
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",          # ignore unknown env vars (safe for CI)
+        case_sensitive=False,    # DATABASE_URL == database_url == DATABASE_URL
+    )
 
-class Settings:
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "")
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
-    APP_ENV: str = os.getenv("APP_ENV", "development")
+    # ── Database / Redis ───────────────────────────────────────────────────────
+    DATABASE_URL: str = ""
+    REDIS_URL: str = "redis://localhost:6379"
+    APP_ENV: str = "development"
 
     # ── AI provider ────────────────────────────────────────────────────────────
-    # "ollama" (default, free, local) | "claude" (production quality)
-    AI_PROVIDER: str = os.getenv("AI_PROVIDER", "ollama")
+    # "ollama" (default, free, local) | "groq" (free tier) | "claude" (production)
+    AI_PROVIDER: str = "ollama"
 
     # Ollama — used when AI_PROVIDER=ollama
-    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "mistral")
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "mistral"
 
     # Anthropic Claude — used when AI_PROVIDER=claude
-    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
-    ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
 
     # Groq — used when AI_PROVIDER=groq (free tier: 6 000 req/h, 500 k tok/min)
-    # Sign up at https://console.groq.com — no credit card for free tier
-    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
-    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.1-70b-versatile"
 
     # ── Research / web search ─────────────────────────────────────────────────
-    # Tavily — used by ResearchAgent for real web search (free: 1 000 searches/mo)
-    # Sign up at https://tavily.com — no credit card for free tier
-    # Without a key, DuckDuckGo is used as a free fallback (no sign-up needed)
-    TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
+    # Tavily — free: 1 000 searches/mo. Falls back to DuckDuckGo when unset.
+    TAVILY_API_KEY: str = ""
 
     # ── Enrichment provider ────────────────────────────────────────────────────
-    # "synthetic" (default, free, heuristic) | "hunter" (real company data)
-    ENRICHMENT_PROVIDER: str = os.getenv("ENRICHMENT_PROVIDER", "synthetic")
+    # "synthetic" (default, free) | "hunter" (real) | "pdl" (People Data Labs)
+    ENRICHMENT_PROVIDER: str = "synthetic"
+    HUNTER_API_KEY: str = ""
+    PDL_API_KEY: str = ""
+    CRUNCHBASE_API_KEY: str = ""
 
-    # Hunter.io — used when ENRICHMENT_PROVIDER=hunter
-    HUNTER_API_KEY: str = os.getenv("HUNTER_API_KEY", "")
+    # ── ICP Configuration ──────────────────────────────────────────────────────
+    ICP_MIN_COMPANY_SIZE: int = 50
+    ICP_MAX_COMPANY_SIZE: int = 500
+    # Kept as str so pydantic-settings doesn't try to JSON-decode comma-separated values.
+    # Use settings.icp_industries (the property below) to get the parsed list.
+    ICP_INDUSTRIES: str = "SaaS,Technology,Software,FinTech,DevTools"
+    ICP_MIN_SENIORITY: str = "Manager"
 
-    # ICP Configuration
-    ICP_MIN_COMPANY_SIZE: int = int(os.getenv("ICP_MIN_COMPANY_SIZE", "50"))
-    ICP_MAX_COMPANY_SIZE: int = int(os.getenv("ICP_MAX_COMPANY_SIZE", "500"))
-    ICP_INDUSTRIES: list[str] = os.getenv(
-        "ICP_INDUSTRIES", "SaaS,Technology,Software,FinTech,DevTools"
-    ).split(",")
-    ICP_MIN_SENIORITY: str = os.getenv("ICP_MIN_SENIORITY", "Manager")
+    @property
+    def icp_industries(self) -> list[str]:
+        return [s.strip() for s in self.ICP_INDUSTRIES.split(",") if s.strip()]
 
-    # Performance Configuration
-    MAX_CONCURRENT_LEADS: int = int(os.getenv("MAX_CONCURRENT_LEADS", "3"))
-    WORKER_BATCH_SIZE: int = int(os.getenv("WORKER_BATCH_SIZE", "3"))
+    # ── Performance ────────────────────────────────────────────────────────────
+    MAX_CONCURRENT_LEADS: int = 3
+    WORKER_BATCH_SIZE: int = 3
 
-    # Auth — JWT
-    # A strong random key is generated at import time when SECRET_KEY is not set.
-    # This means tokens are invalidated on restart in development.
-    # In production, always set SECRET_KEY explicitly in the environment.
-    SECRET_KEY: str = os.getenv("SECRET_KEY", secrets.token_hex(32))
+    # ── Auth — JWT ─────────────────────────────────────────────────────────────
+    # Generate a stable key in production:
+    #   python -c "import secrets; print(secrets.token_hex(32))"
+    # If unset, a random key is generated at startup — tokens are invalidated on restart.
+    SECRET_KEY: str = Field(default_factory=lambda: secrets.token_hex(32))
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
-    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # Auth — Initial admin seeded on first startup when no users exist
-    INITIAL_ADMIN_EMAIL: str = os.getenv("INITIAL_ADMIN_EMAIL", "admin@autonomoussdr.com")
-    INITIAL_ADMIN_PASSWORD: str = os.getenv("INITIAL_ADMIN_PASSWORD", "changeme123")
-
-    # ── Outreach / SMTP ────────────────────────────────────────────────────────
-    # PoC: Gmail SMTP (free, 500 emails/day with an App Password)
-    # PRODUCTION: replace host/port/user/password with SendGrid / Mailgun relay
-    SMTP_HOST: str = os.getenv("SMTP_HOST", "")
-    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "465"))
-    SMTP_USER: str = os.getenv("SMTP_USER", "")
-    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
-    OUTREACH_FROM_EMAIL: str = os.getenv("OUTREACH_FROM_EMAIL", "")
-    OUTREACH_SENDER_NAME: str = os.getenv("OUTREACH_SENDER_NAME", "Sales Team")
-
-    # ── Booking — Cal.com ──────────────────────────────────────────────────────
-    # Free tier: https://cal.com  |  Self-hosted: https://github.com/calcom/cal.com
-    CAL_API_KEY: str = os.getenv("CAL_API_KEY", "")
-    CAL_SCHEDULING_URL: str = os.getenv("CAL_SCHEDULING_URL", "")  # e.g. https://cal.com/yourname/30min
-    CAL_EVENT_TYPE_ID: str = os.getenv("CAL_EVENT_TYPE_ID", "")    # numeric ID from Cal.com dashboard
-
-    # ── CRM integrations (all optional — mock logs when not configured) ─────────
-    # HubSpot (free CRM tier available): https://developers.hubspot.com/docs/api/crm/contacts
-    HUBSPOT_API_KEY: str = os.getenv("HUBSPOT_API_KEY", "")
-    # Salesforce (developer org free): https://developer.salesforce.com/signup
-    SALESFORCE_USERNAME: str = os.getenv("SALESFORCE_USERNAME", "")
-    SALESFORCE_PASSWORD: str = os.getenv("SALESFORCE_PASSWORD", "")
-    SALESFORCE_SECURITY_TOKEN: str = os.getenv("SALESFORCE_SECURITY_TOKEN", "")
-    # Pipedrive (free trial): https://developers.pipedrive.com
-    PIPEDRIVE_API_KEY: str = os.getenv("PIPEDRIVE_API_KEY", "")
-
-    # ── Conversational channels (optional — mocked when not configured) ─────────
-    # Twilio SMS: https://www.twilio.com/docs/sms
-    TWILIO_ACCOUNT_SID: str = os.getenv("TWILIO_ACCOUNT_SID", "")
-    TWILIO_AUTH_TOKEN: str = os.getenv("TWILIO_AUTH_TOKEN", "")
-    TWILIO_PHONE_NUMBER: str = os.getenv("TWILIO_PHONE_NUMBER", "")
-    # Unipile (LinkedIn DM bridge): https://developer.unipile.com
-    UNIPILE_API_KEY: str = os.getenv("UNIPILE_API_KEY", "")
-
-    # ── Enrichment — People Data Labs ──────────────────────────────────────────
-    # Free tier: 100 calls/month. Sign up: https://www.peopledatalabs.com/
-    # Set ENRICHMENT_PROVIDER=pdl to activate
-    PDL_API_KEY: str = os.getenv("PDL_API_KEY", "")
-
-    # ── Enrichment — Crunchbase ────────────────────────────────────────────────
-    # Basic API: $29/month. Sign up: https://data.crunchbase.com/
-    # Without key, uses deterministic mock signals (great for demos)
-    CRUNCHBASE_API_KEY: str = os.getenv("CRUNCHBASE_API_KEY", "")
-
-    # ── App base URL (for tracking pixel URLs in emails) ──────────────────────
-    # Set to your public URL in production, e.g. https://sdr.yourcompany.com
-    # Leave empty in local dev — tracking pixels won't embed but app still works
-    APP_BASE_URL: str = os.getenv("APP_BASE_URL", "")
+    # ── Auth — Initial admin seeded on first startup ───────────────────────────
+    INITIAL_ADMIN_EMAIL: str = "admin@autonomoussdr.com"
+    INITIAL_ADMIN_PASSWORD: str = "changeme123"
 
     # ── Webhook security ──────────────────────────────────────────────────────
-    # Shared secret sent by callers in X-Webhook-Secret header.
+    # Shared secret validated on every /ingest/* endpoint via X-Webhook-Secret.
     # Leave empty for open / demo mode.
-    # Generate: python -c "import secrets; print(secrets.token_hex(32))"
-    WEBHOOK_SECRET: str = os.getenv("WEBHOOK_SECRET", "")
+    WEBHOOK_SECRET: str = ""
 
-    # Seconds a lead can sit in 'pending' before the scheduler auto-requeues it.
-    AUTO_PROCESS_DELAY_SECONDS: int = int(os.getenv("AUTO_PROCESS_DELAY_SECONDS", "60"))
+    # Seconds a pending lead can sit before the scheduler auto-requeues it.
+    AUTO_PROCESS_DELAY_SECONDS: int = 60
 
     # ── CORS — production allowed origins ─────────────────────────────────────
-    # Comma-separated list of exact origins allowed in production.
-    # Example: ALLOWED_ORIGINS=https://sdr.mycompany.com,https://app.mycompany.com
-    # Leave empty to use the default localhost regex (development / demo mode).
-    ALLOWED_ORIGINS: str = os.getenv("ALLOWED_ORIGINS", "")
+    # Comma-separated exact origins. Localhost regex is always active in dev.
+    # Example: https://sdr.mycompany.com,https://app.mycompany.com
+    ALLOWED_ORIGINS: str = ""
+
+    # ── Outreach / SMTP ────────────────────────────────────────────────────────
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 465
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    OUTREACH_FROM_EMAIL: str = ""
+    OUTREACH_SENDER_NAME: str = "Sales Team"
+
+    # ── Booking — Cal.com ──────────────────────────────────────────────────────
+    CAL_API_KEY: str = ""
+    CAL_SCHEDULING_URL: str = ""
+    CAL_EVENT_TYPE_ID: str = ""
+
+    # ── CRM integrations ──────────────────────────────────────────────────────
+    HUBSPOT_API_KEY: str = ""
+    SALESFORCE_USERNAME: str = ""
+    SALESFORCE_PASSWORD: str = ""
+    SALESFORCE_SECURITY_TOKEN: str = ""
+    PIPEDRIVE_API_KEY: str = ""
+
+    # ── Conversational channels ───────────────────────────────────────────────
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_PHONE_NUMBER: str = ""
+    UNIPILE_API_KEY: str = ""
+
+    # ── App base URL ───────────────────────────────────────────────────────────
+    APP_BASE_URL: str = ""
 
     # ── Notifications ─────────────────────────────────────────────────────────
-    SLACK_WEBHOOK_URL: str = os.getenv("SLACK_WEBHOOK_URL", "")
+    SLACK_WEBHOOK_URL: str = ""
 
 
 settings = Settings()

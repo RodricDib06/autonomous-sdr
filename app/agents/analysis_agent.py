@@ -112,7 +112,7 @@ class AnalysisAgent(BaseAgent):
         prompt = PROMPT_TEMPLATE.format(
             min_size=settings.ICP_MIN_COMPANY_SIZE,
             max_size=settings.ICP_MAX_COMPANY_SIZE,
-            industries=", ".join(settings.ICP_INDUSTRIES),
+            industries=", ".join(settings.icp_industries),
             min_seniority=settings.ICP_MIN_SENIORITY,
             profile_json=profile_json,
         )

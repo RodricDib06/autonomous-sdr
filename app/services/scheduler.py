@@ -32,9 +32,7 @@ from app.config import settings
 log = structlog.get_logger(__name__)
 
 # How old a pending lead must be before auto-requeue (avoids race with worker)
-_AUTO_PROCESS_DELAY_SECONDS: int = int(
-    getattr(settings, "AUTO_PROCESS_DELAY_SECONDS", 60)
-)
+_AUTO_PROCESS_DELAY_SECONDS: int = settings.AUTO_PROCESS_DELAY_SECONDS
 
 
 async def _auto_enqueue_pending() -> None:

@@ -54,14 +54,18 @@ install:
 db-init:
 	$(PYTHON) scripts/init_db.py
 
-migrate: db-init migrate-phase2-fields migrate-auth
+migrate:
+	alembic upgrade head
 	@echo "✓ All migrations applied"
 
-migrate-phase2-fields:
-	$(PYTHON) scripts/migrate_phase2_fields.py
-
-migrate-auth:
+migrate-legacy:
+	$(PYTHON) scripts/init_db.py
 	$(PYTHON) scripts/migrate_auth.py
+	$(PYTHON) scripts/migrate_phase2_fields.py
+	$(PYTHON) scripts/migrate_phase3_tables.py
+	$(PYTHON) scripts/migrate_phase4_pgvector.py || true
+	$(PYTHON) scripts/migrate_phase5_fields.py   || true
+	@echo "✓ Legacy migration scripts applied"
 
 # ---------------------------------------------------------------------------
 # Run

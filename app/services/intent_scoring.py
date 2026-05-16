@@ -147,7 +147,7 @@ def compute_intent_score(
             signals.append(("ideal_company_size", _RULE_MAP["ideal_company_size"].weight, "heuristic"))
 
         industry = (enrichment.industry or "").lower()
-        icp_industries = [i.lower() for i in settings.ICP_INDUSTRIES]
+        icp_industries = [i.lower() for i in settings.icp_industries]
         if any(icp in industry for icp in icp_industries):
             signals.append(("icp_industry", _RULE_MAP["icp_industry"].weight, "heuristic"))
 

@@ -1,33 +1,44 @@
 # AutonomousSDR
 
-A portfolio-grade, multi-agent AI sales development platform. Leads enter from five ingestion channels, flow through a **LangGraph state machine** of specialized agents, and exit as hot/warm/cold verdicts with personalized outreach sequences, meeting bookings, and CRM sync — all with zero paid API keys required.
+A portfolio-grade, multi-agent AI sales development platform. Leads enter from six ingestion channels (including a universal webhook for Zapier / Make.com / Typeform), flow through a **10-node LangGraph state machine** with a live **ReAct research agent**, and exit as hot/warm/cold verdicts — with personalized outreach, meeting bookings, CRM sync, and a self-optimizing BANT scoring loop. Zero paid API keys required to run.
 
 ```
-5 Ingestion channels          LangGraph State Machine               Actions
-──────────────────            ──────────────────────────────────    ─────────────────────────────
-Website Form                  Orchestrate → Enrich                  Hot  → Booking Agent (Cal.com)
-Marketing Ads          →      → Intent Score → Analyse →    →       Warm → Outreach Agent (SMTP)
-Inbound Email                 Validate                              Cold → CRM Sync
-LinkedIn Signal               │                                          (HubSpot / Salesforce / Pipedrive)
-Event / Conference            ↓ Conditional routing by verdict      All  → Conversational Agent
-                         PostgreSQL + pgvector                           (SMS via Twilio / LinkedIn via Unipile)
+6 Ingestion channels            10-node LangGraph Pipeline              Actions
+─────────────────────           ──────────────────────────────────      ─────────────────────────────
+Website Form                    orchestrate → enrich → research         Hot  → Booking (Cal.com)
+Marketing Ads          →        → score_intent → analyse →      →       Warm → Outreach (SMTP / A/B)
+Inbound Email                   validate                                Cold → CRM Sync
+LinkedIn Signal                 │ conditional routing by verdict        All  → Conversational Agent
+Event / Conference              ↓                                            (SMS / LinkedIn / email)
+Universal Webhook               PostgreSQL + pgvector + Redis
+(Zapier, Make, Typeform)        APScheduler (auto-requeue + metrics)
 ```
+
+---
 
 ## What this demonstrates
 
 | Concept | Implementation |
 |---|---|
-| **Multi-agent orchestration** | LangGraph `StateGraph` with conditional edges; 9 agent nodes |
-| **BANT qualification** | Analysis + Validator agents with float scores, configurable weights |
-| **Self-optimization** | Weight rebalancing loop from conversion outcomes (learning rate 0.3) |
-| **A/B testing** | Chi-square significance test on outreach sequences; auto-promote winner |
-| **Buyer intent scoring** | Heuristic signal rules (source, enrichment, BANT, funding signals) |
-| **Semantic memory** | pgvector HNSW index + Ollama embeddings; keyword fallback |
+| **Multi-agent orchestration** | LangGraph `StateGraph` — 10 nodes, conditional routing, pub/sub SSE streaming |
+| **ReAct research agent** | Tavily + DuckDuckGo fallback; 3-iteration loop; results injected into LLM context |
+| **BANT qualification** | LLM analysis + validator judge; configurable float weights |
+| **Self-optimization** | BANT weight rebalancing from conversion outcomes; learning rate 0.3 |
+| **A/B testing** | Chi-square significance test; auto-promote winner endpoint |
+| **Buyer intent scoring** | 10+ heuristic signal rules; source, seniority, funding, BANT signals |
+| **Autonomous operation** | APScheduler: auto-requeues stale leads every 5 min; refreshes Prometheus gauges every 1 min |
+| **Webhook ingestion** | 5 channel-specific endpoints + 1 universal endpoint (Zapier/Make/n8n/Typeform) |
+| **Webhook secret auth** | HMAC `compare_digest` on every ingest endpoint; open mode for demos |
+| **Job status polling** | `GET /ingest/jobs/{id}` — Redis fast-path + DB fallback |
+| **Runtime config toggle** | `POST /config/enrichment-provider` switches synthetic/hunter/pdl without restart |
+| **Semantic memory** | pgvector HNSW index + embeddings; keyword fallback |
 | **Email tracking** | 1×1 pixel open tracking + click redirect |
-| **5 enrichment sources** | Synthetic (default) · Hunter.io · People Data Labs · Crunchbase signals |
-| **5 ingestion channels** | REST webhooks with deduplication |
-| **Full auth** | JWT access + refresh tokens, role-based access (admin/manager/rep) |
-| **React dashboard** | Pipeline traces, A/B test results, outreach funnel, BANT weight chart |
+| **5 enrichment sources** | Synthetic · Hunter.io · People Data Labs · Crunchbase signals |
+| **Full auth** | JWT access + refresh tokens; RBAC (admin / manager / rep); API key auth |
+| **Prometheus metrics** | Queue depth, node duration histograms, LLM call counters, in-flight gauge |
+| **React dashboard** | Live pipeline SSE stream, A/B results, BANT weight chart, lead detail drawer |
+| **Production hardening** | Rate limiting (slowapi), security headers middleware, CORS from env var, Alembic migrations |
+| **222 tests** | Backend: pytest + mocks. Ingest, auth, A/B, enrichment, graph routing, intent scoring, … |
 
 ---
 
@@ -35,28 +46,49 @@ Event / Conference            ↓ Conditional routing by verdict      All  → C
 
 | Layer | Tool |
 |---|---|
-| API | FastAPI 0.115 |
-| Agent framework | LangGraph 1.2 |
-| AI inference | Ollama + Mistral 7B (default, free) · Anthropic Claude (optional) |
-| Embeddings | Ollama `nomic-embed-text` (768-dim) |
-| Vector search | pgvector HNSW (cosine similarity) |
+| API | FastAPI 0.136 + slowapi rate limiting |
+| Agent framework | LangGraph 0.2 |
+| AI inference | Groq llama-3.1-70b (default, free) · Ollama + Mistral 7B · Anthropic Claude |
+| Research | Tavily (1k searches/mo free) · DuckDuckGo fallback (no key needed) |
+| Scheduler | APScheduler 3.x (AsyncIO, in-process) |
 | Queue | Redis |
-| Database | PostgreSQL 13+ |
+| Database | PostgreSQL 16 |
+| Migrations | Alembic — versioned, autogenerate-ready |
+| Config | Pydantic `BaseSettings` — type-validated, env-file aware |
 | ORM | SQLAlchemy 2 + Pydantic v2 |
-| Frontend | React 18 + TypeScript + Vite + Tailwind + Recharts |
-| Auth | JWT (HS256) + bcrypt |
-| Tests | pytest (137 tests) |
+| Logging | structlog — JSON in production, coloured console in dev |
+| Metrics | prometheus-client — `/metrics` endpoint for Grafana scraping |
+| Frontend | React 18 + TypeScript + Vite + Tailwind + Recharts + TanStack Query |
+| Auth | JWT HS256 + bcrypt; API key (SHA-256 prefix auth) |
+| Deploy | Docker Compose · Railway (`railway.toml`) · `Makefile` for all commands |
 
 ---
 
-## 5-Minute Setup (zero paid APIs)
+## Quick Start (zero paid APIs — Docker Compose)
+
+```bash
+git clone https://github.com/RodricDib06/autonomous-sdr.git
+cd autonomous-sdr
+cp .env.example .env
+docker compose up --build
+```
+
+- API + docs: `http://localhost:8000/docs`
+- Frontend:   `http://localhost:5173`
+- Login:      `admin@autonomoussdr.com` / `changeme123`
+
+Everything runs in containers — no local Python, Postgres, or Redis needed.
+
+---
+
+## Local Setup (without Docker)
 
 ### Prerequisites
 
 - Python 3.11+
-- [Ollama](https://ollama.ai) — runs the LLM locally
-- PostgreSQL 13+
+- PostgreSQL 16+
 - Redis
+- (Optional) Ollama for local AI inference
 
 ### 1. Clone and configure
 
@@ -64,39 +96,24 @@ Event / Conference            ↓ Conditional routing by verdict      All  → C
 git clone https://github.com/RodricDib06/autonomous-sdr.git
 cd autonomous-sdr
 cp .env.example .env
+# Edit .env — defaults work with zero paid APIs
 ```
 
-The defaults in `.env` require **no changes** for local dev:
+Recommended free setup (in `.env`):
 ```
-AI_PROVIDER=ollama          # free, local — no API key needed
-ENRICHMENT_PROVIDER=synthetic  # heuristic enrichment — no API key needed
-```
-
-### 2. Pull the model
-
-```bash
-ollama pull mistral          # ~4 GB, one-time
-ollama pull nomic-embed-text # for semantic search — optional
+AI_PROVIDER=groq            # free: 6 000 req/h — sign up at console.groq.com
+ENRICHMENT_PROVIDER=synthetic  # heuristic — no API key
 ```
 
-### 3. Install and initialise
+### 2. Install and migrate
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
-# Create tables (run each migration in order — all are idempotent)
-python scripts/init_db.py
-python scripts/migrate_auth.py
-python scripts/migrate_phase2_fields.py
-python scripts/migrate_phase3_tables.py
-python scripts/migrate_phase4_pgvector.py   # needs pgvector installed — safe to skip
-python scripts/migrate_phase5_fields.py     # optional analytics fields
+alembic upgrade head          # creates all tables (replaces old migration scripts)
 ```
 
-> **pgvector optional**: if your Postgres doesn't have the `vector` extension, skip `migrate_phase4_pgvector.py`. Semantic search falls back to keyword matching automatically.
-
-### 4. Start services
+### 3. Start services
 
 ```bash
 # Terminal 1 — API
@@ -109,104 +126,178 @@ python -m app.worker.lead_worker
 cd frontend && npm install && npm run dev
 ```
 
-Open `http://localhost:5173` · Login with `admin@autonomoussdr.com` / `changeme123`
+Open `http://localhost:5173` — login with `admin@autonomoussdr.com` / `changeme123`.
 
 ---
 
 ## Optional integrations (all have free tiers or are fully mocked)
 
-Set in `.env` — the app works without any of these:
-
 | Feature | Env var | Free tier |
 |---|---|---|
+| Fast AI (recommended) | `GROQ_API_KEY` | 6 000 req/h — no credit card |
+| Web research | `TAVILY_API_KEY` | 1 000 searches/mo — no credit card |
 | Anthropic Claude | `ANTHROPIC_API_KEY` | $5 credit on sign-up |
 | Real enrichment | `HUNTER_API_KEY` | 25 lookups/month |
 | People Data Labs | `PDL_API_KEY` | 100 calls/month |
+| Funding signals | `CRUNCHBASE_API_KEY` | mock when absent |
 | SMS outreach | `TWILIO_*` | $15 trial credit |
-| LinkedIn DMs | `UNIPILE_API_KEY` | trial available |
-| Email delivery | `SMTP_*` | Gmail free (500/day) |
-| Meeting booking | `CAL_SCHEDULING_URL` | cal.com free |
+| Meeting booking | `CAL_SCHEDULING_URL` | cal.com free tier |
 | Slack alerts | `SLACK_WEBHOOK_URL` | free |
-| HubSpot CRM | `HUBSPOT_API_KEY` | free tier |
-| Crunchbase signals | `CRUNCHBASE_API_KEY` | deterministic mock when absent |
+| HubSpot CRM | `HUBSPOT_API_KEY` | free CRM tier |
+| Webhook security | `WEBHOOK_SECRET` | generate: `make secret` |
 
-Switch providers with a single env var:
+### Runtime toggles (no restart required)
+
 ```bash
-AI_PROVIDER=claude              # ollama | claude
-ENRICHMENT_PROVIDER=hunter      # synthetic | hunter | pdl
+# Switch enrichment provider live
+POST /config/enrichment-provider?provider=hunter    # or synthetic, pdl
+
+# Check current provider
+GET /config/enrichment-provider
 ```
 
 ---
 
 ## Architecture deep-dive
 
-### LangGraph state machine (`app/agents/graph.py`)
+### LangGraph pipeline (`app/agents/graph.py`)
 
 ```
-orchestrate ──→ enrich ──→ score_intent ──→ analyse ──→ validate
-                                                            │
-                        ┌───────────────────────────────────┤
-                        ▼               ▼               ▼   ▼
-                     booking        outreach         sync_crm  human_handoff
-                   (Hot leads)    (Warm leads)      (Cold + all)
+orchestrate → enrich → research (ReAct) → score_intent → analyse → validate
+                                                                        │
+                              ┌─────────────────────────────────────────┤
+                              ▼            ▼                ▼            ▼
+                           booking      outreach        sync_crm   human_handoff
+                         (Hot leads)  (Warm leads)    (Cold + all)
 ```
 
-Routing is purely data-driven: the `validate` node sets `final_verdict` in the shared `LeadState` TypedDict, and `route_after_validate()` reads it to pick the next node. Adding a new agent = adding one function and one edge.
+Every node publishes `{node, status, duration_ms}` to a Redis pub/sub channel. The frontend subscribes via SSE (`GET /leads/{id}/pipeline/stream`) for live execution visualization.
 
-### Buyer intent scoring (`app/services/intent_scoring.py`)
+### ReAct research agent (`app/agents/research_agent.py`)
 
-Signals fire when conditions match enrichment data:
-- Source priority (LinkedIn signal → 0.20, event → 0.15, website → 0.10, …)
-- Seniority ≥ Director → +0.15
-- Company size 50–500 → +0.10
-- ICP industry match → +0.15
-- Recent funding round → +0.20
-- BANT-derived signals (hot budget, tight timeline) → up to +0.20
+Runs between enrichment and intent scoring. Up to 3 iterations:
+1. `search_web` — Tavily full-text search (DuckDuckGo if no key)
+2. `check_funding` — looks for funding round announcements
+3. `verify_icp` — checks industry/size signals against ICP config
 
-### Self-optimization loop (`app/services/optimization_loop.py`)
+Results are injected into the analysis LLM prompt. The node is non-critical — any exception returns an empty research dict and the pipeline continues.
 
-Every N leads, the loop:
-1. Splits leads into `converted` (Hot, booked) vs `lost`
-2. Computes mean BANT scores for each group
-3. Assigns higher weights to dimensions with the largest separation
+### Autonomous scheduler (`app/services/scheduler.py`)
+
+APScheduler runs inside the FastAPI process (no extra container):
+- Every **5 minutes**: re-queues any lead stuck in `pending` longer than `AUTO_PROCESS_DELAY_SECONDS`
+- Every **1 minute**: refreshes Prometheus `pipeline_queue_size` and `leads_in_flight` gauges
+
+### BANT self-optimization (`app/services/optimization_loop.py`)
+
+Every N leads:
+1. Splits leads into `converted` (Hot + booked) vs `lost`
+2. Computes mean BANT scores per group
+3. Weights dimensions with the largest converted/lost separation higher
 4. Blends: `new = old × 0.7 + computed × 0.3`
-5. Persists `OptimizationRun` for the A/B Tests → Optimization History panel
+5. Persists an `OptimizationRun` record — visible in the A/B Tests panel
 
 ### A/B email sequences (`app/services/ab_testing.py`)
 
-Two default sequences (Variant A: subject-focused, Variant B: value-led). Events are recorded per-email. Once `n ≥ 30` per variant, a chi-square test determines the winner. The "Promote winner" button in the UI marks the losing sequence inactive.
+Two default sequences (Variant A: subject-focused, Variant B: value-led). Chi-square significance test at `n ≥ 30` per variant. "Promote winner" marks the losing sequence inactive.
 
 ---
 
-## API highlights
+## API reference
 
 ```
-POST /ingest/{form|ads|email|linkedin|event}  — 5 ingestion webhooks
-GET  /leads/{id}/pipeline-trace              — per-lead LangGraph execution trace
-GET  /leads/{id}/intent                      — buyer intent signals
-GET  /leads/{id}/outreach                    — outreach email schedule
-POST /leads/{id}/chat                        — conversational agent turn
-GET  /ab-tests/results                       — variant comparison with significance
-POST /ab-tests/{id}/promote                  — promote winning sequence
-POST /optimization/run                       — trigger BANT weight rebalance
-GET  /optimization/weights                   — current live weights
-GET  /analytics/powerbi-export               — flat JSON export for Power BI
-GET  /analytics/powerbi-export.csv           — CSV version
-GET  /analytics/semantic-search?q=...        — pgvector similarity search
-GET  /track/open/{email_id}                  — open-tracking pixel (1×1 GIF)
-GET  /track/click/{email_id}?url=...         — click redirect + tracking
+# Ingestion
+POST /ingest/{form|ads|email|linkedin|event}   — channel-specific webhooks
+POST /ingest/webhook                           — universal (Zapier/Make/Typeform)
+GET  /ingest/jobs/{id}                         — poll pipeline status
+
+# Leads
+GET  /leads                                    — list with BANT/verdict filters
+GET  /leads/{id}                               — full detail + enrichment + verdict
+GET  /leads/{id}/pipeline/stream               — SSE live pipeline events
+GET  /leads/{id}/pipeline-trace                — per-lead agent execution log
+POST /leads/{id}/outreach                      — trigger outreach sequence
+POST /leads/{id}/book                          — send booking link
+POST /leads/{id}/chat                          — conversational agent turn
+GET  /leads/{id}/intent                        — buyer intent signals
+GET  /leads/{id}/conversations                 — conversation threads
+
+# A/B & Optimization
+GET  /ab-tests/results                         — variant metrics + significance
+POST /ab-tests/{id}/promote                    — promote winning sequence
+POST /optimization/run                         — trigger BANT weight rebalance
+GET  /optimization/weights                     — current live weights
+
+# Config
+GET  /config/enrichment-provider               — current provider
+POST /config/enrichment-provider?provider=X    — hot-swap provider (admin)
+POST /config/slack                             — set Slack webhook
+GET  /health                                   — liveness + worker status
+GET  /metrics                                  — Prometheus scrape endpoint
+
+# Analytics
+GET  /analytics/powerbi-export                 — flat JSON for Power BI
+GET  /analytics/powerbi-export.csv             — CSV download
+GET  /analytics/semantic-search?query=...      — pgvector similarity search
+
+# Tracking
+GET  /track/open/{email_id}                    — open pixel (1×1 GIF)
+GET  /track/click/{email_id}?url=...           — click redirect
 ```
 
-Full interactive docs at `http://localhost:8000/docs`
+Full interactive docs: `http://localhost:8000/docs`
 
 ---
 
-## Running tests
+## Testing
 
 ```bash
-pytest tests/ -v
-# 137 tests, all passing
+make test           # 222 tests, all passing
+make lint           # ruff check
+make fmt            # ruff format
 ```
+
+Test coverage:
+- Auth (register, login, refresh, RBAC, API keys)
+- Ingest (webhook secret, all 5 channels, universal webhook field detection, job status)
+- Enrichment (synthetic, hunter, deduplication)
+- A/B testing (chi-square approximation, event recording, winner promotion)
+- Intent scoring (all signal rules, edge cases)
+- Graph routing (all conditional edges)
+- Export, batch, CSV import, data quality, Slack notifier, outreach agent
+
+---
+
+## Deployment
+
+### Docker Compose (recommended for demos)
+
+```bash
+docker compose up --build
+```
+
+### Railway (one-command cloud deploy)
+
+```bash
+npm install -g @railway/cli
+railway login && railway link
+railway up            # or: make deploy
+```
+
+Set environment variables in the Railway dashboard:
+```
+DATABASE_URL   (Railway Postgres plugin provides this automatically)
+REDIS_URL      (Railway Redis plugin)
+SECRET_KEY     (generate with: make secret)
+GROQ_API_KEY   (optional — free at console.groq.com)
+```
+
+### Manual
+
+1. Postgres 16 with pgvector (Supabase · Railway · Neon all support it)
+2. Redis (Railway · Upstash free tier)
+3. Two processes: `uvicorn app.main:app` and `python -m app.worker.lead_worker`
+4. `alembic upgrade head` before first start
 
 ---
 
@@ -215,62 +306,52 @@ pytest tests/ -v
 ```
 app/
 ├── agents/
-│   ├── graph.py              # LangGraph state machine (entry point for worker)
-│   ├── orchestrator_agent.py # Deduplication, completeness gate, priority scoring
-│   ├── enrichment_agent.py   # Enrichment + Crunchbase intent signals
-│   ├── analysis_agent.py     # LLM BANT qualification (Ollama / Claude)
-│   ├── validator_agent.py    # LLM-as-judge consistency check
-│   ├── outreach_agent.py     # A/B sequences + SMTP delivery
-│   ├── booking_agent.py      # Cal.com booking link + Slack alert
-│   └── conversational_agent.py  # Multi-turn reply (SMS / LinkedIn / mock)
+│   ├── graph.py                 # LangGraph state machine (10 nodes)
+│   ├── research_agent.py        # ReAct loop — Tavily + DuckDuckGo tools
+│   ├── orchestrator_agent.py    # Deduplication, completeness, priority
+│   ├── enrichment_agent.py      # Enrichment dispatch + Crunchbase signals
+│   ├── analysis_agent.py        # LLM BANT qualification
+│   ├── validator_agent.py       # LLM-as-judge consistency check
+│   ├── outreach_agent.py        # A/B sequences + SMTP delivery
+│   ├── booking_agent.py         # Cal.com booking link + Slack alert
+│   └── conversational_agent.py  # Multi-turn replies (SMS / LinkedIn / email)
 ├── services/
-│   ├── intent_scoring.py     # Buyer intent heuristics
-│   ├── ab_testing.py         # Chi-square A/B significance test
-│   ├── optimization_loop.py  # BANT weight self-optimization
-│   ├── embedding_service.py  # pgvector embeddings + semantic search
-│   ├── crm_sync.py           # HubSpot / Salesforce / Pipedrive adapters
-│   ├── memory_service.py     # Conversation history + summarization
+│   ├── scheduler.py             # APScheduler — auto-requeue + metrics refresh
+│   ├── rate_limiter.py          # slowapi limiter instance
+│   ├── intent_scoring.py        # Buyer intent heuristics (10+ rules)
+│   ├── ab_testing.py            # Chi-square A/B significance test
+│   ├── optimization_loop.py     # BANT weight self-optimization
+│   ├── embedding_service.py     # pgvector embeddings + semantic search
+│   ├── crm_sync.py              # HubSpot / Salesforce / Pipedrive adapters
+│   ├── memory_service.py        # Conversation history + LLM summarization
 │   └── enrichment/
-│       ├── synthetic.py      # Heuristic enrichment (zero API, default)
-│       ├── hunter.py         # Hunter.io domain lookup
-│       ├── pdl.py            # People Data Labs person API
-│       └── crunchbase.py     # Crunchbase funding signals
+│       ├── synthetic.py         # Heuristic enrichment (zero API, default)
+│       ├── hunter.py            # Hunter.io domain lookup
+│       ├── pdl.py               # People Data Labs person API
+│       └── crunchbase.py        # Crunchbase funding signals
 ├── routers/
-│   └── ingest.py             # 5 ingestion channel webhooks
+│   └── ingest.py                # 5 channel webhooks + universal + job status
 ├── worker/
-│   └── lead_worker.py        # LangGraph worker (concurrency + watchdog)
-└── main.py                   # FastAPI app + all REST endpoints
+│   └── lead_worker.py           # LangGraph worker (concurrency + watchdog)
+├── logging_config.py            # structlog — JSON prod / coloured dev
+├── metrics.py                   # Prometheus counters + histograms
+└── main.py                      # FastAPI app, middleware, all REST endpoints
 
-frontend/src/
-├── pages/
-│   ├── Dashboard.tsx         # KPI cards, pipeline funnel, hot leads feed
-│   ├── Pipeline.tsx          # LangGraph graph topology + per-lead trace
-│   ├── ABTests.tsx           # A/B variant comparison + BANT optimization
-│   ├── Analytics.tsx         # Outreach funnel, BANT weights, industry breakdown
-│   └── Leads.tsx             # Lead table with verdict/BANT filters
-scripts/
-├── init_db.py                # Create base tables
-├── migrate_phase3_tables.py  # Phase 3: outreach, booking, intent, conversations
-└── migrate_phase4_pgvector.py  # Phase 4: vector extension + HNSW index
+alembic/
+├── env.py                       # Alembic environment — reads DATABASE_URL from settings
+└── versions/
+    └── 0001_initial_schema.py   # Baseline migration (replaces all old migration scripts)
 
-tests/
-└── (137 tests, all passing)
+frontend/src/pages/
+├── Dashboard.tsx                # KPI cards, pipeline funnel, hot leads feed
+├── Pipeline.tsx                 # Graph topology + live SSE stream per lead
+├── ABTests.tsx                  # A/B variant comparison + BANT optimization
+├── Analytics.tsx                # Outreach funnel, BANT weights, industry breakdown
+├── Leads.tsx                    # Lead table with verdict/BANT filters
+└── Settings.tsx                 # Slack, SMTP, API key management
+
+tests/                           # 222 tests — pytest + unittest.mock
 ```
-
----
-
-## Deployment
-
-The app is stateless between the API and worker — both read from the same Postgres + Redis. A minimal production deploy needs only:
-
-1. A Postgres database with pgvector (Supabase / Railway / Neon all support it)
-2. A Redis instance (Railway / Upstash free tier)
-3. Two Dynos / containers: `uvicorn app.main:app` and `python -m app.worker.lead_worker`
-4. Set `SECRET_KEY`, `DATABASE_URL`, `REDIS_URL` in environment
-
-For real email delivery, replace the SMTP block with a [SendGrid](https://sendgrid.com) or [Mailgun](https://mailgun.com) adapter — the swap point is `OutreachAgent._send_email()` with production code already commented in.
-
-For production AI, set `AI_PROVIDER=claude` and add `ANTHROPIC_API_KEY`.
 
 ---
 

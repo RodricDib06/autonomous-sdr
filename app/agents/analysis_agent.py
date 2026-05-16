@@ -156,7 +156,6 @@ class AnalysisAgent(BaseAgent):
             "analysis_verdict": guarded_verdict,
             "analysis_reasoning": validated.reasoning,
             "bant_scores": bant_scores,
-            "overall_score": validated.overall_score,
             "icp_match": validated.icp_match,
         }
         if flag:

@@ -332,7 +332,7 @@ def node_booking(state: LeadState) -> LeadState:
         elapsed = time.time() - t0
         _inc_node_duration("booking", elapsed)
         log.info("graph.node.complete", node="booking", lead_id=lead_id[:8], status=result.get("status"), duration_ms=int(elapsed * 1000))
-        _publish(lead_id, "booking", "complete", duration_ms=int(elapsed * 1000), status=result.get("status", ""))
+        _publish(lead_id, "booking", "complete", duration_ms=int(elapsed * 1000), result_status=result.get("status", ""))
         return {**state, "booking": result}
     except Exception as e:
         elapsed = time.time() - t0
@@ -362,7 +362,7 @@ def node_outreach(state: LeadState) -> LeadState:
         except Exception:
             pass
         log.info("graph.node.complete", node="outreach", lead_id=lead_id[:8], status=result.get("status"), duration_ms=int(elapsed * 1000))
-        _publish(lead_id, "outreach", "complete", duration_ms=int(elapsed * 1000), status=result.get("status", ""))
+        _publish(lead_id, "outreach", "complete", duration_ms=int(elapsed * 1000), result_status=result.get("status", ""))
         return {**state, "outreach": result}
     except Exception as e:
         elapsed = time.time() - t0

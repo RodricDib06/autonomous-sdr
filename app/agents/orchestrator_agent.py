@@ -23,7 +23,6 @@ from sqlalchemy.orm import Session
 from app.agents.base import BaseAgent
 from app.database import crud
 from app.database.models import Lead, Verdict
-from app.services.deduplication import DeduplicationService
 
 log = logging.getLogger(__name__)
 
@@ -59,7 +58,7 @@ class OrchestratorAgent(BaseAgent):
     name = "orchestrator"
 
     def __init__(self):
-        self._dedup = DeduplicationService()
+        pass
 
     def run(self, db: Session, lead_id: str, input_data: dict) -> dict:
         lead = crud.get_lead(db, lead_id)

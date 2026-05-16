@@ -157,8 +157,12 @@ def compute_intent_score(
             signals.append(("high_revenue", _RULE_MAP["high_revenue"].weight, "heuristic"))
 
         # Tech stack: does the lead's stack include cloud / devtools?
-        stack = enrichment.tech_stack or {}
-        known_tools = set(str(v).lower() for v in stack.values() if isinstance(v, str))
+        stack = enrichment.tech_stack or []
+        if isinstance(stack, dict):
+            stack_items = list(stack.values())
+        else:
+            stack_items = stack
+        known_tools = set(str(v).lower() for v in stack_items if isinstance(v, str))
         cloud_tools = {"aws", "gcp", "azure", "docker", "kubernetes", "postgres", "redis"}
         if known_tools & cloud_tools:
             signals.append(("strong_tech_stack", _RULE_MAP["strong_tech_stack"].weight, "heuristic"))

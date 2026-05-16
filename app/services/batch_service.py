@@ -7,7 +7,6 @@ All actions are atomic per-lead with a single commit at the end.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -63,7 +62,7 @@ def execute_batch(
 def _load_leads(db: Session, lead_ids: list[str]) -> tuple[list[Lead], list[str]]:
     """Return (found_leads, not_found_ids)."""
     leads = db.query(Lead).filter(Lead.id.in_(lead_ids)).all()
-    found_ids = {l.id for l in leads}
+    found_ids = {lead.id for lead in leads}
     not_found = [lid for lid in lead_ids if lid not in found_ids]
     return leads, not_found
 

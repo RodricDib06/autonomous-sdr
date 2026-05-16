@@ -1,10 +1,8 @@
 """
 Slack webhook notification service
 """
-import json
 import requests
 from typing import Optional, Dict
-from datetime import datetime
 import logging
 
 log = logging.getLogger(__name__)
@@ -12,13 +10,13 @@ log = logging.getLogger(__name__)
 
 class SlackConfig:
     """Slack webhook configuration"""
-    def __init__(self, webhook_url: str, enabled: bool = True, 
+    def __init__(self, webhook_url: str, enabled: bool = True,
                  notify_on_hot: bool = True, notify_on_warm: bool = False):
         self.webhook_url = webhook_url
         self.enabled = enabled
         self.notify_on_hot = notify_on_hot
         self.notify_on_warm = notify_on_warm
-    
+
     def to_dict(self) -> Dict:
         return {
             'webhook_url': self.webhook_url,
@@ -30,22 +28,22 @@ class SlackConfig:
 
 class SlackNotifier:
     """Send notifications to Slack"""
-    
+
     def __init__(self, webhook_url: Optional[str] = None):
         self.webhook_url = webhook_url
         self.enabled = webhook_url is not None and len(webhook_url) > 0
-    
+
     def set_webhook(self, webhook_url: str) -> bool:
         """Set the webhook URL"""
         if not webhook_url or len(webhook_url) == 0:
             self.webhook_url = None
             self.enabled = False
             return False
-        
+
         self.webhook_url = webhook_url
         self.enabled = True
         return True
-    
+
     def notify(self, text: str) -> bool:
         """Send a plain-text message to Slack."""
         if not self.enabled or not self.webhook_url:
@@ -61,7 +59,7 @@ class SlackNotifier:
         """Test if webhook is valid"""
         if not self.enabled or not self.webhook_url:
             return False
-        
+
         try:
             message = {
                 "text": "🧪 Test message from AutonomousSDR",
@@ -75,35 +73,35 @@ class SlackNotifier:
                     }
                 ]
             }
-            
+
             response = requests.post(
                 self.webhook_url,
                 json=message,
                 timeout=5
             )
             return response.status_code == 200
-        
+
         except Exception as e:
             log.error(f"Webhook test failed: {e}")
             return False
-    
+
     def notify_hot_lead(self, lead_data: Dict) -> bool:
         """
         Send notification for Hot lead
-        
+
         Args:
             lead_data: Dictionary with lead information
-            
+
         Returns:
             True if sent successfully
         """
         if not self.enabled or not self.webhook_url:
             return False
-        
+
         try:
             confidence = lead_data.get('confidence_score', 0)
             confidence_pct = round(confidence * 100, 1)
-            
+
             message = {
                 "blocks": [
                     {
@@ -155,32 +153,32 @@ class SlackNotifier:
                     }
                 ]
             }
-            
+
             response = requests.post(
                 self.webhook_url,
                 json=message,
                 timeout=5
             )
-            
+
             if response.status_code != 200:
                 log.error(f"Slack notification failed: {response.status_code} - {response.text}")
                 return False
-            
+
             return True
-        
+
         except Exception as e:
             log.error(f"Failed to send Slack notification: {e}")
             return False
-    
+
     def notify_warm_lead(self, lead_data: Dict) -> bool:
         """Send notification for Warm lead"""
         if not self.enabled or not self.webhook_url:
             return False
-        
+
         try:
             confidence = lead_data.get('confidence_score', 0)
             confidence_pct = round(confidence * 100, 1)
-            
+
             message = {
                 "blocks": [
                     {
@@ -213,24 +211,24 @@ class SlackNotifier:
                     }
                 ]
             }
-            
+
             response = requests.post(
                 self.webhook_url,
                 json=message,
                 timeout=5
             )
-            
+
             return response.status_code == 200
-        
+
         except Exception as e:
             log.error(f"Failed to send warm lead notification: {e}")
             return False
-    
+
     def notify_import_complete(self, import_result: Dict) -> bool:
         """Send notification for completed import"""
         if not self.enabled or not self.webhook_url:
             return False
-        
+
         try:
             message = {
                 "blocks": [
@@ -265,15 +263,15 @@ class SlackNotifier:
                     }
                 ]
             }
-            
+
             response = requests.post(
                 self.webhook_url,
                 json=message,
                 timeout=5
             )
-            
+
             return response.status_code == 200
-        
+
         except Exception as e:
             log.error(f"Failed to send import notification: {e}")
             return False

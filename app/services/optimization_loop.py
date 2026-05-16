@@ -27,11 +27,9 @@ Logic:
 """
 
 import logging
-from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.database.models import Lead, Verdict, OptimizationRun
-from app.config import settings
 
 log = logging.getLogger(__name__)
 

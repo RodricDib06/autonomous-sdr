@@ -24,13 +24,10 @@ internal LeadCreate schema, deduplicates, then pushes to the processing queue.
 #   - Eventbrite:      https://www.eventbrite.com/platform/api#/reference/webhook
 """
 
-import hashlib
 import hmac
-import logging
 import re
-from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import Any
 

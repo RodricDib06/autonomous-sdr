@@ -1,4 +1,3 @@
-import logging
 import json
 import asyncio
 from contextlib import asynccontextmanager
@@ -31,7 +30,7 @@ from app.services.data_quality import DataQualityService
 from app.services.export_service import build_export_rows, to_csv_bytes, to_hubspot_rows, to_salesforce_rows
 from app.services.batch_service import execute_batch
 from app.schemas.lead import LeadCreate, LeadResponse, LeadDetail, BatchRequest, ImportHistoryResponse, AssignRequest, ConversionRequest, LeadHistoryEntry, AssignmentStats
-from app.auth.dependencies import get_current_user, require_admin, require_manager, require_rep
+from app.auth.dependencies import require_admin, require_manager, require_rep
 from app.database.models import User
 from app.routers.auth import router as auth_router
 from app.routers.ingest import router as ingest_router
@@ -75,7 +74,7 @@ async def lifespan(app: FastAPI):
                 log.warning("startup.ai_provider", provider=settings.AI_PROVIDER, status="not_ready", error=str(e))
             except Exception as e:
                 log.warning("startup.ai_provider", provider=settings.AI_PROVIDER, status="not_ready", error=str(e))
-        
+
         # Seed initial admin if no users exist (skipped in test mode)
         if not _testing:
             try:
@@ -338,12 +337,12 @@ def get_lead_stats(
         completed_leads = db.query(Lead).filter(Lead.status == "complete").count()
         failed_leads = db.query(Lead).filter(Lead.status == "failed").count()
         processing_leads = db.query(Lead).filter(Lead.status == "processing").count()
-        
+
         # Verdict breakdown
         hot_leads = db.query(Verdict).filter(Verdict.final_verdict == "Hot").count()
         warm_leads = db.query(Verdict).filter(Verdict.final_verdict == "Warm").count()
         cold_leads = db.query(Verdict).filter(Verdict.final_verdict == "Cold").count()
-        
+
         return {
             "total_leads": total_leads,
             "completed": completed_leads,
@@ -405,12 +404,12 @@ def get_hot_leads(
             Lead.status == "complete",
             Verdict.final_verdict == "Hot"
         ).order_by(Verdict.confidence_score.desc()).limit(limit).all()
-        
+
         results = []
         for lead in hot_leads:
             verdict = lead.verdicts[0] if lead.verdicts else None
             enrichment = lead.enrichments[0] if lead.enrichments else None
-            
+
             results.append({
                 "id": lead.id,
                 "name": lead.name,
@@ -422,7 +421,7 @@ def get_hot_leads(
                 "industry": enrichment.industry if enrichment else None,
                 "reasoning": verdict.analysis_reasoning if verdict else None
             })
-        
+
         return {"hot_leads": results, "count": len(results)}
     except Exception as e:
         log.error("Failed to get hot leads", error=str(e))
@@ -440,7 +439,7 @@ def export_leads(
 ):
     """Export leads data — supports JSON and CRM-formatted CSV (HubSpot, Salesforce)."""
     try:
-        query = db.query(Lead).filter(Lead.status == "complete", Lead.archived == False)
+        query = db.query(Lead).filter(Lead.status == "complete", not Lead.archived)
 
         if verdict_filter:
             query = query.join(Verdict).filter(Verdict.final_verdict == verdict_filter)
@@ -508,7 +507,7 @@ def import_csv_leads(
         # Read CSV content
         content = file.file.read().decode('utf-8')
         file.file.close()
-        
+
         # Import using CSVImportService
         import_service = CSVImportService(db)
         result = import_service.import_leads(content, check_duplicates=check_duplicates)
@@ -523,7 +522,7 @@ def import_csv_leads(
         log.info("csv.import.complete", successful=result.successful, failed=result.failed)
 
         return result.to_dict()
-    
+
     except Exception as e:
         log.error("Failed to import CSV", error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to import CSV: {str(e)}")
@@ -538,7 +537,7 @@ def get_duplicate_report(
     try:
         dedup_service = DeduplicationService(db)
         report = dedup_service.get_duplicate_report()
-        
+
         return {
             "report": report,
             "generated_at": datetime.utcnow().isoformat()
@@ -694,7 +693,7 @@ def get_assignment_stats(
     """Get assignment and conversion stats for all reps."""
     from app.database.models import User, Lead
 
-    reps = db.query(User).filter(User.role == "rep", User.is_active == True).all()
+    reps = db.query(User).filter(User.role == "rep", User.is_active).all()
     stats = []
 
     for rep in reps:
@@ -811,17 +810,17 @@ def check_lead_duplicate(
         lead = crud.get_lead(db, lead_id)
         if not lead:
             raise HTTPException(status_code=404, detail="Lead not found")
-        
+
         dedup_service = DeduplicationService(db)
         potential_dupes = dedup_service.find_potential_duplicates(
             lead.name, lead.email, lead.company
         )
-        
+
         # Filter out the lead itself
         potential_dupes = [
             d for d in potential_dupes if d['lead'].id != lead_id
         ]
-        
+
         return {
             "lead_id": lead_id,
             "has_duplicates": len(potential_dupes) > 0,
@@ -856,13 +855,13 @@ def merge_duplicate_leads(
     try:
         primary = crud.get_lead(db, primary_id)
         duplicate = crud.get_lead(db, duplicate_id)
-        
+
         if not primary or not duplicate:
             raise HTTPException(status_code=404, detail="One or both leads not found")
-        
+
         dedup_service = DeduplicationService(db)
         success = dedup_service.merge_leads(primary_id, duplicate_id)
-        
+
         if success:
             log.info("lead.merged", primary=primary_id[:8], duplicate=duplicate_id[:8])
             return {
@@ -872,7 +871,7 @@ def merge_duplicate_leads(
             }
         else:
             raise HTTPException(status_code=400, detail="Failed to merge leads")
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -888,7 +887,7 @@ def validate_email(
     """Validate email format, domain, and characteristics"""
     try:
         result = EmailDomainValidator.validate_email_with_domain(email, check_mx=True)
-        
+
         return {
             "email": email,
             "validation": result,
@@ -919,7 +918,7 @@ def validate_email_batch(
                 "overall_quality": result['overall_quality'],
                 "domain_type": EmailDomainValidator.get_domain_type(email)
             })
-        
+
         return {
             "total": len(emails),
             "valid": sum(1 for r in results if r['is_valid']),
@@ -948,22 +947,22 @@ def set_slack_config(
     """Set Slack webhook URL for notifications"""
     try:
         global slack_webhook_url
-        
+
         if not webhook_url or len(webhook_url) == 0:
             raise HTTPException(status_code=400, detail="Webhook URL cannot be empty")
-        
+
         # Validate webhook URL format
         if not webhook_url.startswith('https://hooks.slack.com/'):
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail="Invalid webhook URL format. Must be from hooks.slack.com"
             )
-        
+
         slack_notifier.set_webhook(webhook_url)
         slack_webhook_url = webhook_url
-        
+
         log.info("slack.webhook.configured")
-        
+
         return {
             "status": "success",
             "message": "Slack webhook configured",
@@ -982,12 +981,12 @@ def test_slack_webhook(current_user: User = Depends(require_admin)):
     try:
         if not slack_notifier.enabled:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail="Slack webhook not configured"
             )
-        
+
         success = slack_notifier.test_webhook()
-        
+
         return {
             "status": "success" if success else "failed",
             "message": "Webhook test successful" if success else "Webhook test failed",
@@ -1310,7 +1309,7 @@ def get_ab_results(
     db: Session = Depends(get_db),
 ):
     """Return per-variant conversion metrics for all outreach sequences."""
-    from app.services.ab_testing import get_test_results, find_winner, _chi_square_p, _MIN_SAMPLE
+    from app.services.ab_testing import get_test_results, _chi_square_p, _MIN_SAMPLE
     from app.database.models import OutreachSequence
 
     raw = get_test_results(db)
@@ -1535,7 +1534,6 @@ def powerbi_export(
       - Intent P75     = PERCENTILE([intent_score], 0.75)
       - Conversion Rate= DIVIDE(COUNTIF([conversion_status],"converted"), COUNT([id]))
     """
-    from app.database.models import OutreachEmail, IntentSignal, BookingRequest
     from sqlalchemy.orm import selectinload
 
     leads = (
@@ -1684,7 +1682,7 @@ def get_pipeline_trace(
     )
 
     verdict = lead.verdicts[0] if lead.verdicts else None
-    nodes_executed = list(dict.fromkeys(l.agent_name for l in logs if l.success))
+    nodes_executed = list(dict.fromkeys(lg.agent_name for lg in logs if lg.success))
 
     return {
         "lead_id": lead_id,
@@ -1694,14 +1692,14 @@ def get_pipeline_trace(
         "nodes_executed": nodes_executed,
         "agent_logs": [
             {
-                "id": l.id,
-                "agent_name": l.agent_name,
-                "status": "success" if l.success else "failed",
-                "duration_ms": l.duration_ms,
-                "error_message": l.error_message,
-                "created_at": l.created_at.isoformat() if l.created_at else None,
+                "id": lg.id,
+                "agent_name": lg.agent_name,
+                "status": "success" if lg.success else "failed",
+                "duration_ms": lg.duration_ms,
+                "error_message": lg.error_message,
+                "created_at": lg.created_at.isoformat() if lg.created_at else None,
             }
-            for l in logs
+            for lg in logs
         ],
     }
 
@@ -1717,7 +1715,6 @@ def get_outreach_stats(
 ):
     """Aggregate email engagement stats across all sequences."""
     from app.database.models import OutreachEmail as OutreachEmailModel
-    from sqlalchemy import func
 
     rows = db.query(OutreachEmailModel).all()
     total_sent = sum(1 for r in rows if r.status in ("sent", "opened", "replied"))

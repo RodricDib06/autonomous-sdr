@@ -34,13 +34,11 @@ Prometheus failure never aborts the pipeline.
 """
 
 import json
-import logging
 import time
 from typing import TypedDict
 
 import structlog
 from langgraph.graph import StateGraph, END
-from sqlalchemy.orm import Session
 
 log = structlog.get_logger(__name__)
 

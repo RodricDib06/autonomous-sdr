@@ -95,7 +95,6 @@ def store_conversation_embedding(db: Session, conversation_id: str, text: str) -
         return False
 
     try:
-        from pgvector.sqlalchemy import Vector
         db.execute(
             __import__("sqlalchemy").text(
                 "UPDATE conversations SET embedding = :vec WHERE id = :id"

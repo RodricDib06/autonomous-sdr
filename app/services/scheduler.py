@@ -20,7 +20,6 @@ needed for light scheduled work.
 # Scheduler, AWS EventBridge).
 """
 
-import logging
 from datetime import datetime, timedelta
 
 import structlog

@@ -23,7 +23,6 @@ PoC: uses Python's smtplib with Gmail SMTP (free, 500 emails/day).
 import json
 import logging
 import smtplib
-import time
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -232,7 +231,7 @@ class OutreachAgent(BaseAgent):
     def _pick_sequence(self, db: Session) -> OutreachSequence | None:
         """Pick the A/B variant with fewest leads sent (even distribution)."""
         from app.database.models import ABTestResult
-        sequences = db.query(OutreachSequence).filter(OutreachSequence.is_active == True).all()
+        sequences = db.query(OutreachSequence).filter(OutreachSequence.is_active).all()
         if not sequences:
             return None
 

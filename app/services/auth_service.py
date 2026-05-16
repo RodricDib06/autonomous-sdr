@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from typing import Literal
 
 import bcrypt
-from jose import JWTError, jwt
+from jose import jwt
 
 from app.config import settings
 

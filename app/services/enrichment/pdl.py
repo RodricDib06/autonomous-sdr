@@ -121,7 +121,7 @@ class PDLEnrichmentProvider(EnrichmentProvider):
             data = resp.json()
 
             # Map PDL fields to our enrichment schema
-            job = (data.get("experience") or [{}])[0] if data.get("experience") else {}
+            (data.get("experience") or [{}])[0] if data.get("experience") else {}
             emp = data.get("job_company_employee_count") or 0
             size_label = _map_size(emp)
 

@@ -17,12 +17,11 @@ PoC: all logic runs in-process against the existing Postgres + Redis stack.
 """
 
 import logging
-from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.agents.base import BaseAgent
 from app.database import crud
-from app.database.models import Lead, Verdict
+from app.database.models import Lead
 
 log = logging.getLogger(__name__)
 

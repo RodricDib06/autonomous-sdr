@@ -85,7 +85,7 @@ def get_rep_assignments(db: Session, rep_id: str) -> list[Lead]:
     """Get all leads assigned to a specific rep."""
     return (
         db.query(Lead)
-        .filter(Lead.assigned_to_id == rep_id, Lead.archived == False)
+        .filter(Lead.assigned_to_id == rep_id, not Lead.archived)
         .order_by(Lead.created_at.desc())
         .all()
     )
@@ -120,7 +120,7 @@ def auto_assign_round_robin(
             assign_lead(db, lead_id, target_rep, changed_by_id=changed_by_id)
             rep_counts[target_rep] += 1
             assigned += 1
-        except Exception as e:
+        except Exception:
             failed += 1
 
     return {"assigned": assigned, "failed": failed, "total": len(lead_ids)}

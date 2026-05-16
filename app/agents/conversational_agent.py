@@ -42,7 +42,6 @@ PoC: persists conversation history in the DB and generates contextual replies
 #     to continue the thread.
 """
 
-import json
 import logging
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -51,7 +50,6 @@ from app.agents.base import BaseAgent
 from app.database.models import Lead, Enrichment, Verdict, Conversation
 from app.database import crud
 from app.services.providers import get_ai_client
-from app.config import settings
 
 log = logging.getLogger(__name__)
 

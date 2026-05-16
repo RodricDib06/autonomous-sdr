@@ -73,7 +73,7 @@ Verdict must be exactly one of: Hot, Warm, Cold"""
 def _apply_bant_guardrails(verdict: str, bant_scores: dict, overall_score: float) -> tuple[str, str]:
     """Validate verdict against numeric BANT scores. Return (verdict, flag or empty string)."""
     authority = bant_scores.get("authority", 0.5)
-    budget = bant_scores.get("budget", 0.5)
+    bant_scores.get("budget", 0.5)
     need = bant_scores.get("need", 0.5)
 
     # Hot requires strong authority (>0.6) AND high need (>0.7)
@@ -119,7 +119,7 @@ class AnalysisAgent(BaseAgent):
 
         raw_response = self._call_with_retry(prompt)
         parsed = self._parse_json(raw_response)
-        
+
         # Ensure required fields are present with defaults
         parsed.setdefault("bant_scores", {
             "budget": 0.5,
@@ -130,7 +130,7 @@ class AnalysisAgent(BaseAgent):
         parsed.setdefault("overall_score", 0.5)
         parsed.setdefault("icp_match", False)
         parsed.setdefault("reasoning", "Analysis completed")
-        
+
         try:
             validated = AnalysisOutput(**parsed)
         except Exception as e:

@@ -55,14 +55,14 @@ def _user_from_jwt(token: str, db: Session) -> User | None:
     except JWTError:
         return None
 
-    return db.query(User).filter(User.id == user_id, User.is_active == True).first()
+    return db.query(User).filter(User.id == user_id, User.is_active).first()
 
 
 def _user_from_api_key(raw_key: str, db: Session) -> User | None:
     key_hash = hash_api_key(raw_key)
     api_key = (
         db.query(APIKey)
-        .filter(APIKey.key_hash == key_hash, APIKey.is_active == True)
+        .filter(APIKey.key_hash == key_hash, APIKey.is_active)
         .first()
     )
     if not api_key:
@@ -74,7 +74,7 @@ def _user_from_api_key(raw_key: str, db: Session) -> User | None:
     db.add(api_key)
     db.commit()
 
-    return db.query(User).filter(User.id == api_key.user_id, User.is_active == True).first()
+    return db.query(User).filter(User.id == api_key.user_id, User.is_active).first()
 
 
 def get_current_user(

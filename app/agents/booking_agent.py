@@ -29,7 +29,6 @@ Cal.com free tier:
 
 import logging
 import uuid as uuid_lib
-from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.agents.base import BaseAgent

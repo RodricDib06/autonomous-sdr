@@ -31,7 +31,7 @@ from app.services.auth_service import (
     hash_password,
     verify_password,
 )
-from app.auth.dependencies import get_current_user, require_admin, require_rep
+from app.auth.dependencies import get_current_user, require_admin
 from app.schemas.auth import (
     AccessTokenResponse,
     APIKeyCreate,
@@ -161,7 +161,7 @@ def refresh_token(payload: RefreshRequest, db: Session = Depends(get_db)):
     if data.get("type") != "refresh":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not a refresh token")
 
-    user = db.query(User).filter(User.id == data["sub"], User.is_active == True).first()
+    user = db.query(User).filter(User.id == data["sub"], User.is_active).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
@@ -282,7 +282,7 @@ def list_api_keys(
 ):
     return (
         db.query(APIKey)
-        .filter(APIKey.user_id == current_user.id, APIKey.is_active == True)
+        .filter(APIKey.user_id == current_user.id, APIKey.is_active)
         .order_by(APIKey.created_at.desc())
         .all()
     )

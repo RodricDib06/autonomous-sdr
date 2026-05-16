@@ -36,7 +36,7 @@ class ImportResult:
     records: List[ImportRecord]
     started_at: datetime
     completed_at: datetime
-    
+
     def to_dict(self) -> Dict:
         return {
             'total_records': self.total_records,
@@ -64,43 +64,43 @@ class ImportResult:
 
 class CSVImportService:
     """Service for importing leads from CSV"""
-    
+
     REQUIRED_FIELDS = {'name', 'email', 'company'}
     OPTIONAL_FIELDS = {'source'}
-    
+
     def __init__(self, db: Session):
         self.db = db
         self.dedup_service = DeduplicationService(db)
         self.quality_service = DataQualityService()
-    
+
     @staticmethod
     def parse_csv(csv_content: str) -> Tuple[List[Dict], List[str]]:
         """
         Parse CSV content
-        
+
         Args:
             csv_content: Raw CSV string
-            
+
         Returns:
             Tuple of (list of records dict, list of errors)
         """
         errors = []
         records = []
-        
+
         try:
             csv_file = io.StringIO(csv_content)
             reader = csv.DictReader(csv_file)
-            
+
             if not reader.fieldnames:
                 errors.append("CSV file is empty")
                 return records, errors
-            
+
             # Check required fields
             missing_fields = CSVImportService.REQUIRED_FIELDS - set(reader.fieldnames)
             if missing_fields:
                 errors.append(f"Missing required columns: {', '.join(missing_fields)}")
                 return records, errors
-            
+
             # Parse rows
             for row_num, row in enumerate(reader, start=2):  # Start at 2 (after header)
                 try:
@@ -111,7 +111,7 @@ class CSVImportService:
                         'company': row.get('company', '').strip(),
                         'source': row.get('source', 'csv_import').strip() or 'csv_import'
                     }
-                    
+
                     # Validate required fields
                     if not record['name']:
                         errors.append(f"Row {row_num}: 'name' is required")
@@ -119,27 +119,27 @@ class CSVImportService:
                         errors.append(f"Row {row_num}: 'email' is required")
                     if not record['company']:
                         errors.append(f"Row {row_num}: 'company' is required")
-                    
+
                     if record['name'] and record['email'] and record['company']:
                         records.append(record)
-                
+
                 except Exception as e:
                     errors.append(f"Row {row_num}: {str(e)}")
-        
+
         except Exception as e:
             errors.append(f"CSV parsing error: {str(e)}")
-        
+
         return records, errors
-    
-    def import_leads(self, csv_content: str, 
+
+    def import_leads(self, csv_content: str,
                     check_duplicates: bool = True) -> ImportResult:
         """
         Import leads from CSV
-        
+
         Args:
             csv_content: Raw CSV string
             check_duplicates: Whether to check for duplicates
-            
+
         Returns:
             ImportResult with details of import operation
         """
@@ -148,10 +148,10 @@ class CSVImportService:
         successful_count = 0
         failed_count = 0
         duplicates_count = 0
-        
+
         # Parse CSV
         records, parse_errors = self.parse_csv(csv_content)
-        
+
         if parse_errors:
             # Create failed records for parse errors
             for error in parse_errors:
@@ -164,7 +164,7 @@ class CSVImportService:
                     error=error
                 ))
             failed_count = len(parse_errors)
-        
+
         # Process records
         for record in records:
             try:
@@ -179,11 +179,11 @@ class CSVImportService:
                             email=record['email'],
                             company=record['company'],
                             status="duplicate",
-                            error=f"Lead with this email already exists",
+                            error="Lead with this email already exists",
                             duplicate_id=duplicates[0].id
                         ))
                         continue
-                
+
                 # Create new lead
                 new_lead = Lead(
                     name=record['name'],
@@ -192,7 +192,7 @@ class CSVImportService:
                     source=record['source'],
                     status="processing"
                 )
-                
+
                 self.db.add(new_lead)
                 self.db.flush()  # Get the ID without committing
 
@@ -216,7 +216,7 @@ class CSVImportService:
                     status="success"
                 ))
                 successful_count += 1
-            
+
             except Exception as e:
                 failed_count += 1
                 import_records.append(ImportRecord(
@@ -227,7 +227,7 @@ class CSVImportService:
                     status="error",
                     error=str(e)
                 ))
-        
+
         # Commit all successful leads
         try:
             self.db.commit()

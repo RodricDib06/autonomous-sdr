@@ -137,6 +137,19 @@ export interface HealthStatus {
   worker_last_seen: string | null;
 }
 
+export interface LeadTrendPoint {
+  day: string;
+  total: number;
+  hot: number;
+  warm: number;
+  cold: number;
+}
+
+export interface LeadTrend {
+  days: number;
+  data: LeadTrendPoint[];
+}
+
 export interface DuplicateReport {
   report: Array<{
     lead: Lead;

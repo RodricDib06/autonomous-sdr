@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
+  AreaChart, Area, BarChart, Bar, LineChart, Line,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend,
 } from "recharts";
-import { TrendingUp, Flame, Target, Award, Mail } from "lucide-react";
+import { TrendingUp, Flame, Target, Award, Mail, Sparkles } from "lucide-react";
 import { leadsApi, outreachApi, optimizationApi } from "../lib/api";
 import { Header } from "../components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
@@ -19,16 +20,31 @@ const COLORS = {
   yellow: "#fbbf24",
 };
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+const WEIGHT_COLORS: Record<string, string> = {
+  budget: "#a78bfa",
+  authority: "#34d399",
+  need: "#fb923c",
+  timeline: "#60a5fa",
+};
+
+interface TooltipPayloadItem {
+  name: string;
+  value: number | string;
+  fill?: string;
+  color?: string;
+  unit?: string;
+}
+
+const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: TooltipPayloadItem[]; label?: string }) => {
   if (!active || !payload) return null;
   return (
     <div className="rounded-lg border border-border bg-card p-3 shadow-xl text-sm">
       {label && <p className="text-muted-foreground mb-2 text-xs">{label}</p>}
-      {payload.map((p: any) => (
+      {payload.map((p) => (
         <div key={p.name} className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full" style={{ background: p.fill || p.color }} />
           <span className="text-muted-foreground">{p.name}:</span>
-          <span className="font-semibold">{p.value}</span>
+          <span className="font-semibold">{p.value}{p.unit ?? ""}</span>
         </div>
       ))}
     </div>
@@ -40,7 +56,11 @@ export default function Analytics() {
   const { data: quality } = useQuery({ queryKey: ["quality"], queryFn: leadsApi.qualityReport });
   const { data: hotData } = useQuery({ queryKey: ["hot"], queryFn: () => leadsApi.hot(100) });
   const { data: outreachStats } = useQuery({ queryKey: ["outreach-stats"], queryFn: outreachApi.stats });
-  const { data: weights } = useQuery({ queryKey: ["optimization-weights"], queryFn: optimizationApi.currentWeights });
+  const { data: trend } = useQuery({ queryKey: ["lead-trend"], queryFn: () => leadsApi.trend(30) });
+  const { data: optHistory } = useQuery({
+    queryKey: ["optimization-history"],
+    queryFn: () => optimizationApi.history(20),
+  });
 
   const verdictData = stats
     ? [
@@ -68,14 +88,12 @@ export default function Analytics() {
       ]
     : [];
 
-  // Build fake trend data (last 7 time windows) from current stats for demo
-  const trendData = stats
-    ? [...Array(7)].map((_, i) => ({
-        day: `Day ${i + 1}`,
-        leads: Math.round((stats.total_leads / 7) * (i + 1) * (0.8 + Math.random() * 0.4)),
-        hot: Math.round((stats.verdict_breakdown.hot / 7) * (i + 1) * (0.8 + Math.random() * 0.4)),
-      }))
-    : [];
+  // Real trend data from the database
+  const trendData = trend?.data.map((d) => ({
+    day: d.day.slice(5), // MM-DD
+    leads: d.total,
+    hot: d.hot,
+  })) ?? [];
 
   // Industry breakdown from hot leads
   const industryMap: Record<string, number> = {};
@@ -105,13 +123,25 @@ export default function Analytics() {
       ]
     : [];
 
-  // BANT weights
-  const weightsData = weights
-    ? Object.entries(weights).map(([k, v]) => ({
-        name: k.charAt(0).toUpperCase() + k.slice(1),
-        value: +(v * 100).toFixed(1),
-        fill: COLORS.violet,
-      }))
+  // BANT weights evolution — transform optimization history into a time series
+  // Each run has new_weights: { budget: 0.3, authority: 0.25, need: 0.25, timeline: 0.2 }
+  const weightsEvolution: Array<Record<string, string | number>> = (optHistory?.runs ?? [])
+    .slice()
+    .reverse()
+    .map((run, i) => ({
+      run: `Run ${i + 1}`,
+      ...Object.fromEntries(
+        Object.entries(run.new_weights ?? {}).map(([k, v]) => [k, +(Number(v) * 100).toFixed(1)])
+      ),
+    }));
+
+  const weightKeys = weightsEvolution.length > 0
+    ? Object.keys(weightsEvolution[0]).filter((k) => k !== "run")
+    : [];
+
+  // Single-run fallback: show current weights as a bar chart
+  const singleWeightsData = weightsEvolution.length === 1
+    ? weightKeys.map((k) => ({ name: k.charAt(0).toUpperCase() + k.slice(1), value: weightsEvolution[0][k] as number, fill: WEIGHT_COLORS[k] ?? COLORS.violet }))
     : [];
 
   return (
@@ -135,34 +165,40 @@ export default function Analytics() {
           ))}
         </div>
 
-        {/* Row 1: Trend + Verdict pie */}
+        {/* Row 1: Real trend + Verdict pie */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <Card className="lg:col-span-2">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Lead Intake Trend</CardTitle>
-              <CardDescription>Cumulative leads and hot leads over time</CardDescription>
+              <CardTitle className="text-sm">Lead Intake — Last 30 Days</CardTitle>
+              <CardDescription>Daily leads ingested and hot leads qualified</CardDescription>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={220}>
-                <AreaChart data={trendData}>
-                  <defs>
-                    <linearGradient id="gradLeads" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={COLORS.violet} stopOpacity={0.3} />
-                      <stop offset="95%" stopColor={COLORS.violet} stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="gradHot" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={COLORS.hot} stopOpacity={0.3} />
-                      <stop offset="95%" stopColor={COLORS.hot} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(217 33% 16%)" vertical={false} />
-                  <XAxis dataKey="day" tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Area type="monotone" dataKey="leads" name="Total Leads" stroke={COLORS.violet} fill="url(#gradLeads)" strokeWidth={2} dot={false} />
-                  <Area type="monotone" dataKey="hot" name="Hot Leads" stroke={COLORS.hot} fill="url(#gradHot)" strokeWidth={2} dot={false} />
-                </AreaChart>
-              </ResponsiveContainer>
+              {trendData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={220}>
+                  <AreaChart data={trendData}>
+                    <defs>
+                      <linearGradient id="gradLeads" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={COLORS.violet} stopOpacity={0.3} />
+                        <stop offset="95%" stopColor={COLORS.violet} stopOpacity={0} />
+                      </linearGradient>
+                      <linearGradient id="gradHot" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={COLORS.hot} stopOpacity={0.3} />
+                        <stop offset="95%" stopColor={COLORS.hot} stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(217 33% 16%)" vertical={false} />
+                    <XAxis dataKey="day" tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Area type="monotone" dataKey="leads" name="Total Leads" stroke={COLORS.violet} fill="url(#gradLeads)" strokeWidth={2} dot={false} />
+                    <Area type="monotone" dataKey="hot" name="Hot Leads" stroke={COLORS.hot} fill="url(#gradHot)" strokeWidth={2} dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-[220px] flex items-center justify-center text-sm text-muted-foreground">
+                  No lead data yet — import leads to see the trend
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -238,7 +274,7 @@ export default function Analytics() {
           </Card>
         </div>
 
-        {/* Row 3: Outreach funnel + BANT weights */}
+        {/* Row 3: Outreach funnel + BANT weights evolution */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
             <CardHeader className="pb-2">
@@ -283,28 +319,60 @@ export default function Analytics() {
             </CardContent>
           </Card>
 
+          {/* BANT Weights Evolution — shows the self-optimization in action */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-violet-400" />
-                BANT Qualification Weights
+                <Sparkles className="w-4 h-4 text-violet-400" />
+                BANT Weight Evolution
               </CardTitle>
-              <CardDescription>Self-optimized from conversion outcomes</CardDescription>
+              <CardDescription>
+                How qualification weights shifted across {optHistory?.count ?? 0} optimization runs
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              {weightsData.length > 0 ? (
+              {weightsEvolution.length > 1 ? (
                 <ResponsiveContainer width="100%" height={200}>
-                  <BarChart data={weightsData} barSize={36}>
+                  <LineChart data={weightsEvolution}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(217 33% 16%)" vertical={false} />
-                    <XAxis dataKey="name" tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
-                    <YAxis unit="%" tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <XAxis dataKey="run" tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis unit="%" tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} domain={[0, 60]} />
                     <Tooltip content={<CustomTooltip />} />
-                    <Bar dataKey="value" fill={COLORS.violet} radius={[4, 4, 0, 0]} name="Weight %" />
-                  </BarChart>
+                    <Legend wrapperStyle={{ fontSize: "11px", color: "hsl(215 20% 55%)" }} />
+                    {weightKeys.map((key) => (
+                      <Line
+                        key={key}
+                        type="monotone"
+                        dataKey={key}
+                        name={key.charAt(0).toUpperCase() + key.slice(1)}
+                        stroke={WEIGHT_COLORS[key] ?? COLORS.violet}
+                        strokeWidth={2}
+                        dot={{ r: 3, fill: WEIGHT_COLORS[key] ?? COLORS.violet }}
+                        unit="%"
+                      />
+                    ))}
+                  </LineChart>
                 </ResponsiveContainer>
+              ) : singleWeightsData.length > 0 ? (
+                <>
+                  <ResponsiveContainer width="100%" height={160}>
+                    <BarChart data={singleWeightsData} barSize={36}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(217 33% 16%)" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <YAxis unit="%" tick={{ fill: "hsl(215 20% 55%)", fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <Tooltip content={<CustomTooltip />} />
+                      {singleWeightsData.map((d, i) => (
+                        <Bar key={i} dataKey="value" fill={d.fill} radius={[4, 4, 0, 0]} name={d.name} />
+                      ))}
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <p className="text-[11px] text-muted-foreground text-center mt-2">
+                    Evolution chart unlocks after 2+ optimization runs
+                  </p>
+                </>
               ) : (
                 <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">
-                  No optimization data yet
+                  No optimization runs yet — run the optimizer to see weight evolution
                 </div>
               )}
             </CardContent>

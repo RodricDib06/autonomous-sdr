@@ -7,6 +7,7 @@ import type {
   Lead,
   LeadDetail,
   LeadStats,
+  LeadTrend,
   HotLead,
   ImportResult,
   ImportHistory,
@@ -134,6 +135,9 @@ export const leadsApi = {
 
   reprocessFailed: () =>
     api.post<{ requeued: number; message: string }>("/leads/reprocess-failed").then((r) => r.data),
+
+  trend: (days = 30) =>
+    api.get<LeadTrend>("/leads/trend", { params: { days } }).then((r) => r.data),
 };
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────

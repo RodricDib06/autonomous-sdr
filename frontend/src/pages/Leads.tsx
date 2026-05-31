@@ -4,10 +4,10 @@ import {
   Search, Filter, Download, X, ChevronRight,
   Building2, Tag, Archive, Trash2, RefreshCw,
   Mail, Calendar, MessageSquare, GitBranch, Zap,
-  CheckCircle2, XCircle, Clock,
+  CheckCircle2, XCircle, Clock, Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
-import { leadsApi, intentApi, outreachApi, bookingApi, conversationsApi, pipelineApi } from "../lib/api";
+import { leadsApi, intentApi, outreachApi, bookingApi, conversationsApi, pipelineApi, analyticsApi } from "../lib/api";
 import type { LeadDetail } from "../types";
 import { Header } from "../components/layout/Header";
 import { Button } from "../components/ui/button";
@@ -77,7 +77,7 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
             <div key={label as string}>
               <p className="text-muted-foreground text-xs mb-0.5">{label}</p>
               {label === "Status" ? (
-                <Badge variant={STATUS_COLORS[lead.status] as any}>{lead.status}</Badge>
+                <Badge variant={STATUS_COLORS[lead.status] as Parameters<typeof Badge>[0]["variant"]}>{lead.status}</Badge>
               ) : (
                 <p className="font-medium capitalize">{value ?? "—"}</p>
               )}
@@ -236,7 +236,7 @@ function OutreachTab({ leadId }: { leadId: string }) {
 
   if (isLoading) return <div className="space-y-2">{[...Array(3)].map((_, i) => <div key={i} className="skeleton h-16 rounded" />)}</div>;
 
-  const emails = data?.emails ?? (Array.isArray(data) ? (data as any[]) : []);
+  const emails = data?.emails ?? [];
 
   if (!emails.length) return (
     <div className="text-center py-8">
@@ -255,7 +255,7 @@ function OutreachTab({ leadId }: { leadId: string }) {
 
   return (
     <div className="space-y-3">
-      {emails.map((e: any) => (
+      {emails.map((e) => (
         <div key={e.id ?? e.step} className="rounded-lg border border-border p-3 space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -290,8 +290,8 @@ function ActivityTab({ leadId }: { leadId: string }) {
     enabled: !!leadId,
   });
 
-  const convs = convData?.conversations ?? (Array.isArray(convData) ? (convData as any[]) : []);
-  const bookings = bookingData?.bookings ?? (Array.isArray(bookingData) ? (bookingData as any[]) : []);
+  const convs = convData?.conversations ?? [];
+  const bookings = bookingData?.bookings ?? [];
 
   return (
     <div className="space-y-5">
@@ -305,7 +305,7 @@ function ActivityTab({ leadId }: { leadId: string }) {
         ) : bookings.length === 0 ? (
           <p className="text-xs text-muted-foreground">No bookings yet.</p>
         ) : (
-          bookings.map((b: any) => (
+          bookings.map((b) => (
             <div key={b.id} className="rounded-lg border border-border p-3 text-xs space-y-1">
               <div className="flex items-center justify-between">
                 <span className="font-medium capitalize">{b.status}</span>
@@ -331,14 +331,14 @@ function ActivityTab({ leadId }: { leadId: string }) {
         ) : convs.length === 0 ? (
           <p className="text-xs text-muted-foreground">No conversations yet.</p>
         ) : (
-          convs.map((c: any) => (
+          convs.map((c) => (
             <div key={c.id} className="rounded-lg border border-border p-3 space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <Badge variant="secondary" className="text-[10px] capitalize">{c.channel}</Badge>
                 <span className="text-muted-foreground">{c.message_count} messages</span>
               </div>
               {c.summary && <p className="text-xs text-muted-foreground italic leading-relaxed">{c.summary}</p>}
-              {c.messages?.slice(-2).map((m: any, i: number) => (
+              {c.messages?.slice(-2).map((m: { role: string; content?: string }, i: number) => (
                 <div key={i} className={cn("text-[10px] rounded px-2 py-1.5", m.role === "assistant" ? "bg-violet-500/10 text-violet-300" : "bg-secondary/50 text-foreground")}>
                   <span className="font-semibold capitalize">{m.role}: </span>
                   <span className="text-muted-foreground">{m.content?.slice(0, 100)}{(m.content?.length ?? 0) > 100 ? "…" : ""}</span>
@@ -451,6 +451,8 @@ export default function Leads() {
   const [selectedLead, setSelectedLead] = useState<LeadDetail | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(0);
+  const [semanticMode, setSemanticMode] = useState(false);
+  const [semanticQuery, setSemanticQuery] = useState("");
   const PAGE_SIZE = 50;
 
   const { data: leads = [], isLoading } = useQuery({
@@ -480,6 +482,13 @@ export default function Leads() {
     onError: () => toast.error("Failed to reprocess leads"),
   });
 
+  const { data: semanticResults, isFetching: semanticFetching } = useQuery({
+    queryKey: ["semantic-search", semanticQuery],
+    queryFn: () => analyticsApi.semanticSearch(semanticQuery, 20),
+    enabled: semanticMode && semanticQuery.length >= 3,
+    staleTime: 30_000,
+  });
+
   const failedCount = leads.filter((l) => l.status === "failed").length;
 
   const filtered = leads.filter((l) => {
@@ -491,7 +500,7 @@ export default function Leads() {
 
   const toggleSelect = (id: string) => {
     const next = new Set(selectedIds);
-    next.has(id) ? next.delete(id) : next.add(id);
+    if (next.has(id)) { next.delete(id); } else { next.add(id); }
     setSelectedIds(next);
   };
 
@@ -539,29 +548,119 @@ export default function Leads() {
       <div className="flex-1 p-8 animate-fade-in">
         {/* Search + filters */}
         <div className="flex gap-3 mb-6">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Search by name, email or company…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
-            />
-          </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[140px]">
-              <Filter className="w-3.5 h-3.5 mr-1.5" />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="complete">Complete</SelectItem>
-              <SelectItem value="processing">Processing</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="failed">Failed</SelectItem>
-            </SelectContent>
-          </Select>
+          {semanticMode ? (
+            <form
+              className="flex flex-1 gap-2"
+              onSubmit={(e) => { e.preventDefault(); const fd = new FormData(e.currentTarget); setSemanticQuery((fd.get("q") as string) ?? ""); }}
+            >
+              <div className="relative flex-1">
+                <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-400" />
+                <Input
+                  name="q"
+                  placeholder='e.g. "leads who mentioned pricing concerns"'
+                  defaultValue={semanticQuery}
+                  className="pl-9 border-violet-500/40 focus-visible:ring-violet-500/40"
+                />
+              </div>
+              <Button type="submit" variant="gradient" size="sm" loading={semanticFetching} className="gap-1.5">
+                <Search className="w-3.5 h-3.5" /> Search
+              </Button>
+            </form>
+          ) : (
+            <>
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search by name, email or company…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-[140px]">
+                  <Filter className="w-3.5 h-3.5 mr-1.5" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="complete">Complete</SelectItem>
+                  <SelectItem value="processing">Processing</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="failed">Failed</SelectItem>
+                </SelectContent>
+              </Select>
+            </>
+          )}
+          <Button
+            variant={semanticMode ? "default" : "outline"}
+            size="sm"
+            onClick={() => { setSemanticMode((m) => !m); setSemanticQuery(""); }}
+            className={`gap-1.5 shrink-0 ${semanticMode ? "bg-violet-600 hover:bg-violet-700" : ""}`}
+            title="AI semantic search over conversation history"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            AI Search
+          </Button>
         </div>
+
+        {/* Semantic results */}
+        {semanticMode && (
+          <div className="mb-6">
+            {!semanticQuery ? (
+              <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 p-6 text-center">
+                <Sparkles className="w-6 h-6 text-violet-400 mx-auto mb-2" />
+                <p className="text-sm font-medium mb-1">Search conversations by meaning</p>
+                <p className="text-xs text-muted-foreground">
+                  Try: "leads who mentioned pricing" · "prospects with Q1 budget" · "companies evaluating competitors"
+                </p>
+              </div>
+            ) : semanticFetching ? (
+              <div className="space-y-2">
+                {[...Array(4)].map((_, i) => <div key={i} className="skeleton h-14 rounded-lg" />)}
+              </div>
+            ) : (semanticResults?.results ?? []).length === 0 ? (
+              <div className="text-center py-8 text-sm text-muted-foreground">
+                No conversations matched — try a different query
+              </div>
+            ) : (
+              <Card className="overflow-hidden">
+                <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">{semanticResults?.count ?? 0}</span> conversations matched
+                  </p>
+                  <p className="text-xs text-muted-foreground">Sorted by semantic similarity</p>
+                </div>
+                <div className="divide-y divide-border">
+                  {(semanticResults?.results ?? []).map((r) => (
+                    <div
+                      key={r.conversation_id}
+                      className="flex items-start gap-4 px-4 py-3 hover:bg-secondary/20 cursor-pointer transition-colors"
+                      onClick={() => loadDetail(r.lead_id)}
+                    >
+                      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-600/60 to-indigo-600/60 flex items-center justify-center text-[10px] font-semibold text-white shrink-0 mt-0.5">
+                        {r.lead_name.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-sm font-medium">{r.lead_name}</span>
+                          <Badge variant="secondary" className="text-[10px] capitalize">{r.channel}</Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground line-clamp-2">{r.snippet}</p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-semibold text-violet-400">
+                          {r.similarity != null ? `${Math.round(r.similarity * 100)}%` : "—"}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">match</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+          </div>
+        )}
 
         {/* Bulk actions */}
         {selectedIds.size > 0 && (
@@ -646,7 +745,7 @@ export default function Leads() {
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <Badge variant={STATUS_COLORS[lead.status] as any} className="capitalize">
+                        <Badge variant={STATUS_COLORS[lead.status] as Parameters<typeof Badge>[0]["variant"]} className="capitalize">
                           {lead.status}
                         </Badge>
                       </td>

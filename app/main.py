@@ -360,6 +360,46 @@ def get_lead_stats(
         raise HTTPException(status_code=500, detail="Failed to get statistics")
 
 
+@app.get("/leads/trend")
+def get_lead_trend(
+    days: int = Query(30, ge=7, le=90),
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """Return daily lead intake counts for the last N days."""
+    from datetime import timedelta
+    from sqlalchemy import func, case
+
+    since = datetime.utcnow() - timedelta(days=days)
+    rows = (
+        db.query(
+            func.date(Lead.created_at).label("day"),
+            func.count(Lead.id).label("total"),
+            func.sum(case((Verdict.final_verdict == "Hot", 1), else_=0)).label("hot"),
+            func.sum(case((Verdict.final_verdict == "Warm", 1), else_=0)).label("warm"),
+            func.sum(case((Verdict.final_verdict == "Cold", 1), else_=0)).label("cold"),
+        )
+        .outerjoin(Verdict, Lead.id == Verdict.lead_id)
+        .filter(Lead.created_at >= since)
+        .group_by(func.date(Lead.created_at))
+        .order_by(func.date(Lead.created_at))
+        .all()
+    )
+    return {
+        "days": days,
+        "data": [
+            {
+                "day": str(r.day),
+                "total": r.total,
+                "hot": int(r.hot or 0),
+                "warm": int(r.warm or 0),
+                "cold": int(r.cold or 0),
+            }
+            for r in rows
+        ],
+    }
+
+
 @app.get("/leads/quality-report")
 def get_quality_report(
     current_user: User = Depends(require_manager),

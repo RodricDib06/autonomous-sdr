@@ -1,21 +1,47 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from "recharts";
-import { Flame, Users2, CheckCircle2, Clock, AlertCircle, Zap, Mail, Calendar } from "lucide-react";
+import { Flame, Users2, CheckCircle2, Clock, AlertCircle, Zap, Mail, Calendar, DollarSign, Pencil } from "lucide-react";
 import { leadsApi, outreachApi, abTestApi } from "../lib/api";
 import { Header } from "../components/layout/Header";
 import { StatCard } from "../components/StatCard";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Progress } from "../components/ui/progress";
+import { Input } from "../components/ui/input";
 import { formatPercent } from "../lib/utils";
+
+const ACV_KEY = "asdr_acv";
+
+function useACV() {
+  const [acv, setAcvState] = useState<number>(() => {
+    const stored = localStorage.getItem(ACV_KEY);
+    return stored ? Number(stored) : 25000;
+  });
+  const setAcv = (v: number) => {
+    localStorage.setItem(ACV_KEY, String(v));
+    setAcvState(v);
+  };
+  return [acv, setAcv] as const;
+}
+
+function formatPipelineValue(v: number): string {
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
+  return `$${v.toLocaleString()}`;
+}
 
 const VERDICT_COLORS = { hot: "#f87171", warm: "#fb923c", cold: "#60a5fa" };
 const QUALITY_COLORS = { excellent: "#34d399", good: "#a3e635", fair: "#fbbf24", poor: "#f87171" };
 
 export default function Dashboard() {
+  const [acv, setAcv] = useACV();
+  const [editingAcv, setEditingAcv] = useState(false);
+  const [acvInput, setAcvInput] = useState("");
+
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ["stats"],
     queryFn: leadsApi.stats,
@@ -104,6 +130,54 @@ export default function Dashboard() {
             accent={stats?.failed ? "orange" : "blue"}
             loading={statsLoading}
           />
+        </div>
+
+        {/* Pipeline revenue value banner */}
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-6 py-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+              <DollarSign className="w-5 h-5 text-emerald-400" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Estimated Pipeline Value</p>
+              <p className="text-2xl font-bold text-emerald-400">
+                {stats ? formatPipelineValue((stats.verdict_breakdown.hot + stats.verdict_breakdown.warm) * acv) : "—"}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <span>{stats ? stats.verdict_breakdown.hot + stats.verdict_breakdown.warm : 0} qualified leads</span>
+            <span>×</span>
+            {editingAcv ? (
+              <form
+                className="flex items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const v = Number(acvInput.replace(/[^0-9]/g, ""));
+                  if (v > 0) setAcv(v);
+                  setEditingAcv(false);
+                }}
+              >
+                <Input
+                  autoFocus
+                  className="h-7 w-28 text-xs"
+                  value={acvInput}
+                  onChange={(e) => setAcvInput(e.target.value)}
+                  placeholder="avg deal $"
+                />
+                <button type="submit" className="text-emerald-400 hover:text-emerald-300 text-xs font-medium">save</button>
+                <button type="button" onClick={() => setEditingAcv(false)} className="text-muted-foreground hover:text-foreground text-xs">cancel</button>
+              </form>
+            ) : (
+              <button
+                onClick={() => { setAcvInput(String(acv)); setEditingAcv(true); }}
+                className="flex items-center gap-1 px-2 py-1 rounded hover:bg-secondary/50 transition-colors group"
+              >
+                ACV {formatPipelineValue(acv)}
+                <Pencil className="w-3 h-3 opacity-0 group-hover:opacity-60 transition-opacity" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Outreach KPI row */}

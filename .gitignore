@@ -9,3 +9,5 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+frontend/coverage/
+PHASE5_PROGRESS.md

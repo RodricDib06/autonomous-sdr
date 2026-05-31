@@ -11,6 +11,7 @@ import Pipeline from "./pages/Pipeline";
 import ABTests from "./pages/ABTests";
 import Users from "./pages/Users";
 import Settings from "./pages/Settings";
+import ICP from "./pages/ICP";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -28,6 +29,7 @@ export default function App() {
             <Route element={<Layout />}>
               <Route index element={<Dashboard />} />
               <Route path="leads" element={<Leads />} />
+              <Route path="icp" element={<ICP />} />
               <Route path="pipeline" element={<Pipeline />} />
               <Route path="ab-tests" element={<ABTests />} />
               <Route element={<ProtectedRoute requireManager />}>

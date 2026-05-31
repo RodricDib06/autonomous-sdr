@@ -1,18 +1,24 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from "recharts";
-import { Flame, Users2, CheckCircle2, Clock, AlertCircle, Zap, Mail, Calendar, DollarSign, Pencil } from "lucide-react";
-import { leadsApi, outreachApi, abTestApi } from "../lib/api";
+import {
+  Flame, Users2, CheckCircle2, Clock, AlertCircle, Zap, Mail,
+  Calendar, DollarSign, Pencil, Timer, TrendingDown,
+} from "lucide-react";
+import { leadsApi, outreachApi, abTestApi, decayApi } from "../lib/api";
+import { useGlobalEvents } from "../hooks/useGlobalEvents";
+import type { GlobalEvent } from "../types";
 import { Header } from "../components/layout/Header";
 import { StatCard } from "../components/StatCard";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Progress } from "../components/ui/progress";
 import { Input } from "../components/ui/input";
-import { formatPercent } from "../lib/utils";
+import { formatPercent, cn } from "../lib/utils";
 
 const ACV_KEY = "asdr_acv";
 
@@ -38,9 +44,36 @@ const VERDICT_COLORS = { hot: "#f87171", warm: "#fb923c", cold: "#60a5fa" };
 const QUALITY_COLORS = { excellent: "#34d399", good: "#a3e635", fair: "#fbbf24", poor: "#f87171" };
 
 export default function Dashboard() {
+  const qc = useQueryClient();
   const [acv, setAcv] = useACV();
   const [editingAcv, setEditingAcv] = useState(false);
   const [acvInput, setAcvInput] = useState("");
+
+  // Real-time SSE notifications
+  useGlobalEvents({
+    onLeadComplete: (event: GlobalEvent) => {
+      const { verdict, lead_name, company } = event;
+      if (verdict === "Hot") {
+        toast.success(`New hot lead: ${lead_name} @ ${company}`, {
+          description: "Ready for outreach — view in Leads",
+          duration: 6000,
+        });
+      } else if (verdict === "Warm") {
+        toast(`Warm lead qualified: ${lead_name} @ ${company}`, {
+          description: "Added to nurture queue",
+          duration: 4000,
+        });
+      }
+      // Refetch live data on any lead completion
+      qc.invalidateQueries({ queryKey: ["stats"] });
+      qc.invalidateQueries({ queryKey: ["hot"] });
+      qc.invalidateQueries({ queryKey: ["cooling"] });
+    },
+    onOptimization: () => {
+      toast("BANT weights updated", { description: "Self-optimization run completed", duration: 4000 });
+      qc.invalidateQueries({ queryKey: ["optimization-weights"] });
+    },
+  });
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ["stats"],
@@ -69,6 +102,12 @@ export default function Dashboard() {
   const { data: abResults } = useQuery({
     queryKey: ["ab-test-results"],
     queryFn: abTestApi.results,
+    refetchInterval: 60_000,
+  });
+
+  const { data: coolingData } = useQuery({
+    queryKey: ["cooling"],
+    queryFn: () => decayApi.cooling(5),
     refetchInterval: 60_000,
   });
 
@@ -340,6 +379,70 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Cooling leads — warm leads going silent */}
+        {coolingData && coolingData.count > 0 && (
+          <Card className="border-orange-500/20">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-sm flex items-center gap-2">
+                    <Timer className="w-4 h-4 text-orange-400" />
+                    Cooling Leads — At Risk of Going Cold
+                  </CardTitle>
+                  <CardDescription>
+                    Warm leads that haven't engaged in 7+ days · respond before they go cold
+                  </CardDescription>
+                </div>
+                <Badge variant="secondary" className="text-xs border-orange-500/30 text-orange-400">
+                  {coolingData.count} at risk
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y divide-border">
+                {coolingData.leads.map((lead) => {
+                  const urgent = lead.decay.urgency === "urgent";
+                  return (
+                    <div key={lead.id} className="flex items-center gap-4 px-6 py-3.5 hover:bg-secondary/20 transition-colors">
+                      <div className={cn(
+                        "flex items-center justify-center w-8 h-8 rounded-full text-white text-xs font-semibold shrink-0",
+                        urgent
+                          ? "bg-gradient-to-br from-red-600 to-orange-600"
+                          : "bg-gradient-to-br from-orange-500 to-yellow-500"
+                      )}>
+                        {lead.name.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{lead.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {lead.job_title ?? lead.email} · {lead.company}
+                        </p>
+                      </div>
+                      <div className="hidden md:flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <TrendingDown className={cn("w-3.5 h-3.5", urgent ? "text-red-400" : "text-orange-400")} />
+                        <span className={urgent ? "text-red-400 font-medium" : "text-orange-400"}>
+                          {lead.decay.days_since_engagement}d silent
+                        </span>
+                      </div>
+                      <div className="w-20 shrink-0">
+                        <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+                          <div
+                            className={cn("h-full rounded-full", urgent ? "bg-red-500" : "bg-orange-400")}
+                            style={{ width: `${lead.decay.decay_score * 100}%` }}
+                          />
+                        </div>
+                        <p className="text-[10px] text-muted-foreground text-right mt-0.5">
+                          {Math.round(lead.decay.decay_score * 100)}% engaged
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Hot leads feed */}
         <Card>

@@ -5,10 +5,10 @@ import {
   Building2, Tag, Archive, Trash2, RefreshCw,
   Mail, Calendar, MessageSquare, GitBranch, Zap,
   CheckCircle2, XCircle, Clock, Sparkles, TrendingUp, TrendingDown, Minus,
-  Brain,
+  Brain, Timer,
 } from "lucide-react";
 import { toast } from "sonner";
-import { leadsApi, intentApi, outreachApi, bookingApi, conversationsApi, pipelineApi, analyticsApi, optimizationApi } from "../lib/api";
+import { leadsApi, intentApi, outreachApi, bookingApi, conversationsApi, pipelineApi, analyticsApi, optimizationApi, decayApi } from "../lib/api";
 import type { LeadDetail } from "../types";
 import { Header } from "../components/layout/Header";
 import { Button } from "../components/ui/button";
@@ -458,11 +458,11 @@ function OutreachTab({ leadId }: { leadId: string }) {
   return (
     <div className="space-y-3">
       {emails.map((e) => (
-        <div key={e.id ?? e.step} className="rounded-lg border border-border p-3 space-y-2">
+        <div key={e.id} className="rounded-lg border border-border p-3 space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               {STATUS_ICON[e.status] ?? <Clock className="w-3.5 h-3.5 text-muted-foreground" />}
-              <span className="text-xs font-medium">Step {e.step_number ?? e.step}</span>
+              <span className="text-xs font-medium">Step {e.step_number}</span>
             </div>
             <Badge variant="secondary" className="text-[10px] capitalize">{e.status}</Badge>
           </div>
@@ -511,12 +511,12 @@ function ActivityTab({ leadId }: { leadId: string }) {
             <div key={b.id} className="rounded-lg border border-border p-3 text-xs space-y-1">
               <div className="flex items-center justify-between">
                 <span className="font-medium capitalize">{b.status}</span>
-                {b.booking_link && (
-                  <a href={b.booking_link} target="_blank" rel="noreferrer"
+                {b.scheduling_url && (
+                  <a href={b.scheduling_url} target="_blank" rel="noreferrer"
                     className="text-violet-400 hover:underline text-[10px]">Cal link ↗</a>
                 )}
               </div>
-              {b.start_time && <p className="text-muted-foreground">Meeting: {new Date(b.start_time).toLocaleString()}</p>}
+              {b.meeting_time && <p className="text-muted-foreground">Meeting: {new Date(b.meeting_time).toLocaleString()}</p>}
               <p className="text-muted-foreground">Created {new Date(b.created_at).toLocaleDateString()}</p>
             </div>
           ))
@@ -537,7 +537,7 @@ function ActivityTab({ leadId }: { leadId: string }) {
             <div key={c.id} className="rounded-lg border border-border p-3 space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <Badge variant="secondary" className="text-[10px] capitalize">{c.channel}</Badge>
-                <span className="text-muted-foreground">{c.message_count} messages</span>
+                <span className="text-muted-foreground">{c.messages?.length ?? 0} messages</span>
               </div>
               {c.summary && <p className="text-xs text-muted-foreground italic leading-relaxed">{c.summary}</p>}
               {c.messages?.slice(-2).map((m: { role: string; content?: string }, i: number) => (
@@ -683,6 +683,16 @@ export default function Leads() {
     onSuccess: (d) => { qc.invalidateQueries({ queryKey: ["leads"] }); toast.success(`${d.requeued} failed leads re-queued`); },
     onError: () => toast.error("Failed to reprocess leads"),
   });
+
+  // Cooling leads — used for "at risk" badges in the table
+  const { data: coolingData } = useQuery({
+    queryKey: ["cooling"],
+    queryFn: () => decayApi.cooling(100),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const coolingSet = new Set((coolingData?.leads ?? []).map((l) => l.id));
+  const coolingMap = new Map((coolingData?.leads ?? []).map((l) => [l.id, l.decay]));
 
   const { data: semanticResults, isFetching: semanticFetching } = useQuery({
     queryKey: ["semantic-search", semanticQuery],
@@ -952,7 +962,28 @@ export default function Leads() {
                         </Badge>
                       </td>
                       <td className="px-4 py-3">
-                        <VerdictBadge verdict={lead.final_verdict} />
+                        <div className="flex items-center gap-1.5">
+                          <VerdictBadge verdict={lead.final_verdict} />
+                          {coolingSet.has(lead.id) && (() => {
+                            const decay = coolingMap.get(lead.id);
+                            if (!decay) return null;
+                            const urgent = decay.urgency === "urgent";
+                            return (
+                              <span
+                                title={`${decay.days_since_engagement}d without engagement`}
+                                className={cn(
+                                  "inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full border",
+                                  urgent
+                                    ? "border-red-500/40 bg-red-500/10 text-red-400"
+                                    : "border-orange-500/40 bg-orange-500/10 text-orange-400"
+                                )}
+                              >
+                                <Timer className="w-2.5 h-2.5" />
+                                {decay.days_since_engagement}d
+                              </span>
+                            );
+                          })()}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <span className={cn("font-semibold", scoreColor(lead.data_quality_score))}>

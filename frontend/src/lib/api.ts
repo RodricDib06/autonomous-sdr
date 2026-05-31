@@ -9,6 +9,11 @@ import type {
   LeadStats,
   LeadTrend,
   CloseProbability,
+  ICPConfig,
+  ICPPreview,
+  ICPEvaluation,
+  EngagementDecay,
+  CoolingLead,
   HotLead,
   ImportResult,
   ImportHistory,
@@ -212,10 +217,31 @@ export const analyticsApi = {
   retrainML: () => api.post("/analytics/ml/retrain").then((r) => r.data),
 };
 
+// ── ICP ───────────────────────────────────────────────────────────────────────
+export const icpApi = {
+  get: () => api.get<ICPConfig>("/icp").then((r) => r.data),
+  update: (payload: Partial<Omit<ICPConfig, "configured" | "updated_at" | "updated_by_id">>) =>
+    api.put<ICPConfig>("/icp", payload).then((r) => r.data),
+  preview: () => api.get<ICPPreview>("/icp/preview").then((r) => r.data),
+  evaluate: (leadId: string) =>
+    api.get<ICPEvaluation>(`/leads/${leadId}/icp-evaluation`).then((r) => r.data),
+};
+
+// ── Engagement decay ──────────────────────────────────────────────────────────
+export const decayApi = {
+  cooling: (limit = 20) =>
+    api.get<{ leads: CoolingLead[]; count: number }>("/leads/cooling", { params: { limit } }).then((r) => r.data),
+  leadDecay: (leadId: string) =>
+    api.get<EngagementDecay>(`/leads/${leadId}/engagement-decay`).then((r) => r.data),
+};
+
 // ── Health ─────────────────────────────────────────────────────────────────────
 export const healthApi = {
   check: () => axios.get<HealthStatus>(`${BASE_URL}/health`).then((r) => r.data),
 };
+
+// ── SSE helpers ───────────────────────────────────────────────────────────────
+export const SSE_BASE = BASE_URL;
 
 // ── Config ─────────────────────────────────────────────────────────────────────
 export const configApi = {

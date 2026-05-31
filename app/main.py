@@ -1855,6 +1855,250 @@ def get_pipeline_trace(
 
 
 # ===========================================================================
+# ICP (Ideal Customer Profile) Builder
+# ===========================================================================
+
+@app.get("/icp")
+def get_icp(
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Return the current ICP configuration."""
+    from app.services.icp_service import get_icp_config
+    cfg = get_icp_config(db)
+    if cfg is None:
+        return {
+            "configured": False,
+            "industries": [],
+            "seniority_levels": [],
+            "excluded_industries": [],
+            "min_employees": None,
+            "max_employees": None,
+            "updated_at": None,
+            "updated_by_id": None,
+        }
+    return {
+        "configured": True,
+        "industries": cfg.industries or [],
+        "seniority_levels": cfg.seniority_levels or [],
+        "excluded_industries": cfg.excluded_industries or [],
+        "min_employees": cfg.min_employees,
+        "max_employees": cfg.max_employees,
+        "updated_at": cfg.updated_at.isoformat() if cfg.updated_at else None,
+        "updated_by_id": cfg.updated_by_id,
+    }
+
+
+@app.put("/icp")
+def update_icp(
+    payload: dict,
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """
+    Create or update the ICP configuration.
+    Accepted fields: industries, seniority_levels, excluded_industries,
+                     min_employees, max_employees
+    """
+    from app.services.icp_service import upsert_icp_config
+
+    allowed = {
+        "industries", "seniority_levels", "excluded_industries",
+        "min_employees", "max_employees",
+    }
+    fields = {k: v for k, v in payload.items() if k in allowed}
+
+    # Validate types
+    for list_field in ("industries", "seniority_levels", "excluded_industries"):
+        if list_field in fields:
+            if fields[list_field] is None:
+                fields[list_field] = []
+            elif not isinstance(fields[list_field], list):
+                raise HTTPException(status_code=422, detail=f"{list_field} must be a list")
+
+    for int_field in ("min_employees", "max_employees"):
+        if int_field in fields and fields[int_field] is not None:
+            try:
+                fields[int_field] = int(fields[int_field])
+                if fields[int_field] < 0:
+                    raise ValueError
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=422, detail=f"{int_field} must be a non-negative integer")
+
+    if not fields:
+        raise HTTPException(status_code=422, detail="No valid fields provided")
+
+    cfg = upsert_icp_config(db, user_id=current_user.id, **fields)
+    return {
+        "configured": True,
+        "industries": cfg.industries or [],
+        "seniority_levels": cfg.seniority_levels or [],
+        "excluded_industries": cfg.excluded_industries or [],
+        "min_employees": cfg.min_employees,
+        "max_employees": cfg.max_employees,
+        "updated_at": cfg.updated_at.isoformat() if cfg.updated_at else None,
+        "updated_by_id": cfg.updated_by_id,
+    }
+
+
+@app.get("/icp/preview")
+def get_icp_preview(
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """Return counts of leads matching the current ICP — used for live preview."""
+    from app.services.icp_service import icp_match_counts
+    return icp_match_counts(db)
+
+
+@app.get("/leads/{lead_id}/icp-evaluation")
+def get_lead_icp_evaluation(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Return detailed ICP criterion breakdown for a single lead."""
+    from sqlalchemy.orm import selectinload
+    from app.services.icp_service import get_icp_config, evaluate_icp
+
+    lead = (
+        db.query(Lead)
+        .options(selectinload(Lead.enrichments))
+        .filter(Lead.id == lead_id)
+        .first()
+    )
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    enrichment = lead.enrichments[0] if lead.enrichments else None
+    config = get_icp_config(db)
+    evaluation = evaluate_icp(enrichment, config)
+
+    return {
+        "lead_id": lead_id,
+        "icp_configured": config is not None,
+        **evaluation,
+    }
+
+
+# ===========================================================================
+# Engagement decay — cooling leads at risk of going cold
+# ===========================================================================
+
+@app.get("/leads/cooling")
+def get_cooling_leads(
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """
+    Return warm leads that haven't engaged recently, sorted by days overdue.
+    Only 'watch' (7–13 days) and 'urgent' (14+ days) leads are returned.
+    """
+    from app.services.decay_service import get_cooling_leads as _get_cooling
+    results = _get_cooling(db, limit=limit)
+    return {"leads": results, "count": len(results)}
+
+
+@app.get("/leads/{lead_id}/engagement-decay")
+def get_lead_engagement_decay(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Return engagement decay metrics for a single lead."""
+    from sqlalchemy.orm import selectinload
+    from app.services.decay_service import compute_decay
+
+    lead = (
+        db.query(Lead)
+        .options(
+            selectinload(Lead.outreach_emails),
+            selectinload(Lead.booking_requests),
+        )
+        .filter(Lead.id == lead_id)
+        .first()
+    )
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    return compute_decay(lead, lead.outreach_emails, lead.booking_requests)
+
+
+# ===========================================================================
+# Global real-time event stream (SSE)
+# ===========================================================================
+
+@app.get("/events/stream", include_in_schema=False)
+async def global_event_stream(
+    token: str = Query(None, description="JWT token (EventSource cannot set headers)"),
+    db: Session = Depends(get_db),
+):
+    """
+    Server-Sent Events stream for global pipeline events.
+    Subscribes to the Redis pub/sub channel "asdr:global_events".
+
+    Event types:
+      lead_complete  — a lead finished the pipeline (verdict + name/company)
+      optimization   — a self-optimization run completed
+      heartbeat      — keepalive ping every 30 s
+
+    Frontend usage:
+      const token = localStorage.getItem('access_token');
+      const es = new EventSource(`/events/stream?token=${token}`);
+      es.addEventListener('lead_complete', e => { ... });
+    """
+    if token:
+        from app.auth.dependencies import _user_from_jwt
+        user = _user_from_jwt(token, db)
+        if not user or not user.is_active:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+    async def generator():
+        import redis.asyncio as aioredis
+        r = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        pubsub = r.pubsub()
+        await pubsub.subscribe("asdr:global_events")
+
+        # Initial connected event
+        yield f"event: connected\ndata: {json.dumps({'status': 'connected'})}\n\n"
+
+        last_heartbeat = asyncio.get_event_loop().time()
+        try:
+            while True:
+                now = asyncio.get_event_loop().time()
+                if now - last_heartbeat >= 30:
+                    yield f"event: heartbeat\ndata: {json.dumps({'ts': datetime.utcnow().isoformat()})}\n\n"
+                    last_heartbeat = now
+
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0
+                )
+                if message and message["type"] == "message":
+                    try:
+                        payload = json.loads(message["data"])
+                        event_type = payload.get("type", "event")
+                        yield f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
+                    except Exception:
+                        pass
+
+                await asyncio.sleep(0.05)
+        finally:
+            await pubsub.unsubscribe("asdr:global_events")
+            await r.aclose()
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+# ===========================================================================
 # Outreach aggregate stats (for dashboard KPI cards)
 # ===========================================================================
 

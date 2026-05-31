@@ -154,6 +154,63 @@ export interface CloseProbability {
   fallback_reason?: string;
 }
 
+export interface ICPConfig {
+  configured: boolean;
+  industries: string[];
+  seniority_levels: string[];
+  excluded_industries: string[];
+  min_employees: number | null;
+  max_employees: number | null;
+  updated_at: string | null;
+  updated_by_id: string | null;
+}
+
+export interface ICPPreview {
+  total: number;
+  matched: number;
+  hot: number;
+  warm: number;
+  cold: number;
+  unconfigured: boolean;
+}
+
+export interface ICPEvaluation {
+  lead_id: string;
+  icp_configured: boolean;
+  overall: boolean | null;
+  matched: string[];
+  missed: string[];
+  criteria_count: number;
+}
+
+export interface EngagementDecay {
+  last_engagement_at: string;
+  days_since_engagement: number;
+  decay_score: number;
+  urgency: "fresh" | "watch" | "urgent";
+  last_engagement_type: string;
+}
+
+export interface CoolingLead {
+  id: string;
+  name: string;
+  email: string;
+  company: string;
+  job_title: string | null;
+  industry: string | null;
+  confidence: number | null;
+  decay: EngagementDecay;
+}
+
+export interface GlobalEvent {
+  type: "lead_complete" | "optimization" | "heartbeat" | "connected";
+  verdict?: string;
+  lead_id?: string;
+  lead_name?: string;
+  company?: string;
+  ts?: string;
+}
+
 export interface LeadTrendPoint {
   day: string;
   total: number;

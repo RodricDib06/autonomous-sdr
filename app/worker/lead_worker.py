@@ -71,6 +71,23 @@ def process_lead(lead_id: str) -> None:
         if errors:
             log.warning(f"[worker] Non-fatal errors for {lead.name}: {errors}")
 
+        # Publish to global SSE channel so the Dashboard updates in real time
+        try:
+            import json as _json
+            import redis as _redis
+            _r = _redis.from_url(settings.REDIS_URL, decode_responses=True)
+            _r.publish("asdr:global_events", _json.dumps({
+                "type": "lead_complete",
+                "verdict": verdict,
+                "lead_id": lead_id,
+                "lead_name": lead.name,
+                "company": lead.company,
+                "ts": datetime.utcnow().isoformat(),
+            }))
+            _r.close()
+        except Exception as _pub_err:
+            log.warning(f"[worker] SSE publish failed (non-fatal): {_pub_err}")
+
     except Exception as e:
         log.error(f"[worker] Graph failed for {lead_id}: {e}", exc_info=True)
         try:

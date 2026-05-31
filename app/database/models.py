@@ -287,6 +287,25 @@ class ABTestResult(Base):
 
 
 # ---------------------------------------------------------------------------
+# ICP configuration — singleton row (id = "default")
+# ---------------------------------------------------------------------------
+
+class ICPConfig(Base):
+    """Ideal Customer Profile — stored as a single editable row."""
+    __tablename__ = "icp_config"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default="default")
+    # Target lists — None means "any"
+    industries: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    seniority_levels: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    excluded_industries: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Employee count range (parsed from enrichment.company_size strings)
+    min_employees: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_employees: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+
+
 # Self-optimization
 # ---------------------------------------------------------------------------
 

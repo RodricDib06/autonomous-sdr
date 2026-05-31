@@ -4,11 +4,11 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from "recharts";
-import { TrendingUp, Flame, Target, Award, Mail, Sparkles } from "lucide-react";
-import { leadsApi, outreachApi, optimizationApi } from "../lib/api";
+import { TrendingUp, Flame, Target, Award, Mail, Sparkles, BarChart2 } from "lucide-react";
+import { leadsApi, outreachApi, optimizationApi, marketApi } from "../lib/api";
 import { Header } from "../components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
-import { formatPercent } from "../lib/utils";
+import { formatPercent, cn } from "../lib/utils";
 
 const COLORS = {
   hot: "#f87171",
@@ -60,6 +60,12 @@ export default function Analytics() {
   const { data: optHistory } = useQuery({
     queryKey: ["optimization-history"],
     queryFn: () => optimizationApi.history(20),
+  });
+
+  const { data: marketIntel } = useQuery({
+    queryKey: ["market-intelligence"],
+    queryFn: marketApi.intelligence,
+    staleTime: 120_000,
   });
 
   const verdictData = stats
@@ -431,6 +437,58 @@ export default function Analytics() {
             </CardContent>
           </Card>
         </div>
+        {/* Row 5: Market Intelligence */}
+        {marketIntel && marketIntel.segments.length > 0 && (
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <BarChart2 className="w-4 h-4 text-violet-400" />
+                <CardTitle className="text-sm">Market Intelligence</CardTitle>
+              </div>
+              <CardDescription>
+                Segments converting at highest rate vs {Math.round((marketIntel.global_stats.global_hot_rate) * 100)}% baseline
+                · {marketIntel.global_stats.total} leads analysed
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="py-2 text-left font-semibold text-muted-foreground">Industry</th>
+                      <th className="py-2 text-left font-semibold text-muted-foreground">Seniority</th>
+                      <th className="py-2 text-right font-semibold text-muted-foreground">Leads</th>
+                      <th className="py-2 text-right font-semibold text-muted-foreground">Hot rate</th>
+                      <th className="py-2 text-right font-semibold text-muted-foreground">Lift</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {marketIntel.segments.slice(0, 10).map((seg, i) => (
+                      <tr key={i} className="border-b border-border/40 hover:bg-secondary/20">
+                        <td className="py-2.5 font-medium">{seg.industry}</td>
+                        <td className="py-2.5 text-muted-foreground">{seg.seniority}</td>
+                        <td className="py-2.5 text-right tabular-nums">{seg.total}</td>
+                        <td className="py-2.5 text-right tabular-nums">
+                          <span className={seg.hot_rate >= 0.5 ? "text-emerald-400 font-semibold" : seg.hot_rate >= 0.3 ? "text-orange-400" : "text-muted-foreground"}>
+                            {Math.round(seg.hot_rate * 100)}%
+                          </span>
+                        </td>
+                        <td className="py-2.5 text-right tabular-nums">
+                          <span className={cn(
+                            "font-semibold",
+                            seg.lift >= 2 ? "text-emerald-400" : seg.lift >= 1.3 ? "text-orange-400" : "text-muted-foreground"
+                          )}>
+                            {seg.lift.toFixed(1)}×
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );

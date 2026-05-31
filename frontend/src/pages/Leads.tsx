@@ -1,15 +1,19 @@
-import { useState, type JSX } from "react";
+import { useState, useRef, type JSX } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Search, Filter, Download, X, ChevronRight,
   Building2, Tag, Archive, Trash2, RefreshCw,
   Mail, Calendar, MessageSquare, GitBranch, Zap,
   CheckCircle2, XCircle, Clock, Sparkles, TrendingUp, TrendingDown, Minus,
-  Brain, Timer,
+  Brain, Timer, ExternalLink, Globe, Users2, Keyboard, Copy,
 } from "lucide-react";
 import { toast } from "sonner";
-import { leadsApi, intentApi, outreachApi, bookingApi, conversationsApi, pipelineApi, analyticsApi, optimizationApi, decayApi } from "../lib/api";
-import type { LeadDetail } from "../types";
+import {
+  leadsApi, intentApi, outreachApi, bookingApi, conversationsApi,
+  pipelineApi, analyticsApi, optimizationApi, decayApi, enrichmentApi, crmApi,
+} from "../lib/api";
+import { useKeyboardShortcuts, SHORTCUTS } from "../hooks/useKeyboardShortcuts";
+import type { LeadDetail, CRMPushResult } from "../types";
 import { Header } from "../components/layout/Header";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -18,6 +22,7 @@ import { Card } from "../components/ui/card";
 import { VerdictBadge } from "../components/VerdictBadge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Progress } from "../components/ui/progress";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { formatDate, scoreColor, cn } from "../lib/utils";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -42,17 +47,11 @@ type TabId = typeof TABS[number]["id"];
 // ── Tab content components ─────────────────────────────────────────────────
 
 const BANT_LABELS: Record<string, string> = {
-  budget: "Budget",
-  authority: "Authority",
-  need: "Need",
-  timeline: "Timeline",
+  budget: "Budget", authority: "Authority", need: "Need", timeline: "Timeline",
 };
-
 const BANT_DESCRIPTIONS: Record<string, string> = {
-  budget: "Confirmed spending power",
-  authority: "Decision-making power",
-  need: "Clear problem fit",
-  timeline: "Urgency to act",
+  budget: "Confirmed spending power", authority: "Decision-making power",
+  need: "Clear problem fit", timeline: "Urgency to act",
 };
 
 function scoreColorClass(s: number) {
@@ -62,8 +61,15 @@ function barColorClass(s: number) {
   return s >= 0.7 ? "bg-emerald-500" : s >= 0.4 ? "bg-orange-400" : "bg-red-500";
 }
 
+// ── ProfileTab ─────────────────────────────────────────────────────────────
+
 function ProfileTab({ lead }: { lead: LeadDetail }) {
   const bant = lead.verdict?.bant_scores;
+
+  // CRM push state
+  const [crmResult, setCrmResult] = useState<CRMPushResult | null>(null);
+  const [crmOpen, setCrmOpen] = useState(false);
+  const [crmFormat, setCrmFormat] = useState<"hubspot" | "salesforce" | "pipedrive">("hubspot");
 
   const { data: weights } = useQuery({
     queryKey: ["optimization-weights"],
@@ -79,7 +85,28 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
     retry: false,
   });
 
-  // Weighted BANT contribution per dimension
+  const { data: similarData } = useQuery({
+    queryKey: ["similar", lead.id],
+    queryFn: () => enrichmentApi.similar(lead.id, 5),
+    staleTime: 120_000,
+    enabled: !!lead.verdict?.final_verdict,
+  });
+
+  const { mutate: pushCRM, isPending: pushing } = useMutation({
+    mutationFn: () => crmApi.push(lead.id, crmFormat),
+    onSuccess: (data) => { setCrmResult(data); toast.success(`Formatted for ${crmFormat}`); },
+    onError: () => toast.error("CRM push failed"),
+  });
+
+  const { mutate: webEnrich, isPending: enriching, data: enrichData } = useMutation({
+    mutationFn: () => enrichmentApi.webEnrich(lead.id),
+    onSuccess: (d) => {
+      if (d.error) toast.error(`Enrichment: ${d.error}`);
+      else toast.success(`Found ${d.signals.length} signals · ${d.tech_stack.length} tech`);
+    },
+    onError: () => toast.error("Web enrichment failed"),
+  });
+
   const bantEntries = bant ? Object.entries(bant) : [];
   const weightedScore = bantEntries.length > 0 && weights
     ? bantEntries.reduce((sum, [key, val]) => {
@@ -90,7 +117,7 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
 
   return (
     <div className="space-y-5">
-      {/* ── Verdict + headline scores ─────────────────────────────── */}
+      {/* Verdict + confidence */}
       <div className="flex items-center gap-3">
         <VerdictBadge verdict={lead.verdict?.final_verdict} />
         {lead.verdict?.confidence_score != null && (
@@ -110,13 +137,11 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
         )}
       </div>
 
-      {/* ── BANT Visual Breakdown ─────────────────────────────────── */}
+      {/* BANT Visual Breakdown */}
       {bantEntries.length > 0 && (
         <section className="rounded-xl border border-border bg-card/60 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              BANT Qualification
-            </h3>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">BANT Qualification</h3>
             {weightedScore != null && (
               <span className={cn("text-xs font-bold", scoreColorClass(weightedScore))}>
                 {Math.round(weightedScore * 100)}% weighted
@@ -142,14 +167,12 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
                       </span>
                     </div>
                   </div>
-                  {/* Score bar */}
                   <div className="relative h-2 rounded-full bg-secondary overflow-hidden">
                     <div
                       className={cn("absolute inset-y-0 left-0 rounded-full transition-all", barColorClass(score))}
                       style={{ width: `${score * 100}%` }}
                     />
                   </div>
-                  {/* Contribution micro-label */}
                   <p className="text-[10px] text-muted-foreground mt-0.5 text-right">
                     contributes {Math.round(contribution * 100)}% to score
                   </p>
@@ -157,15 +180,11 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
               );
             })}
           </div>
-
-          {/* ICP match row */}
           {lead.verdict?.icp_match != null && (
             <div className="flex items-center gap-2 px-4 py-2.5 border-t border-border/60 text-xs">
-              {lead.verdict.icp_match ? (
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              ) : (
-                <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
-              )}
+              {lead.verdict.icp_match
+                ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                : <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />}
               <span className="text-muted-foreground">
                 {lead.verdict.icp_match ? "Matches Ideal Customer Profile" : "Outside Ideal Customer Profile"}
               </span>
@@ -174,15 +193,12 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
         </section>
       )}
 
-      {/* ── ML Close Probability ──────────────────────────────────── */}
+      {/* ML Close Probability */}
       <section className="rounded-xl border border-violet-500/20 bg-violet-500/5 overflow-hidden">
         <div className="flex items-center gap-2 px-4 py-3 border-b border-violet-500/20">
           <Brain className="w-3.5 h-3.5 text-violet-400" />
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-violet-300">
-            ML Close Probability
-          </h3>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-violet-300">ML Close Probability</h3>
         </div>
-
         {cpLoading ? (
           <div className="px-4 py-5 space-y-2">
             <div className="skeleton h-8 w-24 rounded" />
@@ -193,17 +209,13 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
         ) : closeProbData.fallback ? (
           <div className="px-4 py-4 space-y-1">
             <p className="text-xs text-muted-foreground">{closeProbData.fallback_reason ?? "Insufficient training data."}</p>
-            <p className="text-[10px] text-muted-foreground/60">
-              Mark leads as converted or lost to train the model.
-            </p>
+            <p className="text-[10px] text-muted-foreground/60">Mark leads as converted or lost to train the model.</p>
           </div>
         ) : (
           <div className="px-4 py-4 space-y-4">
-            {/* Main probability number */}
             <div className="flex items-end gap-4">
               <div>
-                <p className={cn(
-                  "text-4xl font-bold tabular-nums",
+                <p className={cn("text-4xl font-bold tabular-nums",
                   closeProbData.probability >= 0.7 ? "text-emerald-400" :
                   closeProbData.probability >= 0.4 ? "text-orange-400" : "text-red-400"
                 )}>
@@ -211,7 +223,6 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
                 </p>
                 <p className="text-[10px] text-muted-foreground mt-0.5">predicted close probability</p>
               </div>
-              {/* Divergence from BANT */}
               {closeProbData.bant_score != null && Math.abs(closeProbData.divergence) >= 0.03 && (
                 <div className="flex items-center gap-1.5 text-xs mb-1">
                   {closeProbData.divergence > 0
@@ -225,62 +236,42 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
                 </div>
               )}
             </div>
-
-            {/* Probability bar */}
             <div className="relative h-2 rounded-full bg-secondary overflow-hidden">
               <div
                 className={cn("absolute inset-y-0 left-0 rounded-full transition-all", barColorClass(closeProbData.probability))}
                 style={{ width: `${closeProbData.probability * 100}%` }}
               />
             </div>
-
-            {/* Divergence note */}
             {closeProbData.divergence_note && (
-              <p className="text-[11px] text-muted-foreground italic leading-relaxed">
-                {closeProbData.divergence_note}
-              </p>
+              <p className="text-[11px] text-muted-foreground italic leading-relaxed">{closeProbData.divergence_note}</p>
             )}
-
-            {/* Feature importances */}
             {closeProbData.feature_importances && (
               <div className="space-y-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Model feature weights
-                </p>
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Model feature weights</p>
                 {Object.entries(closeProbData.feature_importances)
                   .sort(([, a], [, b]) => Math.abs(b) - Math.abs(a))
                   .slice(0, 6)
                   .map(([name, importance]) => {
-                    const isPositive = importance >= 0;
+                    const pos = importance >= 0;
                     const pct = Math.round(Math.abs(importance) * 100);
-                    const label = name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
                     return (
                       <div key={name} className="flex items-center gap-2 text-[11px]">
-                        <span className="text-muted-foreground w-24 shrink-0 truncate">{label}</span>
+                        <span className="text-muted-foreground w-24 shrink-0 truncate">
+                          {name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                        </span>
                         <div className="flex-1 flex items-center gap-1">
-                          {isPositive ? (
-                            <div className="flex-1 flex items-center gap-1">
-                              <div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden">
-                                <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${pct}%` }} />
-                              </div>
-                              <span className="text-emerald-400 w-8 text-right">+{pct}%</span>
-                            </div>
-                          ) : (
-                            <div className="flex-1 flex items-center gap-1">
-                              <div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden">
-                                <div className="h-full bg-red-500 rounded-full" style={{ width: `${pct}%` }} />
-                              </div>
-                              <span className="text-red-400 w-8 text-right">−{pct}%</span>
-                            </div>
-                          )}
+                          <div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden">
+                            <div className={cn("h-full rounded-full", pos ? "bg-emerald-500" : "bg-red-500")} style={{ width: `${pct}%` }} />
+                          </div>
+                          <span className={cn("w-8 text-right", pos ? "text-emerald-400" : "text-red-400")}>
+                            {pos ? "+" : "−"}{pct}%
+                          </span>
                         </div>
                       </div>
                     );
                   })}
               </div>
             )}
-
-            {/* Model metadata */}
             {closeProbData.model_info && (
               <p className="text-[10px] text-muted-foreground/60 pt-1 border-t border-border/40">
                 Model trained on {closeProbData.model_info.trained_on} leads
@@ -291,7 +282,120 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
         )}
       </section>
 
-      {/* ── AI Reasoning ─────────────────────────────────────────── */}
+      {/* Similar Leads */}
+      {(similarData?.similar ?? []).length > 0 && (
+        <section className="space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+            <Users2 className="w-3.5 h-3.5" /> Similar Leads
+          </h3>
+          <div className="space-y-1.5">
+            {similarData!.similar.map((s) => (
+              <div key={s.id} className="flex items-center gap-3 rounded-lg px-3 py-2 bg-secondary/30 text-xs">
+                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-violet-600/60 to-indigo-600/60 flex items-center justify-center text-[9px] font-bold text-white shrink-0">
+                  {s.name.slice(0, 2).toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium truncate">{s.name}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">{s.job_title ?? s.company}</p>
+                </div>
+                <VerdictBadge verdict={s.verdict as "Hot" | "Warm" | "Cold" | null} />
+                <span className="text-violet-400 font-semibold w-10 text-right">{Math.round(s.similarity * 100)}%</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Web Signal Enrichment */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+            <Globe className="w-3.5 h-3.5" /> Web Signals
+          </h3>
+          <Button variant="outline" size="sm" onClick={() => webEnrich()} loading={enriching} className="h-6 text-[10px] px-2">
+            Scrape
+          </Button>
+        </div>
+        {enrichData && (
+          <div className="rounded-lg border border-border p-3 space-y-2">
+            {enrichData.error && (
+              <p className="text-[10px] text-red-400">{enrichData.error}</p>
+            )}
+            {enrichData.signals.length > 0 && (
+              <div className="space-y-1">
+                {enrichData.signals.map((sig, i) => (
+                  <div key={i} className="flex items-start gap-2 text-[10px]">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" />
+                    <span className="text-muted-foreground">{sig.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {enrichData.tech_stack.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {enrichData.tech_stack.map((t) => (
+                  <Badge key={t} variant="secondary" className="text-[10px] px-1.5 py-0">{t}</Badge>
+                ))}
+              </div>
+            )}
+            {enrichData.signals.length === 0 && enrichData.tech_stack.length === 0 && !enrichData.error && (
+              <p className="text-[10px] text-muted-foreground">No public signals detected on {enrichData.domain ?? "this domain"}.</p>
+            )}
+            <p className="text-[9px] text-muted-foreground/50">{enrichData.pages_fetched} page{enrichData.pages_fetched !== 1 ? "s" : ""} fetched</p>
+          </div>
+        )}
+      </section>
+
+      {/* CRM Push */}
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+          <ExternalLink className="w-3.5 h-3.5" /> Push to CRM
+        </h3>
+        <div className="flex gap-2">
+          {(["hubspot", "salesforce", "pipedrive"] as const).map((fmt) => (
+            <button
+              key={fmt}
+              onClick={() => setCrmFormat(fmt)}
+              className={cn(
+                "flex-1 py-1.5 rounded-lg border text-[10px] font-medium capitalize transition-all",
+                crmFormat === fmt
+                  ? "border-violet-500/50 bg-violet-500/10 text-violet-300"
+                  : "border-border text-muted-foreground hover:border-border/80"
+              )}
+            >
+              {fmt}
+            </button>
+          ))}
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => { setCrmOpen(true); pushCRM(); }}
+          loading={pushing}
+          className="w-full gap-1.5 text-xs"
+        >
+          <ExternalLink className="w-3.5 h-3.5" />
+          Push to {crmFormat.charAt(0).toUpperCase() + crmFormat.slice(1)}
+        </Button>
+        {crmResult && crmOpen && (
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] font-medium text-emerald-400">✓ Ready for {crmResult.format}</p>
+              <button
+                onClick={() => { navigator.clipboard.writeText(JSON.stringify(crmResult.payload, null, 2)); toast.success("Payload copied"); }}
+                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
+              >
+                <Copy className="w-3 h-3" /> Copy
+              </button>
+            </div>
+            <pre className="text-[9px] text-muted-foreground overflow-x-auto max-h-32 rounded bg-secondary/30 p-2">
+              {JSON.stringify(crmResult.payload, null, 2)}
+            </pre>
+          </div>
+        )}
+      </section>
+
+      {/* AI Reasoning */}
       {lead.verdict?.reasoning && (
         <section className="space-y-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI Reasoning</h3>
@@ -301,7 +405,7 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
         </section>
       )}
 
-      {/* ── Contact + Enrichment ──────────────────────────────────── */}
+      {/* Contact + Enrichment */}
       <section className="space-y-3">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Contact</h3>
         <div className="grid grid-cols-2 gap-3 text-sm">
@@ -355,7 +459,7 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
         </section>
       )}
 
-      {/* ── Data Quality ──────────────────────────────────────────── */}
+      {/* Data Quality */}
       <section className="space-y-3">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Data Quality</h3>
         <div className="grid grid-cols-2 gap-3">
@@ -373,7 +477,7 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
         </div>
       </section>
 
-      {/* ── Tags ─────────────────────────────────────────────────── */}
+      {/* Tags */}
       {lead.tags && lead.tags.length > 0 && (
         <section className="space-y-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</h3>
@@ -389,6 +493,8 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
     </div>
   );
 }
+
+// ── IntentTab ──────────────────────────────────────────────────────────────
 
 function IntentTab({ leadId }: { leadId: string }) {
   const { data, isLoading } = useQuery({
@@ -409,7 +515,6 @@ function IntentTab({ leadId }: { leadId: string }) {
           <p className="text-2xl font-bold text-violet-400">{Math.round(data.score * 100)}%</p>
         </div>
       </div>
-
       <div className="space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Signals</h3>
         {data.signals.length === 0 ? (
@@ -428,6 +533,8 @@ function IntentTab({ leadId }: { leadId: string }) {
     </div>
   );
 }
+
+// ── OutreachTab ────────────────────────────────────────────────────────────
 
 function OutreachTab({ leadId }: { leadId: string }) {
   const { data, isLoading } = useQuery({
@@ -448,11 +555,11 @@ function OutreachTab({ leadId }: { leadId: string }) {
   );
 
   const STATUS_ICON: Record<string, JSX.Element> = {
-    sent: <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />,
-    opened: <CheckCircle2 className="w-3.5 h-3.5 text-violet-400" />,
-    replied: <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />,
+    sent:      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />,
+    opened:    <CheckCircle2 className="w-3.5 h-3.5 text-violet-400" />,
+    replied:   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />,
     scheduled: <Clock className="w-3.5 h-3.5 text-yellow-400" />,
-    failed: <XCircle className="w-3.5 h-3.5 text-red-400" />,
+    failed:    <XCircle className="w-3.5 h-3.5 text-red-400" />,
   };
 
   return (
@@ -479,13 +586,14 @@ function OutreachTab({ leadId }: { leadId: string }) {
   );
 }
 
+// ── ActivityTab ────────────────────────────────────────────────────────────
+
 function ActivityTab({ leadId }: { leadId: string }) {
   const { data: convData, isLoading: convLoading } = useQuery({
     queryKey: ["conversations", leadId],
     queryFn: () => conversationsApi.list(leadId),
     enabled: !!leadId,
   });
-
   const { data: bookingData, isLoading: bookingLoading } = useQuery({
     queryKey: ["bookings", leadId],
     queryFn: () => bookingApi.list(leadId),
@@ -497,14 +605,11 @@ function ActivityTab({ leadId }: { leadId: string }) {
 
   return (
     <div className="space-y-5">
-      {/* Bookings */}
       <section className="space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
           <Calendar className="w-3.5 h-3.5" /> Booking Requests
         </h3>
-        {bookingLoading ? (
-          <div className="skeleton h-14 rounded" />
-        ) : bookings.length === 0 ? (
+        {bookingLoading ? <div className="skeleton h-14 rounded" /> : bookings.length === 0 ? (
           <p className="text-xs text-muted-foreground">No bookings yet.</p>
         ) : (
           bookings.map((b) => (
@@ -512,8 +617,7 @@ function ActivityTab({ leadId }: { leadId: string }) {
               <div className="flex items-center justify-between">
                 <span className="font-medium capitalize">{b.status}</span>
                 {b.scheduling_url && (
-                  <a href={b.scheduling_url} target="_blank" rel="noreferrer"
-                    className="text-violet-400 hover:underline text-[10px]">Cal link ↗</a>
+                  <a href={b.scheduling_url} target="_blank" rel="noreferrer" className="text-violet-400 hover:underline text-[10px]">Cal link ↗</a>
                 )}
               </div>
               {b.meeting_time && <p className="text-muted-foreground">Meeting: {new Date(b.meeting_time).toLocaleString()}</p>}
@@ -522,15 +626,11 @@ function ActivityTab({ leadId }: { leadId: string }) {
           ))
         )}
       </section>
-
-      {/* Conversations */}
       <section className="space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
           <MessageSquare className="w-3.5 h-3.5" /> Conversations
         </h3>
-        {convLoading ? (
-          <div className="skeleton h-24 rounded" />
-        ) : convs.length === 0 ? (
+        {convLoading ? <div className="skeleton h-24 rounded" /> : convs.length === 0 ? (
           <p className="text-xs text-muted-foreground">No conversations yet.</p>
         ) : (
           convs.map((c) => (
@@ -553,6 +653,8 @@ function ActivityTab({ leadId }: { leadId: string }) {
     </div>
   );
 }
+
+// ── TraceTab ───────────────────────────────────────────────────────────────
 
 function TraceTab({ leadId }: { leadId: string }) {
   const { data, isLoading } = useQuery({
@@ -592,14 +694,13 @@ function TraceTab({ leadId }: { leadId: string }) {
   );
 }
 
-// ── Main drawer ────────────────────────────────────────────────────────────
+// ── LeadDetailPanel ────────────────────────────────────────────────────────
 
 function LeadDetailPanel({ lead, onClose }: { lead: LeadDetail; onClose: () => void }) {
   const [activeTab, setActiveTab] = useState<TabId>("profile");
 
   return (
     <div className="fixed inset-y-0 right-0 z-40 w-[520px] bg-card border-l border-border shadow-2xl flex flex-col animate-slide-in">
-      {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-border">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center text-white font-semibold shrink-0">
@@ -614,8 +715,6 @@ function LeadDetailPanel({ lead, onClose }: { lead: LeadDetail; onClose: () => v
           <X className="w-4 h-4" />
         </button>
       </div>
-
-      {/* Tab bar */}
       <div className="flex border-b border-border px-3">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
@@ -623,9 +722,7 @@ function LeadDetailPanel({ lead, onClose }: { lead: LeadDetail; onClose: () => v
             onClick={() => setActiveTab(id)}
             className={cn(
               "flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors",
-              activeTab === id
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
+              activeTab === id ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
             )}
           >
             <Icon className="w-3.5 h-3.5" />
@@ -633,8 +730,6 @@ function LeadDetailPanel({ lead, onClose }: { lead: LeadDetail; onClose: () => v
           </button>
         ))}
       </div>
-
-      {/* Tab content */}
       <div className="flex-1 overflow-y-auto p-5">
         {activeTab === "profile"  && <ProfileTab lead={lead} />}
         {activeTab === "intent"   && <IntentTab leadId={lead.id} />}
@@ -646,6 +741,8 @@ function LeadDetailPanel({ lead, onClose }: { lead: LeadDetail; onClose: () => v
   );
 }
 
+// ── Main Leads page ────────────────────────────────────────────────────────
+
 export default function Leads() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
@@ -655,6 +752,9 @@ export default function Leads() {
   const [page, setPage] = useState(0);
   const [semanticMode, setSemanticMode] = useState(false);
   const [semanticQuery, setSemanticQuery] = useState("");
+  const [kbIndex, setKbIndex] = useState(-1);
+  const [showCheatsheet, setShowCheatsheet] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const PAGE_SIZE = 50;
 
   const { data: leads = [], isLoading } = useQuery({
@@ -684,7 +784,6 @@ export default function Leads() {
     onError: () => toast.error("Failed to reprocess leads"),
   });
 
-  // Cooling leads — used for "at risk" badges in the table
   const { data: coolingData } = useQuery({
     queryKey: ["cooling"],
     queryFn: () => decayApi.cooling(100),
@@ -721,14 +820,21 @@ export default function Leads() {
       const blob = await leadsApi.export("csv");
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url;
-      a.download = "leads.csv";
-      a.click();
+      a.href = url; a.download = "leads.csv"; a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      toast.error("Export failed");
-    }
+    } catch { toast.error("Export failed"); }
   };
+
+  // Keyboard shortcut hook — must come after filtered and loadDetail
+  useKeyboardShortcuts({
+    leads: filtered,
+    selectedIndex: kbIndex,
+    onSelectIndex: setKbIndex,
+    onOpenLead: (id) => loadDetail(id),
+    onClose: () => { setSelectedLead(null); setKbIndex(-1); },
+    onFocusSearch: () => { searchInputRef.current?.focus(); },
+    onToggleCheatsheet: () => setShowCheatsheet((v) => !v),
+  });
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -737,6 +843,13 @@ export default function Leads() {
         subtitle={`${filtered.length} leads`}
         actions={
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowCheatsheet(true)}
+              title="Keyboard shortcuts (?)"
+              className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            >
+              <Keyboard className="w-4 h-4" />
+            </button>
             {failedCount > 0 && (
               <Button
                 variant="outline"
@@ -783,7 +896,8 @@ export default function Leads() {
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search by name, email or company…"
+                  ref={searchInputRef}
+                  placeholder="Search by name, email or company… (press / to focus)"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="pl-9"
@@ -828,13 +942,9 @@ export default function Leads() {
                 </p>
               </div>
             ) : semanticFetching ? (
-              <div className="space-y-2">
-                {[...Array(4)].map((_, i) => <div key={i} className="skeleton h-14 rounded-lg" />)}
-              </div>
+              <div className="space-y-2">{[...Array(4)].map((_, i) => <div key={i} className="skeleton h-14 rounded-lg" />)}</div>
             ) : (semanticResults?.results ?? []).length === 0 ? (
-              <div className="text-center py-8 text-sm text-muted-foreground">
-                No conversations matched — try a different query
-              </div>
+              <div className="text-center py-8 text-sm text-muted-foreground">No conversations matched — try a different query</div>
             ) : (
               <Card className="overflow-hidden">
                 <div className="px-4 py-3 border-b border-border flex items-center justify-between">
@@ -903,9 +1013,7 @@ export default function Leads() {
                     />
                   </th>
                   {["Name", "Company", "Status", "Verdict", "Quality", "Created", ""].map((h) => (
-                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      {h}
-                    </th>
+                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -913,23 +1021,22 @@ export default function Leads() {
                 {isLoading ? (
                   [...Array(8)].map((_, i) => (
                     <tr key={i} className="border-b border-border/50">
-                      <td colSpan={8} className="p-3">
-                        <div className="skeleton h-9 rounded" />
-                      </td>
+                      <td colSpan={8} className="p-3"><div className="skeleton h-9 rounded" /></td>
                     </tr>
                   ))
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-12 text-center text-muted-foreground">
-                      No leads found
-                    </td>
+                    <td colSpan={8} className="p-12 text-center text-muted-foreground">No leads found</td>
                   </tr>
                 ) : (
-                  filtered.map((lead) => (
+                  filtered.map((lead, idx) => (
                     <tr
                       key={lead.id}
-                      className="border-b border-border/50 hover:bg-secondary/20 transition-colors group cursor-pointer"
-                      onClick={() => loadDetail(lead.id)}
+                      className={cn(
+                        "border-b border-border/50 hover:bg-secondary/20 transition-colors group cursor-pointer",
+                        idx === kbIndex && "bg-violet-500/10 ring-1 ring-inset ring-violet-500/30"
+                      )}
+                      onClick={() => { setKbIndex(idx); loadDetail(lead.id); }}
                     >
                       <td className="p-3" onClick={(e) => e.stopPropagation()}>
                         <input
@@ -1004,13 +1111,39 @@ export default function Leads() {
 
         {/* Pagination */}
         <div className="flex items-center justify-between mt-4 text-sm text-muted-foreground">
-          <span>Showing {filtered.length} leads</span>
+          <span>Showing {filtered.length} leads · press <kbd className="px-1 py-0.5 text-[10px] rounded border border-border font-mono">?</kbd> for shortcuts</span>
           <div className="flex gap-2">
             <Button size="sm" variant="outline" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>Prev</Button>
             <Button size="sm" variant="outline" disabled={leads.length < PAGE_SIZE} onClick={() => setPage((p) => p + 1)}>Next</Button>
           </div>
         </div>
       </div>
+
+      {/* Keyboard cheatsheet modal */}
+      <Dialog open={showCheatsheet} onOpenChange={setShowCheatsheet}>
+        <DialogContent className="sm:max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-sm">
+              <Keyboard className="w-4 h-4 text-violet-400" />
+              Keyboard Shortcuts
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 pt-1">
+            {SHORTCUTS.map(({ keys, label }) => (
+              <div key={label} className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">{label}</span>
+                <div className="flex items-center gap-1">
+                  {keys.map((k) => (
+                    <kbd key={k} className="px-2 py-0.5 text-xs rounded border border-border font-mono bg-secondary">
+                      {k}
+                    </kbd>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Detail panel overlay */}
       {selectedLead && (

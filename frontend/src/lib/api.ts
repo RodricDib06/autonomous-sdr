@@ -14,6 +14,11 @@ import type {
   ICPEvaluation,
   EngagementDecay,
   CoolingLead,
+  SimilarLead,
+  WebEnrichment,
+  CRMPushResult,
+  MarketIntelligence,
+  ABMultiAxis,
   HotLead,
   ImportResult,
   ImportHistory,
@@ -238,6 +243,35 @@ export const decayApi = {
 // ── Health ─────────────────────────────────────────────────────────────────────
 export const healthApi = {
   check: () => axios.get<HealthStatus>(`${BASE_URL}/health`).then((r) => r.data),
+};
+
+// ── CRM push ──────────────────────────────────────────────────────────────────
+export const crmApi = {
+  push: (leadId: string, format: "hubspot" | "salesforce" | "pipedrive") =>
+    api.post<CRMPushResult>(`/leads/${leadId}/crm-push`, null, { params: { format } }).then((r) => r.data),
+};
+
+// ── Similar leads + web enrichment ────────────────────────────────────────────
+export const enrichmentApi = {
+  similar: (leadId: string, limit = 5) =>
+    api.get<{ lead_id: string; similar: SimilarLead[]; count: number }>(`/leads/${leadId}/similar`, { params: { limit } }).then((r) => r.data),
+  webEnrich: (leadId: string) =>
+    api.post<WebEnrichment>(`/leads/${leadId}/web-enrich`).then((r) => r.data),
+};
+
+// ── Market intelligence ────────────────────────────────────────────────────────
+export const marketApi = {
+  intelligence: () => api.get<MarketIntelligence>("/analytics/market-intelligence").then((r) => r.data),
+};
+
+// ── Multi-axis A/B ─────────────────────────────────────────────────────────────
+export const abMultiApi = {
+  axes: () => api.get<ABMultiAxis>("/ab-tests/multi-axis").then((r) => r.data),
+};
+
+// ── Demo seeder ────────────────────────────────────────────────────────────────
+export const seedApi = {
+  demo: () => api.post<{ status: string; message: string }>("/seed/demo").then((r) => r.data),
 };
 
 // ── SSE helpers ───────────────────────────────────────────────────────────────

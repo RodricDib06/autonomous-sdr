@@ -1514,6 +1514,23 @@ def track_open(email_id: str, db: Session = Depends(get_db)):
             db.commit()
             record_event(db, email_id, "opened")
             log.info(f"[track/open] Email {email_id} opened")
+            # Bayesian BANT update
+            if email.lead_id:
+                from app.services.bayesian_updater import apply_bayesian_update
+                result = apply_bayesian_update(db, email.lead_id, "open")
+                if result:
+                    try:
+                        import redis as _redis, json as _json
+                        _r = _redis.from_url(settings.REDIS_URL, decode_responses=True)
+                        _r.publish("asdr:global_events", _json.dumps({
+                            "type": "score_update",
+                            "lead_id": email.lead_id,
+                            "signal": "open",
+                            "new_confidence": result["new_confidence"],
+                        }))
+                        _r.close()
+                    except Exception:
+                        pass
     except Exception as e:
         log.warning("[track/open] Failed to record open for {email_id}", error=str(e))
     return Response(content=_TRACKING_PIXEL, media_type="image/gif")
@@ -2126,3 +2143,249 @@ def get_outreach_stats(
             for status in ("scheduled", "sent", "opened", "replied", "failed")
         },
     }
+
+
+# ===========================================================================
+# CRM push — formatted single-lead export with simulated push response
+# ===========================================================================
+
+@app.post("/leads/{lead_id}/crm-push")
+def crm_push(
+    lead_id: str,
+    format: str = Query("hubspot", regex="^(hubspot|salesforce|pipedrive)$"),
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """
+    Format a single lead for a specific CRM and return the payload.
+    In production swap the mock body for live API calls (see crm_sync.py).
+    """
+    from sqlalchemy.orm import selectinload
+    lead = (
+        db.query(Lead)
+        .options(
+            selectinload(Lead.verdicts),
+            selectinload(Lead.enrichments),
+        )
+        .filter(Lead.id == lead_id)
+        .first()
+    )
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    verdict = lead.verdicts[0] if lead.verdicts else None
+    enrichment = lead.enrichments[0] if lead.enrichments else None
+    name_parts = lead.name.split(" ", 1)
+    first, last = name_parts[0], name_parts[1] if len(name_parts) > 1 else ""
+
+    if format == "hubspot":
+        payload = {
+            "properties": {
+                "email": lead.email,
+                "firstname": first,
+                "lastname": last,
+                "company": lead.company,
+                "jobtitle": enrichment.job_title if enrichment else None,
+                "industry": enrichment.industry if enrichment else None,
+                "hs_lead_status": verdict.final_verdict if verdict else "New",
+                "description": verdict.analysis_reasoning if verdict else None,
+                "leadsource": lead.source,
+            }
+        }
+    elif format == "salesforce":
+        payload = {
+            "FirstName": first,
+            "LastName": last,
+            "Email": lead.email,
+            "Company": lead.company,
+            "Title": enrichment.job_title if enrichment else None,
+            "Industry": enrichment.industry if enrichment else None,
+            "LeadSource": lead.source,
+            "Status": verdict.final_verdict if verdict else "New",
+            "Description": verdict.analysis_reasoning if verdict else None,
+        }
+    else:  # pipedrive
+        payload = {
+            "person": {"name": lead.name, "email": [{"value": lead.email}]},
+            "organization": {"name": lead.company},
+            "deal": {
+                "title": f"{lead.company} — {verdict.final_verdict if verdict else 'Lead'}",
+                "status": "open",
+            },
+        }
+
+    return {
+        "format": format,
+        "lead_id": lead_id,
+        "payload": payload,
+        "simulated": True,
+        "pushed_at": datetime.utcnow().isoformat(),
+        "note": (
+            "Production: uncomment CRM API calls in app/services/crm_sync.py "
+            "and set the relevant API key env vars."
+        ),
+    }
+
+
+# ===========================================================================
+# Similar leads — cosine similarity over BANT + enrichment feature vectors
+# ===========================================================================
+
+@app.get("/leads/{lead_id}/similar")
+def get_similar_leads(
+    lead_id: str,
+    limit: int = Query(5, ge=1, le=20),
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Return leads with the most similar BANT + enrichment profile."""
+    from app.services.market_intelligence import similar_leads
+    results = similar_leads(db, lead_id, limit=limit)
+    return {"lead_id": lead_id, "similar": results, "count": len(results)}
+
+
+# ===========================================================================
+# Web signal enrichment — scrape company website for buying signals
+# ===========================================================================
+
+@app.post("/leads/{lead_id}/web-enrich")
+def web_enrich_lead(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Scrape the lead's company domain for buying signals and tech stack."""
+    from sqlalchemy.orm import selectinload
+    from app.services.web_enrichment import enrich_from_domain
+
+    lead = db.query(Lead).options(selectinload(Lead.enrichments)).filter(Lead.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    domain_source = lead.email
+    enrichment = lead.enrichments[0] if lead.enrichments else None
+
+    result = enrich_from_domain(domain_source)
+    result["lead_id"] = lead_id
+    result["lead_name"] = lead.name
+
+    # Merge detected tech into existing enrichment
+    if enrichment and result["tech_stack"]:
+        existing = list(enrichment.tech_stack or [])
+        for t in result["tech_stack"]:
+            if t not in existing:
+                existing.append(t)
+        enrichment.tech_stack = existing
+        db.commit()
+
+    return result
+
+
+# ===========================================================================
+# Market intelligence — cross-lead segment pattern analysis
+# ===========================================================================
+
+@app.get("/analytics/market-intelligence")
+def get_market_intelligence(
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """
+    Return segment-level hot rates and lift vs baseline.
+    Shows which industry × seniority combinations convert best.
+    """
+    from app.services.market_intelligence import compute_market_intelligence
+    return compute_market_intelligence(db)
+
+
+# ===========================================================================
+# Multi-axis A/B — breakdown by send time, subject style, message length
+# ===========================================================================
+
+@app.get("/ab-tests/multi-axis")
+def get_multi_axis_ab(
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """
+    Break down A/B email performance by three axes derived from existing data:
+      send_time_slot  — morning (6-12) | afternoon (12-17) | evening (17+)
+      subject_style   — question (ends with ?) | statement
+      message_length  — short (<300 chars) | long (≥300 chars)
+    """
+    from app.database.models import OutreachEmail as OE
+
+    emails = db.query(OE).filter(OE.sent_at != None).all()  # noqa: E711
+
+    def classify(email):
+        slot = None
+        if email.sent_at:
+            h = email.sent_at.hour
+            slot = "morning" if h < 12 else "afternoon" if h < 17 else "evening"
+        style = "question" if email.subject.rstrip().endswith("?") else "statement"
+        length = "short" if len(email.body) < 300 else "long"
+        opened = email.status in ("opened", "replied")
+        replied = email.status == "replied"
+        return slot, style, length, opened, replied
+
+    def axis_breakdown(axis_vals, key_fn):
+        result = {}
+        for e in emails:
+            slot, style, length, opened, replied = classify(e)
+            key = key_fn(slot, style, length)
+            if key is None:
+                continue
+            if key not in result:
+                result[key] = {"label": key, "sent": 0, "opened": 0, "replied": 0}
+            result[key]["sent"] += 1
+            if opened:
+                result[key]["opened"] += 1
+            if replied:
+                result[key]["replied"] += 1
+        for r in result.values():
+            s = r["sent"] or 1
+            r["open_rate"] = round(r["opened"] / s, 3)
+            r["reply_rate"] = round(r["replied"] / s, 3)
+        return sorted(result.values(), key=lambda x: x["open_rate"], reverse=True)
+
+    return {
+        "send_time": axis_breakdown(emails, lambda sl, st, ln: sl),
+        "subject_style": axis_breakdown(emails, lambda sl, st, ln: st),
+        "message_length": axis_breakdown(emails, lambda sl, st, ln: ln),
+        "total_emails_analysed": len(emails),
+    }
+
+
+# ===========================================================================
+# Demo seeder endpoint — for the onboarding wizard
+# ===========================================================================
+
+@app.post("/seed/demo")
+async def seed_demo(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Seed the database with demo data for the onboarding wizard.
+    Runs asynchronously; returns immediately.
+    """
+    from app.database.models import Lead as LeadModel
+
+    existing = db.query(LeadModel).filter(LeadModel.tags.contains(["demo"])).count()
+    if existing > 0:
+        return {"status": "already_seeded", "count": existing, "message": f"{existing} demo leads already exist."}
+
+    async def _run():
+        import sys, os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from scripts.seed_demo_data import seed
+        from app.database.connection import SessionLocal
+        _db = SessionLocal()
+        try:
+            seed(_db)
+        finally:
+            _db.close()
+
+    background_tasks.add_task(_run)
+    return {"status": "seeding", "message": "Demo data is being imported in the background. Refresh in ~5 seconds."}

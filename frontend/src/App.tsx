@@ -12,6 +12,7 @@ import ABTests from "./pages/ABTests";
 import Users from "./pages/Users";
 import Settings from "./pages/Settings";
 import ICP from "./pages/ICP";
+import { OnboardingWizard } from "./components/OnboardingWizard";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,7 +27,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route element={<ProtectedRoute />}>
-            <Route element={<Layout />}>
+            <Route element={<><Layout /><OnboardingWizard /></>}>
               <Route index element={<Dashboard />} />
               <Route path="leads" element={<Leads />} />
               <Route path="icp" element={<ICP />} />

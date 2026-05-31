@@ -203,12 +203,104 @@ export interface CoolingLead {
 }
 
 export interface GlobalEvent {
-  type: "lead_complete" | "optimization" | "heartbeat" | "connected";
+  type: "lead_complete" | "optimization" | "heartbeat" | "connected" | "score_update";
   verdict?: string;
   lead_id?: string;
   lead_name?: string;
   company?: string;
+  signal?: string;
+  new_confidence?: number;
   ts?: string;
+}
+
+export interface SimilarLead {
+  id: string;
+  name: string;
+  email: string;
+  company: string;
+  verdict: string | null;
+  confidence: number | null;
+  job_title: string | null;
+  industry: string | null;
+  seniority: string | null;
+  similarity: number;
+}
+
+export interface WebEnrichmentSignal {
+  type: string;
+  text: string;
+  weight: number;
+}
+
+export interface WebEnrichment {
+  lead_id: string;
+  lead_name: string;
+  domain: string | null;
+  signals: WebEnrichmentSignal[];
+  tech_stack: string[];
+  employee_hints: string[];
+  pages_fetched: number;
+  error: string | null;
+}
+
+export interface CRMPushResult {
+  format: string;
+  lead_id: string;
+  payload: Record<string, unknown>;
+  simulated: boolean;
+  pushed_at: string;
+  note: string;
+}
+
+export interface MarketSegment {
+  industry: string;
+  seniority: string;
+  total: number;
+  hot: number;
+  warm: number;
+  cold: number;
+  hot_rate: number;
+  warm_rate: number;
+  lift: number;
+}
+
+export interface MarketIndustry {
+  industry: string;
+  total: number;
+  hot: number;
+  warm: number;
+  cold: number;
+  hot_rate: number;
+  lift: number;
+}
+
+export interface MarketIntelligence {
+  segments: MarketSegment[];
+  top_industries: MarketIndustry[];
+  global_stats: {
+    total: number;
+    hot: number;
+    warm: number;
+    cold: number;
+    global_hot_rate: number;
+  };
+  computed_at: string;
+}
+
+export interface ABAxisRow {
+  label: string;
+  sent: number;
+  opened: number;
+  replied: number;
+  open_rate: number;
+  reply_rate: number;
+}
+
+export interface ABMultiAxis {
+  send_time: ABAxisRow[];
+  subject_style: ABAxisRow[];
+  message_length: ABAxisRow[];
+  total_emails_analysed: number;
 }
 
 export interface LeadTrendPoint {

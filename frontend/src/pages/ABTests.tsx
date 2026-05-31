@@ -2,8 +2,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
-import { FlaskConical, Trophy, RefreshCw, TrendingUp, Mail, Eye, MessageSquare } from "lucide-react";
-import { abTestApi, optimizationApi } from "../lib/api";
+import { FlaskConical, Trophy, RefreshCw, TrendingUp, Mail, Eye, MessageSquare, Clock, AlignLeft } from "lucide-react";
+import { abTestApi, optimizationApi, abMultiApi } from "../lib/api";
 import { Header } from "../components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -72,6 +72,12 @@ export default function ABTests() {
       qc.invalidateQueries({ queryKey: ["optimization-history"] });
       qc.invalidateQueries({ queryKey: ["optimization-weights"] });
     },
+  });
+
+  const { data: multiAxis } = useQuery({
+    queryKey: ["ab-multi-axis"],
+    queryFn: abMultiApi.axes,
+    staleTime: 60_000,
   });
 
   const variantA = results?.variants.find((v) => v.variant === "A");
@@ -337,6 +343,82 @@ export default function ABTests() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Multi-axis A/B breakdown */}
+        {multiAxis && multiAxis.total_emails_analysed > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <FlaskConical className="w-4 h-4 text-violet-400" />
+                Multi-axis Breakdown
+                <Badge variant="secondary" className="text-[10px] ml-1">{multiAxis.total_emails_analysed} emails</Badge>
+              </CardTitle>
+              <CardDescription>
+                Open and reply rates sliced by send time, subject style, and message length
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Send time */}
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5" /> Send Time
+                  </p>
+                  {multiAxis.send_time.map((row) => (
+                    <div key={row.label} className="space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="capitalize text-muted-foreground">{row.label}</span>
+                        <span className="font-medium">{(row.open_rate * 100).toFixed(1)}% open</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+                        <div className="h-full rounded-full bg-violet-500" style={{ width: `${row.open_rate * 100}%` }} />
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">{row.sent} sent · {(row.reply_rate * 100).toFixed(1)}% reply</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Subject style */}
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5" /> Subject Style
+                  </p>
+                  {multiAxis.subject_style.map((row) => (
+                    <div key={row.label} className="space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="capitalize text-muted-foreground">{row.label}</span>
+                        <span className="font-medium">{(row.open_rate * 100).toFixed(1)}% open</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+                        <div className="h-full rounded-full bg-emerald-500" style={{ width: `${row.open_rate * 100}%` }} />
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">{row.sent} sent · {(row.reply_rate * 100).toFixed(1)}% reply</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Message length */}
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                    <AlignLeft className="w-3.5 h-3.5" /> Message Length
+                  </p>
+                  {multiAxis.message_length.map((row) => (
+                    <div key={row.label} className="space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="capitalize text-muted-foreground">{row.label}</span>
+                        <span className="font-medium">{(row.open_rate * 100).toFixed(1)}% open</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+                        <div className="h-full rounded-full bg-orange-400" style={{ width: `${row.open_rate * 100}%` }} />
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">{row.sent} sent · {(row.reply_rate * 100).toFixed(1)}% reply</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );

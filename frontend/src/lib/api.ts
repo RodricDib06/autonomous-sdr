@@ -8,6 +8,7 @@ import type {
   LeadDetail,
   LeadStats,
   LeadTrend,
+  CloseProbability,
   HotLead,
   ImportResult,
   ImportHistory,
@@ -138,6 +139,9 @@ export const leadsApi = {
 
   trend: (days = 30) =>
     api.get<LeadTrend>("/leads/trend", { params: { days } }).then((r) => r.data),
+
+  closeProbability: (id: string) =>
+    api.get<CloseProbability>(`/leads/${id}/close-probability`).then((r) => r.data),
 };
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────
@@ -204,6 +208,8 @@ export const analyticsApi = {
 
   powerBiExport: () =>
     api.get("/analytics/powerbi-export", { responseType: "blob" }).then((r) => r.data),
+
+  retrainML: () => api.post("/analytics/ml/retrain").then((r) => r.data),
 };
 
 // ── Health ─────────────────────────────────────────────────────────────────────

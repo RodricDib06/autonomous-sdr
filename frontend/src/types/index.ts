@@ -137,6 +137,23 @@ export interface HealthStatus {
   worker_last_seen: string | null;
 }
 
+export interface CloseProbability {
+  lead_id: string;
+  probability: number;
+  bant_score: number | null;
+  divergence: number;
+  divergence_note: string | null;
+  feature_importances: Record<string, number> | null;
+  model_info: {
+    trained_on: number;
+    converted: number;
+    lost: number;
+    trained_at: string;
+  } | null;
+  fallback: boolean;
+  fallback_reason?: string;
+}
+
 export interface LeadTrendPoint {
   day: string;
   total: number;

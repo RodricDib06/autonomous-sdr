@@ -1696,6 +1696,116 @@ def semantic_search(
 
 
 # ===========================================================================
+# ML close probability
+# ===========================================================================
+
+@app.get("/leads/{lead_id}/close-probability")
+def get_close_probability(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """
+    ML-predicted probability this lead converts to a customer.
+    Uses logistic regression trained on leads with known outcomes (converted / lost).
+    Falls back to the BANT average when insufficient training data exists.
+    """
+    from sqlalchemy.orm import selectinload
+    from app.services.ml_scorer import ensure_trained, get_model
+
+    lead = (
+        db.query(Lead)
+        .options(selectinload(Lead.verdicts), selectinload(Lead.enrichments))
+        .filter(Lead.id == lead_id)
+        .first()
+    )
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    verdict = lead.verdicts[0] if lead.verdicts else None
+    enrichment = lead.enrichments[0] if lead.enrichments else None
+
+    if not verdict or not verdict.bant_scores:
+        raise HTTPException(status_code=422, detail="Lead has no BANT scores yet")
+
+    bant = verdict.bant_scores
+    bant_score = round(sum(float(v) for v in bant.values()) / len(bant), 3)
+
+    ready = ensure_trained(db)
+
+    if ready:
+        model = get_model()
+        result = model.predict(lead, verdict, enrichment)
+        if result:
+            prob = result["probability"]
+            divergence = round(prob - bant_score, 3)
+
+            if abs(divergence) >= 0.12:
+                divergence_note = (
+                    "ML scores lower than BANT — strong individual scores "
+                    "but the profile pattern differs from past conversions."
+                    if divergence < 0 else
+                    "ML scores higher than BANT — profile closely matches "
+                    "leads that previously converted."
+                )
+            else:
+                divergence_note = None
+
+            return {
+                "lead_id": lead_id,
+                "probability": prob,
+                "bant_score": bant_score,
+                "divergence": divergence,
+                "divergence_note": divergence_note,
+                "feature_importances": result["importances"],
+                "model_info": {
+                    "trained_on": result["n_samples"],
+                    "converted": result["n_converted"],
+                    "lost": result["n_lost"],
+                    "trained_at": result["trained_at"],
+                },
+                "fallback": False,
+            }
+
+    return {
+        "lead_id": lead_id,
+        "probability": bant_score,
+        "bant_score": bant_score,
+        "divergence": 0,
+        "divergence_note": None,
+        "feature_importances": None,
+        "model_info": None,
+        "fallback": True,
+        "fallback_reason": f"Need at least 3 converted and 3 lost leads to train the ML model.",
+    }
+
+
+@app.post("/analytics/ml/retrain")
+def retrain_ml_model(
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """Force-retrain the close probability model on current conversion data."""
+    from app.services.ml_scorer import retrain, get_model
+
+    success = retrain(db)
+    if not success:
+        return {
+            "status": "insufficient_data",
+            "message": "Need at least 3 converted and 3 lost leads. Run the seed script or mark some leads as converted/lost.",
+        }
+
+    model = get_model()
+    return {
+        "status": "trained",
+        "n_samples": model.n_samples,
+        "converted": model.n_converted,
+        "lost": model.n_lost,
+        "trained_at": model.trained_at.isoformat() if model.trained_at else None,
+    }
+
+
+# ===========================================================================
 # Pipeline trace — LangGraph per-lead execution breakdown
 # ===========================================================================
 

@@ -4,10 +4,11 @@ import {
   Search, Filter, Download, X, ChevronRight,
   Building2, Tag, Archive, Trash2, RefreshCw,
   Mail, Calendar, MessageSquare, GitBranch, Zap,
-  CheckCircle2, XCircle, Clock, Sparkles,
+  CheckCircle2, XCircle, Clock, Sparkles, TrendingUp, TrendingDown, Minus,
+  Brain,
 } from "lucide-react";
 import { toast } from "sonner";
-import { leadsApi, intentApi, outreachApi, bookingApi, conversationsApi, pipelineApi, analyticsApi } from "../lib/api";
+import { leadsApi, intentApi, outreachApi, bookingApi, conversationsApi, pipelineApi, analyticsApi, optimizationApi } from "../lib/api";
 import type { LeadDetail } from "../types";
 import { Header } from "../components/layout/Header";
 import { Button } from "../components/ui/button";
@@ -40,11 +41,56 @@ type TabId = typeof TABS[number]["id"];
 
 // ── Tab content components ─────────────────────────────────────────────────
 
+const BANT_LABELS: Record<string, string> = {
+  budget: "Budget",
+  authority: "Authority",
+  need: "Need",
+  timeline: "Timeline",
+};
+
+const BANT_DESCRIPTIONS: Record<string, string> = {
+  budget: "Confirmed spending power",
+  authority: "Decision-making power",
+  need: "Clear problem fit",
+  timeline: "Urgency to act",
+};
+
+function scoreColorClass(s: number) {
+  return s >= 0.7 ? "text-emerald-400" : s >= 0.4 ? "text-orange-400" : "text-red-400";
+}
+function barColorClass(s: number) {
+  return s >= 0.7 ? "bg-emerald-500" : s >= 0.4 ? "bg-orange-400" : "bg-red-500";
+}
+
 function ProfileTab({ lead }: { lead: LeadDetail }) {
   const bant = lead.verdict?.bant_scores;
+
+  const { data: weights } = useQuery({
+    queryKey: ["optimization-weights"],
+    queryFn: optimizationApi.currentWeights,
+    staleTime: 60_000,
+  });
+
+  const { data: closeProbData, isLoading: cpLoading } = useQuery({
+    queryKey: ["close-probability", lead.id],
+    queryFn: () => leadsApi.closeProbability(lead.id),
+    enabled: !!lead.verdict?.bant_scores,
+    staleTime: 120_000,
+    retry: false,
+  });
+
+  // Weighted BANT contribution per dimension
+  const bantEntries = bant ? Object.entries(bant) : [];
+  const weightedScore = bantEntries.length > 0 && weights
+    ? bantEntries.reduce((sum, [key, val]) => {
+        const w = (weights as Record<string, number>)[key] ?? (1 / bantEntries.length);
+        return sum + (typeof val === "number" ? val : 0) * w;
+      }, 0)
+    : null;
+
   return (
-    <div className="space-y-6">
-      {/* Verdict + confidence */}
+    <div className="space-y-5">
+      {/* ── Verdict + headline scores ─────────────────────────────── */}
       <div className="flex items-center gap-3">
         <VerdictBadge verdict={lead.verdict?.final_verdict} />
         {lead.verdict?.confidence_score != null && (
@@ -64,7 +110,198 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
         )}
       </div>
 
-      {/* Contact */}
+      {/* ── BANT Visual Breakdown ─────────────────────────────────── */}
+      {bantEntries.length > 0 && (
+        <section className="rounded-xl border border-border bg-card/60 overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border/60">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              BANT Qualification
+            </h3>
+            {weightedScore != null && (
+              <span className={cn("text-xs font-bold", scoreColorClass(weightedScore))}>
+                {Math.round(weightedScore * 100)}% weighted
+              </span>
+            )}
+          </div>
+          <div className="px-4 py-3 space-y-4">
+            {bantEntries.map(([key, rawScore]) => {
+              const score = typeof rawScore === "number" ? rawScore : 0;
+              const weight = weights ? ((weights as Record<string, number>)[key] ?? 0.25) : 0.25;
+              const contribution = score * weight;
+              return (
+                <div key={key}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div>
+                      <span className="text-xs font-semibold">{BANT_LABELS[key] ?? key}</span>
+                      <span className="text-[10px] text-muted-foreground ml-2">{BANT_DESCRIPTIONS[key]}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-muted-foreground">{Math.round(weight * 100)}% wt</span>
+                      <span className={cn("font-bold tabular-nums w-9 text-right", scoreColorClass(score))}>
+                        {Math.round(score * 100)}%
+                      </span>
+                    </div>
+                  </div>
+                  {/* Score bar */}
+                  <div className="relative h-2 rounded-full bg-secondary overflow-hidden">
+                    <div
+                      className={cn("absolute inset-y-0 left-0 rounded-full transition-all", barColorClass(score))}
+                      style={{ width: `${score * 100}%` }}
+                    />
+                  </div>
+                  {/* Contribution micro-label */}
+                  <p className="text-[10px] text-muted-foreground mt-0.5 text-right">
+                    contributes {Math.round(contribution * 100)}% to score
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ICP match row */}
+          {lead.verdict?.icp_match != null && (
+            <div className="flex items-center gap-2 px-4 py-2.5 border-t border-border/60 text-xs">
+              {lead.verdict.icp_match ? (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              ) : (
+                <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+              )}
+              <span className="text-muted-foreground">
+                {lead.verdict.icp_match ? "Matches Ideal Customer Profile" : "Outside Ideal Customer Profile"}
+              </span>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ── ML Close Probability ──────────────────────────────────── */}
+      <section className="rounded-xl border border-violet-500/20 bg-violet-500/5 overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-violet-500/20">
+          <Brain className="w-3.5 h-3.5 text-violet-400" />
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-violet-300">
+            ML Close Probability
+          </h3>
+        </div>
+
+        {cpLoading ? (
+          <div className="px-4 py-5 space-y-2">
+            <div className="skeleton h-8 w-24 rounded" />
+            <div className="skeleton h-2 rounded" />
+          </div>
+        ) : !closeProbData ? (
+          <p className="px-4 py-4 text-xs text-muted-foreground">Not available — lead has no BANT scores.</p>
+        ) : closeProbData.fallback ? (
+          <div className="px-4 py-4 space-y-1">
+            <p className="text-xs text-muted-foreground">{closeProbData.fallback_reason ?? "Insufficient training data."}</p>
+            <p className="text-[10px] text-muted-foreground/60">
+              Mark leads as converted or lost to train the model.
+            </p>
+          </div>
+        ) : (
+          <div className="px-4 py-4 space-y-4">
+            {/* Main probability number */}
+            <div className="flex items-end gap-4">
+              <div>
+                <p className={cn(
+                  "text-4xl font-bold tabular-nums",
+                  closeProbData.probability >= 0.7 ? "text-emerald-400" :
+                  closeProbData.probability >= 0.4 ? "text-orange-400" : "text-red-400"
+                )}>
+                  {Math.round(closeProbData.probability * 100)}%
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">predicted close probability</p>
+              </div>
+              {/* Divergence from BANT */}
+              {closeProbData.bant_score != null && Math.abs(closeProbData.divergence) >= 0.03 && (
+                <div className="flex items-center gap-1.5 text-xs mb-1">
+                  {closeProbData.divergence > 0
+                    ? <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+                    : closeProbData.divergence < 0
+                    ? <TrendingDown className="w-3.5 h-3.5 text-orange-400" />
+                    : <Minus className="w-3.5 h-3.5 text-muted-foreground" />}
+                  <span className={closeProbData.divergence > 0 ? "text-emerald-400" : "text-orange-400"}>
+                    {closeProbData.divergence > 0 ? "+" : ""}{Math.round(closeProbData.divergence * 100)}% vs BANT
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Probability bar */}
+            <div className="relative h-2 rounded-full bg-secondary overflow-hidden">
+              <div
+                className={cn("absolute inset-y-0 left-0 rounded-full transition-all", barColorClass(closeProbData.probability))}
+                style={{ width: `${closeProbData.probability * 100}%` }}
+              />
+            </div>
+
+            {/* Divergence note */}
+            {closeProbData.divergence_note && (
+              <p className="text-[11px] text-muted-foreground italic leading-relaxed">
+                {closeProbData.divergence_note}
+              </p>
+            )}
+
+            {/* Feature importances */}
+            {closeProbData.feature_importances && (
+              <div className="space-y-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Model feature weights
+                </p>
+                {Object.entries(closeProbData.feature_importances)
+                  .sort(([, a], [, b]) => Math.abs(b) - Math.abs(a))
+                  .slice(0, 6)
+                  .map(([name, importance]) => {
+                    const isPositive = importance >= 0;
+                    const pct = Math.round(Math.abs(importance) * 100);
+                    const label = name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+                    return (
+                      <div key={name} className="flex items-center gap-2 text-[11px]">
+                        <span className="text-muted-foreground w-24 shrink-0 truncate">{label}</span>
+                        <div className="flex-1 flex items-center gap-1">
+                          {isPositive ? (
+                            <div className="flex-1 flex items-center gap-1">
+                              <div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden">
+                                <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${pct}%` }} />
+                              </div>
+                              <span className="text-emerald-400 w-8 text-right">+{pct}%</span>
+                            </div>
+                          ) : (
+                            <div className="flex-1 flex items-center gap-1">
+                              <div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden">
+                                <div className="h-full bg-red-500 rounded-full" style={{ width: `${pct}%` }} />
+                              </div>
+                              <span className="text-red-400 w-8 text-right">−{pct}%</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+
+            {/* Model metadata */}
+            {closeProbData.model_info && (
+              <p className="text-[10px] text-muted-foreground/60 pt-1 border-t border-border/40">
+                Model trained on {closeProbData.model_info.trained_on} leads
+                ({closeProbData.model_info.converted} converted · {closeProbData.model_info.lost} lost)
+              </p>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* ── AI Reasoning ─────────────────────────────────────────── */}
+      {lead.verdict?.reasoning && (
+        <section className="space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI Reasoning</h3>
+          <p className="text-sm text-muted-foreground leading-relaxed bg-secondary/50 rounded-lg p-3">
+            {lead.verdict.reasoning}
+          </p>
+        </section>
+      )}
+
+      {/* ── Contact + Enrichment ──────────────────────────────────── */}
       <section className="space-y-3">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Contact</h3>
         <div className="grid grid-cols-2 gap-3 text-sm">
@@ -86,7 +323,6 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
         </div>
       </section>
 
-      {/* Enrichment */}
       {lead.enrichment && (
         <section className="space-y-3">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Enrichment</h3>
@@ -119,41 +355,7 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
         </section>
       )}
 
-      {/* BANT */}
-      {bant && Object.keys(bant).length > 0 && (
-        <section className="space-y-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">BANT Analysis</h3>
-          <div className="space-y-2.5">
-            {Object.entries(bant).map(([key, score]) => {
-              const s = typeof score === "number" ? score : 0.5;
-              return (
-                <div key={key} className="space-y-1">
-                  <div className="flex justify-between text-xs">
-                    <span className="capitalize text-muted-foreground">{key}</span>
-                    <span className={cn("font-medium", s >= 0.7 ? "text-emerald-400" : s >= 0.4 ? "text-orange-400" : "text-red-400")}>
-                      {Math.round(s * 100)}%
-                    </span>
-                  </div>
-                  <Progress value={s * 100} className="h-1.5"
-                    indicatorClassName={s >= 0.7 ? "bg-emerald-500" : s >= 0.4 ? "bg-orange-400" : "bg-red-500"} />
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* AI reasoning */}
-      {lead.verdict?.reasoning && (
-        <section className="space-y-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI Reasoning</h3>
-          <p className="text-sm text-muted-foreground leading-relaxed bg-secondary/50 rounded-lg p-3">
-            {lead.verdict.reasoning}
-          </p>
-        </section>
-      )}
-
-      {/* Quality */}
+      {/* ── Data Quality ──────────────────────────────────────────── */}
       <section className="space-y-3">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Data Quality</h3>
         <div className="grid grid-cols-2 gap-3">
@@ -171,7 +373,7 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
         </div>
       </section>
 
-      {/* Tags */}
+      {/* ── Tags ─────────────────────────────────────────────────── */}
       {lead.tags && lead.tags.length > 0 && (
         <section className="space-y-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</h3>

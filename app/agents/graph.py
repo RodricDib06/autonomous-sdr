@@ -244,13 +244,14 @@ def node_score_intent(state: LeadState) -> LeadState:
 
 
 def node_analyse(state: LeadState) -> LeadState:
-    from app.agents.analysis_agent import AnalysisAgent
+    from app.agents.debate_agent import DebateAgent
+    from app.database import crud
     lead_id = state["lead_id"]
     _publish(lead_id, "analyse", "running")
     t0 = time.time()
     db = _db()
     try:
-        agent = AnalysisAgent()
+        agent = DebateAgent()
         # Merge enrichment + research summary into context for the LLM
         context = dict(state.get("enrichment", {}))
         research = state.get("research", {})
@@ -261,6 +262,15 @@ def node_analyse(state: LeadState) -> LeadState:
 
         result = agent._timed_run(db, lead_id, context)
         elapsed = time.time() - t0
+        try:
+            crud.append_lead_event(db, lead_id, "pipeline.analyse.complete", payload={
+                "verdict": result.get("analysis_verdict"),
+                "confidence": result.get("confidence_score"),
+                "contested": (result.get("debate_transcript") or {}).get("contested_dimensions", []),
+                "duration_ms": int(elapsed * 1000),
+            }, agent_name="debate")
+        except Exception:
+            pass
         _inc_node_duration("analyse", elapsed)
         try:
             from app.metrics import llm_calls
@@ -268,8 +278,14 @@ def node_analyse(state: LeadState) -> LeadState:
             llm_calls.labels(provider=settings.AI_PROVIDER, agent="analysis").inc()
         except Exception:
             pass
-        log.info("graph.node.complete", node="analyse", lead_id=lead_id[:8], verdict=result.get("analysis_verdict"), duration_ms=int(elapsed * 1000))
-        _publish(lead_id, "analyse", "complete", duration_ms=int(elapsed * 1000), verdict=result.get("analysis_verdict", ""))
+        log.info("graph.node.complete", node="analyse", lead_id=lead_id[:8],
+                 verdict=result.get("analysis_verdict"),
+                 confidence=round(result.get("confidence_score", 0), 2),
+                 contested=result.get("debate_transcript", {}).get("contested_dimensions", []),
+                 duration_ms=int(elapsed * 1000))
+        _publish(lead_id, "analyse", "complete", duration_ms=int(elapsed * 1000),
+                 verdict=result.get("analysis_verdict", ""),
+                 confidence=round(result.get("confidence_score", 0), 2))
         return {**state, "analysis": result}
     except Exception as e:
         elapsed = time.time() - t0
@@ -283,6 +299,8 @@ def node_analyse(state: LeadState) -> LeadState:
 
 def node_validate(state: LeadState) -> LeadState:
     from app.agents.validator_agent import ValidatorAgent
+    from app.database import crud
+    from app.services.org_chart import traverse_org_chart
     lead_id = state["lead_id"]
     _publish(lead_id, "validate", "running")
     t0 = time.time()
@@ -293,6 +311,30 @@ def node_validate(state: LeadState) -> LeadState:
         result = agent._timed_run(db, lead_id, combined)
         elapsed = time.time() - t0
         _inc_node_duration("validate", elapsed)
+        try:
+            crud.append_lead_event(db, lead_id, "pipeline.validate.complete", payload={
+                "final_verdict": result.get("final_verdict"),
+                "confidence": result.get("confidence_score"),
+                "flags": result.get("flags", []),
+                "duration_ms": int(elapsed * 1000),
+            }, agent_name="validator")
+        except Exception:
+            pass
+        # Org chart traversal — fire async when authority is flagged low
+        try:
+            if any(f in (result.get("flags") or [])
+                   for f in ("authority_too_low", "too_junior", "authority_and_need_both_low")):
+                import threading
+                from app.database.connection import SessionLocal
+                def _traverse():
+                    _db2 = SessionLocal()
+                    try:
+                        traverse_org_chart(_db2, lead_id)
+                    finally:
+                        _db2.close()
+                threading.Thread(target=_traverse, daemon=True).start()
+        except Exception:
+            pass
         log.info(
             "graph.node.complete", node="validate", lead_id=lead_id[:8],
             final_verdict=result.get("final_verdict"),
@@ -376,6 +418,7 @@ def node_sync_crm(state: LeadState) -> LeadState:
     from app.services.crm_sync import sync_lead_to_crm
     from app.services.data_quality import DataQualityService
     from app.database import crud
+    from app.services.lookalike_scorer import update_lead_lookalike_score
     lead_id = state["lead_id"]
     _publish(lead_id, "sync_crm", "running")
     t0 = time.time()
@@ -388,6 +431,10 @@ def node_sync_crm(state: LeadState) -> LeadState:
         crud.update_lead_status(db, lead_id, "complete")
         crm_result = sync_lead_to_crm(db, lead_id)
         _maybe_notify_slack(db, state, lead)
+        try:
+            update_lead_lookalike_score(db, lead_id)
+        except Exception:
+            pass
 
         elapsed = time.time() - t0
         _inc_node_duration("sync_crm", elapsed)
@@ -399,6 +446,14 @@ def node_sync_crm(state: LeadState) -> LeadState:
         except Exception:
             pass
 
+        try:
+            crud.append_lead_event(db, lead_id, "pipeline.complete", payload={
+                "verdict": verdict,
+                "crm": crm_result.get("crm"),
+                "duration_ms": int(elapsed * 1000),
+            }, agent_name="pipeline")
+        except Exception:
+            pass
         log.info("graph.node.complete", node="sync_crm", lead_id=lead_id[:8], crm=crm_result.get("crm"), duration_ms=int(elapsed * 1000))
         _publish(lead_id, "sync_crm", "complete", duration_ms=int(elapsed * 1000))
         _publish_complete(lead_id, verdict)

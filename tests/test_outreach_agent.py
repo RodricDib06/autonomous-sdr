@@ -32,6 +32,11 @@ def _make_enrichment(industry="Software", job_title="VP Engineering", seniority=
     return enr
 
 
+def _profile(agent, lead=None, enrichment=None):
+    """Build a profile dict via the agent helper (mirrors what the agent does internally)."""
+    return agent._build_profile(lead or _make_lead(), enrichment or _make_enrichment())
+
+
 _STEP = {
     "subject_template": "Quick question about {company}",
     "body_template": "Hi {first_name}, reaching out re: {company} in {industry}. Best, {sender_name}",
@@ -49,7 +54,7 @@ def test_personalise_uses_llm_response_when_valid(agent):
     })
     agent._ai.generate.return_value = llm_response
 
-    subject, body = agent._personalise(_make_lead(), _make_enrichment(), _STEP)
+    subject, body = agent._personalise(_profile(agent), _STEP)
 
     assert subject == "AI for Acme's GTM"
     assert "Jane" in body
@@ -59,7 +64,7 @@ def test_personalise_strips_markdown_from_llm_response(agent):
     llm_response = f"```json\n{json.dumps({'subject': 'Hi there', 'body': 'Body text'})}\n```"
     agent._ai.generate.return_value = llm_response
 
-    subject, body = agent._personalise(_make_lead(), _make_enrichment(), _STEP)
+    subject, body = agent._personalise(_profile(agent), _STEP)
 
     assert subject == "Hi there"
     assert body == "Body text"
@@ -72,7 +77,7 @@ def test_personalise_strips_markdown_from_llm_response(agent):
 def test_personalise_falls_back_to_template_on_llm_exception(agent):
     agent._ai.generate.side_effect = RuntimeError("LLM unavailable")
 
-    subject, body = agent._personalise(_make_lead(), _make_enrichment(), _STEP)
+    subject, body = agent._personalise(_profile(agent), _STEP)
 
     # Template substitution should have filled company
     assert "Acme Corp" in subject
@@ -82,7 +87,7 @@ def test_personalise_falls_back_to_template_on_llm_exception(agent):
 def test_personalise_falls_back_on_bad_json(agent):
     agent._ai.generate.return_value = "not valid json at all"
 
-    subject, body = agent._personalise(_make_lead(), _make_enrichment(), _STEP)
+    subject, body = agent._personalise(_profile(agent), _STEP)
 
     assert "Acme Corp" in subject
 
@@ -91,7 +96,7 @@ def test_personalise_falls_back_on_missing_keys_in_json(agent):
     # Valid JSON but missing 'subject' and 'body' keys
     agent._ai.generate.return_value = json.dumps({"result": "oops"})
 
-    subject, body = agent._personalise(_make_lead(), _make_enrichment(), _STEP)
+    subject, body = agent._personalise(_profile(agent), _STEP)
 
     # Falls back to template
     assert "Acme Corp" in subject
@@ -104,8 +109,8 @@ def test_personalise_falls_back_on_missing_keys_in_json(agent):
 def test_personalise_handles_no_enrichment(agent):
     agent._ai.generate.side_effect = RuntimeError("skip LLM")
 
-    # Should not raise — enrichment=None uses defaults
-    subject, body = agent._personalise(_make_lead(), enrichment=None, step=_STEP)
+    profile = agent._build_profile(_make_lead(), enrichment=None)
+    subject, body = agent._personalise(profile, _STEP)
 
     assert "Acme Corp" in subject
     assert "your industry" in body
@@ -118,12 +123,13 @@ def test_personalise_handles_no_enrichment(agent):
 def test_first_name_extracted_correctly(agent):
     agent._ai.generate.side_effect = RuntimeError("skip LLM")
     lead = _make_lead(name="Robert Johnson")
+    profile = agent._build_profile(lead, _make_enrichment())
 
     step = {
         "subject_template": "Hi {first_name}",
         "body_template": "{first_name} at {company}",
     }
-    _, body = agent._personalise(lead, _make_enrichment(), step)
+    _, body = agent._personalise(profile, step)
 
     assert "Robert" in body
     assert "Johnson" not in body.split("{")[0]  # template fully rendered
@@ -132,12 +138,13 @@ def test_first_name_extracted_correctly(agent):
 def test_first_name_fallback_when_name_empty(agent):
     agent._ai.generate.side_effect = RuntimeError("skip LLM")
     lead = _make_lead(name="")
+    profile = agent._build_profile(lead, _make_enrichment())
 
     step = {
         "subject_template": "Hi {first_name}",
         "body_template": "Hello {first_name}!",
     }
-    _, body = agent._personalise(lead, _make_enrichment(), step)
+    _, body = agent._personalise(profile, step)
 
     assert "there" in body  # default fallback
 

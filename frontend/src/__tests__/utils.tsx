@@ -3,6 +3,7 @@ import { type ReactNode } from 'react';
 import { render, type RenderOptions } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
+import { Toaster } from 'sonner';
 
 export function createTestQueryClient() {
   return new QueryClient({
@@ -23,6 +24,7 @@ function TestWrapper({ children, initialRoute = '/' }: WrapperProps) {
   return (
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[initialRoute]}>{children}</MemoryRouter>
+      <Toaster />
     </QueryClientProvider>
   );
 }

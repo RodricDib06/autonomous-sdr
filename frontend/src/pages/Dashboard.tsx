@@ -7,9 +7,11 @@ import {
 } from "recharts";
 import {
   Flame, Users2, CheckCircle2, Clock, AlertCircle, Zap, Mail,
-  Calendar, DollarSign, Pencil, Timer, TrendingDown,
+  Calendar, DollarSign, Pencil, Timer, TrendingDown, Bot,
+  Send, Radar, RefreshCw, SlidersHorizontal,
 } from "lucide-react";
-import { leadsApi, outreachApi, abTestApi, decayApi } from "../lib/api";
+import { leadsApi, outreachApi, abTestApi, decayApi, funnelApi, autonomyApi } from "../lib/api";
+import type { AutonomyEvent } from "../types";
 import { useGlobalEvents } from "../hooks/useGlobalEvents";
 import type { GlobalEvent } from "../types";
 import { Header } from "../components/layout/Header";
@@ -109,6 +111,18 @@ export default function Dashboard() {
     queryKey: ["cooling"],
     queryFn: () => decayApi.cooling(5),
     refetchInterval: 60_000,
+  });
+
+  const { data: funnelData } = useQuery({
+    queryKey: ["funnel", acv],
+    queryFn: () => funnelApi.get(acv),
+    staleTime: 60_000,
+  });
+
+  const { data: autonomyFeed } = useQuery({
+    queryKey: ["autonomy-feed"],
+    queryFn: () => autonomyApi.feed(24),
+    refetchInterval: 120_000,
   });
 
   const verdictData = stats
@@ -250,6 +264,81 @@ export default function Dashboard() {
             accent={abResults?.significant ? "emerald" : "orange"}
           />
         </div>
+
+        {/* Revenue Funnel */}
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-sm">Revenue Funnel</CardTitle>
+                <CardDescription>Pipeline by conversion stage</CardDescription>
+              </div>
+              {funnelData?.win_rate != null && (
+                <div className="text-right">
+                  <p className="text-2xl font-bold text-emerald-400">
+                    {Math.round(funnelData.win_rate * 100)}%
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">win rate</p>
+                </div>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            {!funnelData ? (
+              <div className="space-y-2">{[...Array(5)].map((_, i) => <div key={i} className="skeleton h-12 rounded" />)}</div>
+            ) : (
+              <div className="space-y-2">
+                {funnelData.stages.map((stage, i) => {
+                  const maxCount = Math.max(...funnelData.stages.map((s) => s.count), 1);
+                  const widthPct = maxCount > 0 ? (stage.count / maxCount) * 100 : 0;
+                  const stageColors = [
+                    "bg-slate-500/30 border-slate-500/20",
+                    "bg-blue-500/20 border-blue-500/20",
+                    "bg-violet-500/20 border-violet-500/20",
+                    "bg-orange-500/20 border-orange-500/20",
+                    "bg-emerald-500/30 border-emerald-500/30",
+                  ];
+                  const labelColors = [
+                    "text-slate-400", "text-blue-400", "text-violet-400", "text-orange-400", "text-emerald-400",
+                  ];
+                  return (
+                    <div key={stage.name} className="flex items-center gap-3">
+                      <p className={cn("text-[11px] font-medium w-20 shrink-0 text-right", labelColors[i])}>
+                        {stage.label}
+                      </p>
+                      <div className="flex-1 relative h-9 rounded-md bg-secondary/30 overflow-hidden">
+                        <div
+                          className={cn("absolute inset-y-0 left-0 rounded-md border transition-all", stageColors[i])}
+                          style={{ width: `${widthPct}%` }}
+                        />
+                        <div className="absolute inset-0 flex items-center justify-between px-3">
+                          <span className="text-xs font-semibold z-10 relative">
+                            {stage.count} leads
+                          </span>
+                          <span className="text-xs text-muted-foreground z-10 relative">
+                            {formatPipelineValue(stage.estimated_value)}
+                          </span>
+                        </div>
+                      </div>
+                      {stage.conversion_from_prev != null ? (
+                        <p className="text-[10px] text-muted-foreground w-10 shrink-0 text-center">
+                          {Math.round(stage.conversion_from_prev * 100)}%
+                        </p>
+                      ) : (
+                        <div className="w-10 shrink-0" />
+                      )}
+                    </div>
+                  );
+                })}
+                {funnelData.lost > 0 && (
+                  <p className="text-[10px] text-muted-foreground pt-1 border-t border-border/40">
+                    {funnelData.lost} lost · {funnelData.total_active} active in pipeline
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Charts row */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -497,7 +586,120 @@ export default function Dashboard() {
             )}
           </CardContent>
         </Card>
+
+        {/* Autonomy activity feed */}
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Bot className="w-4 h-4 text-primary" />
+                <CardTitle className="text-sm font-semibold">Autonomous Activity</CardTitle>
+              </div>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                Last 24 hours
+              </span>
+            </div>
+            {autonomyFeed?.summary && (
+              <div className="flex flex-wrap gap-3 pt-1">
+                <span className="text-xs text-muted-foreground">
+                  <span className="font-semibold text-foreground">{autonomyFeed.summary.follow_ups_sent}</span> follow-ups sent
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  <span className="font-semibold text-foreground">{autonomyFeed.summary.triggers_fired}</span> triggers fired
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  <span className="font-semibold text-foreground">{autonomyFeed.summary.leads_qualified}</span> leads qualified
+                </span>
+                {autonomyFeed.summary.weight_updates > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    <span className="font-semibold text-foreground">{autonomyFeed.summary.weight_updates}</span> weight update{autonomyFeed.summary.weight_updates > 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+            )}
+          </CardHeader>
+          <CardContent>
+            {!autonomyFeed || autonomyFeed.events.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-2">
+                No autonomous actions in the last 24 hours. Import leads or wait for the scheduler to run.
+              </p>
+            ) : (
+              <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                {autonomyFeed.events.slice(0, 20).map((ev, i) => (
+                  <AutonomyEventRow key={i} event={ev} />
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
+    </div>
+  );
+}
+
+function timeAgo(ts: string): string {
+  const diffMs = Date.now() - new Date(ts).getTime();
+  const m = Math.floor(diffMs / 60_000);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function AutonomyEventRow({ event }: { event: AutonomyEvent }) {
+
+  const icon = {
+    follow_up_sent:      <Send className="w-3 h-3 text-blue-400 shrink-0" />,
+    trigger_fired:       <Radar className="w-3 h-3 text-orange-400 shrink-0" />,
+    lead_qualified:      <RefreshCw className="w-3 h-3 text-emerald-400 shrink-0" />,
+    bant_weights_updated:<SlidersHorizontal className="w-3 h-3 text-purple-400 shrink-0" />,
+  }[event.type];
+
+  const label = () => {
+    switch (event.type) {
+      case "follow_up_sent":
+        return (
+          <>
+            Sent step-{event.step} follow-up to{" "}
+            <span className="text-foreground font-medium">{event.lead_name}</span>
+            {event.company ? ` @ ${event.company}` : ""}
+          </>
+        );
+      case "trigger_fired":
+        return (
+          <>
+            <span className="text-foreground font-medium">{event.company}</span>
+            {" — "}{event.headline ?? event.trigger}
+          </>
+        );
+      case "lead_qualified":
+        return (
+          <>
+            <span className="text-foreground font-medium">{event.lead_name}</span>
+            {event.company ? ` @ ${event.company}` : ""} qualified as{" "}
+            <span className={cn(
+              "font-semibold",
+              event.verdict === "Hot" ? "text-red-400" :
+              event.verdict === "Warm" ? "text-orange-400" : "text-blue-400"
+            )}>{event.verdict}</span>
+          </>
+        );
+      case "bant_weights_updated":
+        return (
+          <>
+            BANT weights updated
+            {event.improvement ? ` (+${(event.improvement * 100).toFixed(2)}% separation)` : ""}
+            {event.sample_size ? ` on ${event.sample_size} leads` : ""}
+          </>
+        );
+    }
+  };
+
+  return (
+    <div className="flex items-start gap-2 py-1 border-b border-border/50 last:border-0">
+      <div className="mt-0.5">{icon}</div>
+      <p className="text-xs text-muted-foreground leading-relaxed flex-1">{label()}</p>
+      <span className="text-[10px] text-muted-foreground/60 shrink-0 mt-0.5">{timeAgo(event.ts)}</span>
     </div>
   );
 }

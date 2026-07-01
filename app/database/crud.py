@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from app.database.models import Lead, Enrichment, Verdict, AgentLog
+from app.database.models import Lead, Enrichment, Verdict, AgentLog, LeadEvent
 
 
 def create_lead(db: Session, name: str, email: str, company: str, source: str = "webhook") -> Lead:
@@ -47,6 +47,25 @@ def get_verdict_by_lead(db: Session, lead_id: str) -> Verdict | None:
 def update_verdict(db: Session, verdict_id: str, data: dict) -> None:
     db.query(Verdict).filter(Verdict.id == verdict_id).update(data)
     db.commit()
+
+
+def append_lead_event(
+    db: Session,
+    lead_id: str,
+    event_type: str,
+    payload: dict | None = None,
+    agent_name: str | None = None,
+) -> LeadEvent:
+    """Append an immutable event to the lead event log."""
+    event = LeadEvent(
+        lead_id=lead_id,
+        event_type=event_type,
+        agent_name=agent_name,
+        payload=payload or {},
+    )
+    db.add(event)
+    db.commit()
+    return event
 
 
 def create_agent_log(

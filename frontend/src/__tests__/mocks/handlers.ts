@@ -118,6 +118,17 @@ export const handlers = [
     HttpResponse.json({ report: [], generated_at: new Date().toISOString() })
   ),
 
+  http.get(`${API_BASE_URL}/leads/trend`, () =>
+    HttpResponse.json({
+      data: [
+        { day: '2024-01-10', total: 8, hot: 3, warm: 3, cold: 2 },
+        { day: '2024-01-11', total: 12, hot: 5, warm: 4, cold: 3 },
+        { day: '2024-01-12', total: 6, hot: 2, warm: 2, cold: 2 },
+      ],
+      days: 30,
+    })
+  ),
+
   http.post(`${API_BASE_URL}/leads/import-csv`, () =>
     HttpResponse.json({ total: 50, successful: 47, failed: 0, duplicates: 3, errors: [] })
   ),
@@ -176,7 +187,60 @@ export const handlers = [
       status: 'complete',
       final_verdict: 'Hot',
       nodes_executed: ['orchestrate', 'enrich', 'analyze', 'validate'],
-      agent_logs: [],
+      agent_logs: [
+        { id: 'log-1', agent_name: 'Enrich Agent', status: 'success', error_message: null, duration_ms: 245 },
+        { id: 'log-2', agent_name: 'Score Agent', status: 'failed', error_message: 'API timeout', duration_ms: null },
+        { id: 'log-3', agent_name: 'Validate Agent', status: 'running', error_message: null, duration_ms: null },
+      ],
+    })
+  ),
+
+  http.get(`${API_BASE_URL}/leads/:id/close-probability`, () =>
+    HttpResponse.json({
+      lead_id: 'lead-1',
+      probability: 0.73,
+      bant_score: 0.87,
+      divergence: 0.14,
+      divergence_note: 'BANT score and ML model diverge slightly — trust ML',
+      feature_importances: {
+        'bant_budget': 0.35,
+        'company_size_score': 0.22,
+        'seniority_rank': -0.15,
+      },
+      model_info: {
+        trained_on: 450,
+        converted: 180,
+        lost: 270,
+        trained_at: '2024-01-01T00:00:00Z',
+      },
+      fallback: false,
+    })
+  ),
+
+  http.get(`${API_BASE_URL}/leads/:id/similar`, () =>
+    HttpResponse.json({
+      lead_id: 'lead-1',
+      similar: [
+        { id: 'lead-2', name: 'Jane Smith', company: 'Innovation Labs', final_verdict: 'Warm', similarity: 0.87 },
+      ],
+      count: 1,
+    })
+  ),
+
+  http.post(`${API_BASE_URL}/leads/:id/crm-push`, ({ request }) => {
+    const url = new URL(request.url);
+    const format = url.searchParams.get('format') ?? 'hubspot';
+    return HttpResponse.json({ lead_id: 'lead-1', format, payload: { name: 'John Doe' } });
+  }),
+
+  http.post(`${API_BASE_URL}/leads/:id/web-enrich`, () =>
+    HttpResponse.json({
+      lead_id: 'lead-1',
+      domain: 'techcorp.com',
+      signals: [{ text: 'Series B announcement in 2024' }],
+      tech_stack: ['React', 'AWS'],
+      pages_fetched: 3,
+      error: null,
     })
   ),
 
@@ -232,6 +296,24 @@ export const handlers = [
     HttpResponse.json({ success: true })
   ),
 
+  http.get(`${API_BASE_URL}/ab-tests/multi-axis`, () =>
+    HttpResponse.json({
+      send_time: [
+        { label: 'morning', sent: 120, opened: 48, replied: 14, open_rate: 0.40, reply_rate: 0.12 },
+        { label: 'afternoon', sent: 80, opened: 28, replied: 8, open_rate: 0.35, reply_rate: 0.10 },
+      ],
+      subject_style: [
+        { label: 'question', sent: 100, opened: 45, replied: 15, open_rate: 0.45, reply_rate: 0.15 },
+        { label: 'statement', sent: 100, opened: 31, replied: 7, open_rate: 0.31, reply_rate: 0.07 },
+      ],
+      message_length: [
+        { label: 'short', sent: 90, opened: 41, replied: 12, open_rate: 0.46, reply_rate: 0.13 },
+        { label: 'medium', sent: 110, opened: 35, replied: 10, open_rate: 0.32, reply_rate: 0.09 },
+      ],
+      total_emails_analysed: 200,
+    })
+  ),
+
   // ── Optimization ───────────────────────────────────────────────────────────
   http.get(`${API_BASE_URL}/optimization/history`, () =>
     HttpResponse.json({
@@ -267,6 +349,20 @@ export const handlers = [
     HttpResponse.text('{}')
   ),
 
+  http.get(`${API_BASE_URL}/analytics/market-intelligence`, () =>
+    HttpResponse.json({
+      segments: [
+        { industry: 'Technology', seniority: 'VP', total: 45, hot: 22, warm: 15, cold: 8, hot_rate: 0.49, warm_rate: 0.33, lift: 2.1 },
+        { industry: 'FinTech', seniority: 'C-Level', total: 30, hot: 18, warm: 8, cold: 4, hot_rate: 0.60, warm_rate: 0.27, lift: 2.8 },
+      ],
+      top_industries: [
+        { industry: 'Technology', total: 60, hot: 28, warm: 20, cold: 12, hot_rate: 0.47, lift: 1.9 },
+      ],
+      global_stats: { total: 150, hot: 45, warm: 60, cold: 45, global_hot_rate: 0.30 },
+      computed_at: '2024-01-15T12:00:00Z',
+    })
+  ),
+
   // ── Config ─────────────────────────────────────────────────────────────────
   http.get(`${API_BASE_URL}/config/slack`, () =>
     HttpResponse.json({ enabled: false, webhook_url: null })
@@ -282,6 +378,44 @@ export const handlers = [
 
   http.post(`${API_BASE_URL}/config/slack/disable`, () =>
     HttpResponse.json({ enabled: false })
+  ),
+
+  // ── Decay / cooling leads ──────────────────────────────────────────────────
+  http.get(`${API_BASE_URL}/leads/cooling`, () =>
+    HttpResponse.json({ leads: [], count: 0 })
+  ),
+
+  http.get(`${API_BASE_URL}/leads/:id/engagement-decay`, () =>
+    HttpResponse.json({
+      lead_id: 'lead-1',
+      days_since_contact: 12,
+      decay_score: 0.35,
+      urgency: 'urgent',
+      recommended_action: 'Follow up immediately',
+    })
+  ),
+
+  // ── ICP ────────────────────────────────────────────────────────────────────
+  http.get(`${API_BASE_URL}/icp`, () =>
+    HttpResponse.json(mockICP)
+  ),
+
+  http.put(`${API_BASE_URL}/icp`, async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({ ...mockICP, ...body, updated_at: new Date().toISOString() });
+  }),
+
+  http.get(`${API_BASE_URL}/icp/preview`, () =>
+    HttpResponse.json(mockICPPreview)
+  ),
+
+  http.get(`${API_BASE_URL}/leads/:id/icp-evaluation`, () =>
+    HttpResponse.json({ match: true, score: 0.88, reasons: ['Industry match', 'Seniority match'] })
+  ),
+
+  // ── Seed ───────────────────────────────────────────────────────────────────
+  http.post(`${API_BASE_URL}/seed/demo`, () =>
+    HttpResponse.json({ status: 'seeding', message: 'Demo data loading in background' })
   ),
 
   // ── Health ─────────────────────────────────────────────────────────────────
@@ -408,5 +542,43 @@ const mockImportHistory = [
     failed: 0,
     duplicates: 3,
     imported_by: 'test@example.com',
+  },
+];
+
+export const mockICP = {
+  industries: ['SaaS', 'FinTech'],
+  seniority_levels: ['VP', 'C-Level'],
+  excluded_industries: ['Government'],
+  min_employees: 50,
+  max_employees: 1000,
+  updated_at: '2024-01-15T12:00:00Z',
+  updated_by_id: 'user-1',
+};
+
+export const mockICPPreview = {
+  matched: 45,
+  total: 150,
+  hot: 12,
+  warm: 20,
+  cold: 13,
+  unconfigured: false,
+};
+
+export const mockCoolingLeads = [
+  {
+    id: 'lead-1',
+    name: 'Alice Chen',
+    email: 'alice@startup.io',
+    company: 'Startup IO',
+    job_title: 'VP Engineering',
+    decay: { days_since_contact: 10, decay_score: 0.3, urgency: 'urgent', recommended_action: 'Call now' },
+  },
+  {
+    id: 'lead-2',
+    name: 'Bob Kim',
+    email: 'bob@scale.co',
+    company: 'Scale Co',
+    job_title: null,
+    decay: { days_since_contact: 8, decay_score: 0.5, urgency: 'warning', recommended_action: 'Send follow-up' },
   },
 ];

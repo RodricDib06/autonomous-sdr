@@ -51,3 +51,26 @@ class OllamaClient:
         """Generate responses for multiple prompts concurrently"""
         tasks = [self.generate_async(prompt, model) for prompt in prompts]
         return await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def stream_generate(self, prompt: str, model: str = None):
+        """Async generator that yields text tokens as they are produced by Ollama."""
+        import json as _json
+        url = f"{self.base_url}/api/generate"
+        payload = {"model": model or self.model, "prompt": prompt, "stream": True}
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload,
+                                    timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                resp.raise_for_status()
+                async for line in resp.content:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        chunk = _json.loads(line)
+                        token = chunk.get("response", "")
+                        if token:
+                            yield token
+                        if chunk.get("done"):
+                            break
+                    except Exception:
+                        continue

@@ -33,6 +33,18 @@ import type {
   PipelineTrace,
   SemanticSearchResult,
   OutreachStats,
+  DebateResult,
+  PreCallBriefResult,
+  TriggerSignal,
+  SignalFeed,
+  ReferralChain,
+  InboxResponse,
+  ChatResponse,
+  FunnelData,
+  AutonomyFeed,
+  PipelineVelocity,
+  RepPerformance,
+  VerdictExplanation,
 } from "../types";
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -175,7 +187,7 @@ export const outreachApi = {
     api.get<OutreachStats>("/outreach/stats").then((r) => r.data),
 
   sendNow: (leadId: string) =>
-    api.post(`/leads/${leadId}/outreach/send`).then((r) => r.data),
+    api.post(`/leads/${leadId}/outreach`).then((r) => r.data),
 };
 
 // ── Booking ───────────────────────────────────────────────────────────────────
@@ -213,13 +225,22 @@ export const analyticsApi = {
   semanticSearch: (q: string, limit = 10) =>
     api.get<{ results: SemanticSearchResult[]; count: number; query: string }>(
       "/analytics/semantic-search",
-      { params: { q, limit } }
+      { params: { query: q, limit } }
     ).then((r) => r.data),
 
   powerBiExport: () =>
     api.get("/analytics/powerbi-export", { responseType: "blob" }).then((r) => r.data),
 
   retrainML: () => api.post("/analytics/ml/retrain").then((r) => r.data),
+
+  pipelineVelocity: () =>
+    api.get<PipelineVelocity>("/analytics/pipeline-velocity").then((r) => r.data),
+
+  repPerformance: () =>
+    api.get<RepPerformance>("/analytics/rep-performance").then((r) => r.data),
+
+  verdictExplanation: (leadId: string) =>
+    api.get<VerdictExplanation>(`/leads/${leadId}/verdict-explanation`).then((r) => r.data),
 };
 
 // ── ICP ───────────────────────────────────────────────────────────────────────
@@ -269,6 +290,54 @@ export const abMultiApi = {
   axes: () => api.get<ABMultiAxis>("/ab-tests/multi-axis").then((r) => r.data),
 };
 
+// ── Referral chain ────────────────────────────────────────────────────────────
+export const referralChainApi = {
+  get: (leadId: string) =>
+    api.get<ReferralChain>(`/leads/${leadId}/referral-chain`).then((r) => r.data),
+};
+
+// ── Debate (adversarial BANT) ─────────────────────────────────────────────────
+export const debateApi = {
+  get: (leadId: string) =>
+    api.get<DebateResult>(`/leads/${leadId}/debate`).then((r) => r.data),
+};
+
+// ── Pre-call brief ─────────────────────────────────────────────────────────────
+export const briefApi = {
+  get: (leadId: string) =>
+    api.get<PreCallBriefResult>(`/leads/${leadId}/pre-call-brief`).then((r) => r.data),
+};
+
+// ── Trigger signal feed ────────────────────────────────────────────────────────
+export const signalApi = {
+  feed: (params?: { limit?: number; signal_type?: string }) =>
+    api.get<SignalFeed>("/analytics/signal-feed", { params }).then((r) => r.data),
+  forLead: (leadId: string) =>
+    api.get<{ signals: TriggerSignal[]; count: number }>(`/leads/${leadId}/trigger-signals`).then((r) => r.data),
+};
+
+// ── Inbox ─────────────────────────────────────────────────────────────────────
+export const inboxApi = {
+  list: (params?: { needs_human?: boolean; limit?: number }) =>
+    api.get<InboxResponse>("/inbox", { params }).then((r) => r.data),
+  resolve: (convId: string) =>
+    api.post<{ status: string; conversation_id: string }>(`/conversations/${convId}/resolve`).then((r) => r.data),
+  reply: (leadId: string, message: string, channel = "email") =>
+    api.post<ChatResponse>(`/leads/${leadId}/chat`, null, {
+      params: { channel, mode: "reply", message },
+    }).then((r) => r.data),
+  simulateReply: (leadId: string, message: string, channel = "email") =>
+    api.post<ChatResponse>(`/leads/${leadId}/chat`, null, {
+      params: { channel, mode: "reply", message },
+    }).then((r) => r.data),
+};
+
+// ── Revenue funnel ─────────────────────────────────────────────────────────────
+export const funnelApi = {
+  get: (acv?: number) =>
+    api.get<FunnelData>("/analytics/funnel", { params: acv ? { acv } : {} }).then((r) => r.data),
+};
+
 // ── Demo seeder ────────────────────────────────────────────────────────────────
 export const seedApi = {
   demo: () => api.post<{ status: string; message: string }>("/seed/demo").then((r) => r.data),
@@ -284,6 +353,12 @@ export const configApi = {
     api.post("/config/slack", null, { params: { webhook_url } }).then((r) => r.data),
   testSlack: () => api.post("/config/slack/test").then((r) => r.data),
   disableSlack: () => api.post("/config/slack/disable").then((r) => r.data),
+};
+
+// ── Autonomy activity feed ─────────────────────────────────────────────────────
+export const autonomyApi = {
+  feed: (hours = 24) =>
+    api.get<AutonomyFeed>("/autonomy-feed", { params: { hours } }).then((r) => r.data),
 };
 
 export default api;

@@ -1,8 +1,9 @@
 import json
+import re
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
-from fastapi import FastAPI, Depends, HTTPException, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, RedirectResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -812,6 +813,108 @@ def get_lead(
         raise HTTPException(status_code=500, detail="Failed to fetch lead")
 
 
+@app.get("/leads/{lead_id}/verdict-explanation")
+def get_verdict_explanation(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """
+    LLM-generated plain-English explanation of the verdict for a lead.
+
+    Returns:
+      - summary: 2-3 sentence human-readable explanation of why the lead got this verdict
+      - counterfactual: what would need to change to get a better verdict
+      - key_drivers: top 3 BANT factors that drove the decision
+      - verdict / confidence_score: echoed from Verdict record
+    """
+    lead = crud.get_lead(db, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    verdict = lead.verdicts[0] if lead.verdicts else None
+    if not verdict:
+        raise HTTPException(status_code=404, detail="No verdict available for this lead yet")
+
+    enrichment = lead.enrichments[0] if lead.enrichments else None
+    bant = verdict.bant_scores or {}
+
+    # Build a compact context string for the LLM
+    bant_lines = "\n".join(
+        f"  {k.upper()}: {v:.2f}" for k, v in bant.items() if isinstance(v, (int, float))
+    ) or "  (no BANT scores)"
+
+    prompt = f"""You are an AI sales analyst. Given this lead qualification data, explain the verdict in plain English for a sales rep.
+
+Lead: {lead.name} | {lead.company}
+Title: {enrichment.job_title if enrichment else 'Unknown'} ({enrichment.seniority if enrichment else '?'})
+Industry: {enrichment.industry if enrichment else 'Unknown'}
+Company size: {enrichment.company_size if enrichment else 'Unknown'}
+
+BANT Scores (0-1):
+{bant_lines}
+
+Verdict: {verdict.final_verdict} (confidence: {verdict.confidence_score or 0:.0%})
+System reasoning: {verdict.analysis_reasoning or 'None'}
+ICP match: {verdict.icp_match}
+Flags: {', '.join(verdict.flags or []) or 'none'}
+
+Write a JSON object with exactly these keys:
+- "summary": 2-3 sentences explaining WHY this lead received this verdict, in language a sales rep can understand. Be specific about which factors mattered most.
+- "counterfactual": 1-2 sentences on what would need to be true for this lead to receive a better (Hot) verdict.
+- "key_drivers": array of exactly 3 strings, each naming a factor and its impact (e.g. "Budget score 0.85 — strong indicator of purchase readiness").
+
+Respond ONLY with the JSON object, no markdown."""
+
+    try:
+        from app.services.providers import get_ai_client
+        ai = get_ai_client()
+        raw = ai.generate(prompt, max_tokens=500)
+        parsed = None
+        if raw:
+            import json as _json
+            # Strip markdown fences if present
+            clean = raw.strip()
+            if clean.startswith("```"):
+                clean = "\n".join(clean.split("\n")[1:])
+                if clean.endswith("```"):
+                    clean = clean[: clean.rfind("```")]
+            try:
+                parsed = _json.loads(clean.strip())
+            except Exception:
+                pass
+        if not parsed:
+            parsed = {
+                "summary": verdict.analysis_reasoning or f"This lead was classified as {verdict.final_verdict}.",
+                "counterfactual": "Improve BANT scores, particularly budget and authority, to reach Hot status.",
+                "key_drivers": [
+                    f"Budget: {bant.get('budget', 0):.0%}",
+                    f"Authority: {bant.get('authority', 0):.0%}",
+                    f"Timing: {bant.get('timing', 0):.0%}",
+                ],
+            }
+    except Exception as e:
+        log.warning("verdict_explanation.llm_failed", lead_id=lead_id[:8], error=str(e))
+        parsed = {
+            "summary": verdict.analysis_reasoning or f"This lead was classified as {verdict.final_verdict}.",
+            "counterfactual": "Improve BANT scores to reach Hot status.",
+            "key_drivers": [
+                f"Budget: {bant.get('budget', 0):.2f}",
+                f"Authority: {bant.get('authority', 0):.2f}",
+                f"Timing: {bant.get('timing', 0):.2f}",
+            ],
+        }
+
+    return {
+        "lead_id": lead_id,
+        "verdict": verdict.final_verdict,
+        "confidence_score": verdict.confidence_score,
+        "summary": parsed.get("summary", ""),
+        "counterfactual": parsed.get("counterfactual", ""),
+        "key_drivers": parsed.get("key_drivers", []),
+    }
+
+
 @app.get("/leads/{lead_id}/quality-score")
 def get_lead_quality_score(
     lead_id: str,
@@ -1121,17 +1224,27 @@ def get_outreach_emails(
         .order_by(OutreachEmail.step_number)
         .all()
     )
-    return [
+    rows = [
         {
             "id": e.id,
-            "step": e.step_number,
+            "lead_id": e.lead_id,
+            "sequence_id": e.sequence_id,
+            "step_number": e.step_number,
             "subject": e.subject,
+            "body": e.body,
             "status": e.status,
             "scheduled_at": e.scheduled_at.isoformat() if e.scheduled_at else None,
             "sent_at": e.sent_at.isoformat() if e.sent_at else None,
+            "opened_at": e.opened_at.isoformat() if e.opened_at else None,
+            "replied_at": e.replied_at.isoformat() if e.replied_at else None,
+            "error_message": e.error_message,
+            "quality_score": e.quality_score,
+            "quality_flags": e.quality_flags,
+            "quality_reasoning": e.quality_reasoning,
         }
         for e in emails
     ]
+    return {"emails": rows, "count": len(rows)}
 
 
 @app.post("/outreach/emails/{email_id}/event")
@@ -1189,15 +1302,307 @@ def get_bookings(
     rows = [
         {
             "id": b.id,
+            "lead_id": b.lead_id,
             "status": b.status,
             "booking_link": b.booking_link,
+            "scheduling_url": b.booking_link,
             "external_booking_id": b.external_booking_id,
             "start_time": b.start_time.isoformat() if b.start_time else None,
+            "meeting_time": b.start_time.isoformat() if b.start_time else None,
+            "notes": getattr(b, "notes", None),
             "created_at": b.created_at.isoformat(),
+            "pre_call_brief": b.pre_call_brief,
         }
         for b in bookings
     ]
     return {"bookings": rows, "count": len(rows)}
+
+
+# ===========================================================================
+# Autonomy activity feed — "what did the system do while you were away?"
+# ===========================================================================
+
+@app.get("/autonomy-feed")
+def get_autonomy_feed(
+    hours: int = Query(24, ge=1, le=168, description="Look-back window in hours"),
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """
+    Return a reverse-chronological log of autonomous actions taken by the
+    system in the last N hours.  Events include:
+
+      follow_up_sent      — scheduler sent a step-2/3 sequence email
+      trigger_fired       — trigger monitor detected a buying signal and created outreach
+      lead_requalified    — Bayesian update pushed a Cold/Warm lead back through the pipeline
+      bant_weights_updated — self-optimisation loop updated scoring weights
+      lead_qualified      — pipeline completed qualification for a new lead
+    """
+    from datetime import timedelta
+    from app.database.models import (
+        OutreachEmail, IntentSignal, OptimizationRun, Lead as LeadModel, Verdict,
+    )
+    from app.database.models import LeadEvent
+
+    since = datetime.utcnow() - timedelta(hours=hours)
+    events = []
+
+    # ── Follow-up emails sent by the scheduler (step > 1) ───────────────────
+    follow_ups = (
+        db.query(OutreachEmail, LeadModel)
+        .join(LeadModel, OutreachEmail.lead_id == LeadModel.id)
+        .filter(
+            OutreachEmail.sent_at >= since,
+            OutreachEmail.step_number > 1,
+        )
+        .order_by(OutreachEmail.sent_at.desc())
+        .limit(30)
+        .all()
+    )
+    for email, lead in follow_ups:
+        events.append({
+            "type": "follow_up_sent",
+            "ts": email.sent_at.isoformat(),
+            "lead_name": lead.name,
+            "company": lead.company,
+            "step": email.step_number,
+            "subject": email.subject,
+        })
+
+    # ── Trigger monitor fired (funding / job posting / news) ─────────────────
+    signals = (
+        db.query(IntentSignal, LeadModel)
+        .join(LeadModel, IntentSignal.lead_id == LeadModel.id)
+        .filter(IntentSignal.captured_at >= since)
+        .order_by(IntentSignal.captured_at.desc())
+        .limit(30)
+        .all()
+    )
+    for sig, lead in signals:
+        events.append({
+            "type": "trigger_fired",
+            "ts": sig.captured_at.isoformat(),
+            "lead_name": lead.name,
+            "company": lead.company,
+            "trigger": sig.signal_type,
+            "headline": (sig.signal_metadata or {}).get("headline", sig.signal_type),
+            "score_delta": sig.score,
+        })
+
+    # ── Bayesian re-qualification (pipeline.complete events after open/click) ─
+    requalified = (
+        db.query(LeadEvent, LeadModel)
+        .join(LeadModel, LeadEvent.lead_id == LeadModel.id)
+        .filter(
+            LeadEvent.event_type == "pipeline.complete",
+            LeadEvent.created_at >= since,
+        )
+        .order_by(LeadEvent.created_at.desc())
+        .limit(30)
+        .all()
+    )
+    for ev, lead in requalified:
+        verdict_val = (ev.payload or {}).get("verdict")
+        events.append({
+            "type": "lead_qualified",
+            "ts": ev.created_at.isoformat(),
+            "lead_name": lead.name,
+            "company": lead.company,
+            "verdict": verdict_val,
+        })
+
+    # ── Self-optimisation weight updates ─────────────────────────────────────
+    opt_runs = (
+        db.query(OptimizationRun)
+        .filter(OptimizationRun.run_at >= since)
+        .order_by(OptimizationRun.run_at.desc())
+        .limit(10)
+        .all()
+    )
+    for run in opt_runs:
+        events.append({
+            "type": "bant_weights_updated",
+            "ts": run.run_at.isoformat(),
+            "old_weights": run.old_weights,
+            "new_weights": run.new_weights,
+            "improvement": round(run.improvement_score or 0, 4),
+            "sample_size": run.sample_size,
+        })
+
+    # Sort all events newest-first
+    events.sort(key=lambda e: e["ts"], reverse=True)
+
+    # Compute summary stats
+    summary = {
+        "window_hours": hours,
+        "total_events": len(events),
+        "follow_ups_sent": sum(1 for e in events if e["type"] == "follow_up_sent"),
+        "triggers_fired": sum(1 for e in events if e["type"] == "trigger_fired"),
+        "leads_qualified": sum(1 for e in events if e["type"] == "lead_qualified"),
+        "weight_updates": sum(1 for e in events if e["type"] == "bant_weights_updated"),
+    }
+
+    return {"summary": summary, "events": events[:50]}
+
+
+# ===========================================================================
+# Debate / Adversarial BANT endpoints
+# ===========================================================================
+
+@app.get("/leads/{lead_id}/debate")
+def get_lead_debate(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Return the adversarial BANT debate transcript and verdict for a lead."""
+    lead = crud.get_lead(db, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    from app.database.models import Verdict
+    verdict = db.query(Verdict).filter(Verdict.lead_id == lead_id).first()
+    if not verdict:
+        return {
+            "lead_id": lead_id,
+            "lead_name": lead.name,
+            "final_verdict": None,
+            "confidence_score": None,
+            "bant_scores": None,
+            "debate_transcript": None,
+            "flags": None,
+        }
+    return {
+        "lead_id": lead_id,
+        "lead_name": lead.name,
+        "final_verdict": verdict.final_verdict,
+        "confidence_score": verdict.confidence_score,
+        "bant_scores": verdict.bant_scores,
+        "debate_transcript": verdict.debate_transcript,
+        "flags": verdict.flags,
+    }
+
+
+# ===========================================================================
+# Pre-call brief endpoints
+# ===========================================================================
+
+@app.get("/leads/{lead_id}/pre-call-brief")
+def get_pre_call_brief(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Return the most recent pre-call brief for a lead (generated on booking confirmation)."""
+    lead = crud.get_lead(db, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    from app.database.models import BookingRequest
+    import json
+    booking = (
+        db.query(BookingRequest)
+        .filter(BookingRequest.lead_id == lead_id, BookingRequest.pre_call_brief.isnot(None))
+        .order_by(BookingRequest.created_at.desc())
+        .first()
+    )
+    brief_data = None
+    booking_id = None
+    booking_status = None
+    start_time = None
+    if booking:
+        booking_id = booking.id
+        booking_status = booking.status
+        start_time = booking.start_time.isoformat() if booking.start_time else None
+        if booking.pre_call_brief:
+            try:
+                brief_data = json.loads(booking.pre_call_brief)
+            except (json.JSONDecodeError, TypeError):
+                brief_data = {"raw": booking.pre_call_brief}
+    return {
+        "lead_id": lead_id,
+        "lead_name": lead.name,
+        "booking_id": booking_id,
+        "booking_status": booking_status,
+        "start_time": start_time,
+        "brief": brief_data,
+    }
+
+
+# ===========================================================================
+# Trigger signals endpoints
+# ===========================================================================
+
+_TRIGGER_SIGNAL_TYPES = frozenset({
+    "funding_trigger", "job_posting_trigger", "news_trigger", "job_change_trigger",
+})
+
+
+@app.get("/leads/{lead_id}/trigger-signals")
+def get_lead_trigger_signals(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Return trigger-type buying signals for a specific lead."""
+    lead = crud.get_lead(db, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    from app.database.models import IntentSignal
+    signals = (
+        db.query(IntentSignal)
+        .filter(
+            IntentSignal.lead_id == lead_id,
+            IntentSignal.signal_type.in_(list(_TRIGGER_SIGNAL_TYPES)),
+        )
+        .order_by(IntentSignal.captured_at.desc())
+        .all()
+    )
+    rows = [
+        {
+            "id": s.id,
+            "lead_id": lead_id,
+            "lead_name": lead.name,
+            "company": lead.company,
+            "signal_type": s.signal_type,
+            "score": s.score,
+            "signal_metadata": getattr(s, "signal_metadata", None),
+            "triggered_at": s.captured_at.isoformat(),
+        }
+        for s in signals
+    ]
+    return {"signals": rows, "count": len(rows)}
+
+
+@app.get("/analytics/signal-feed")
+def get_signal_feed(
+    limit: int = Query(50, ge=1, le=200),
+    signal_type: str | None = Query(None, description="Filter by type: funding_trigger | job_posting_trigger | news_trigger | job_change_trigger"),
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Recent trigger signals across all leads — the global signal feed."""
+    from app.database.models import IntentSignal, Lead as LeadModel
+    query = (
+        db.query(IntentSignal, LeadModel)
+        .join(LeadModel, IntentSignal.lead_id == LeadModel.id)
+        .filter(IntentSignal.signal_type.in_(list(_TRIGGER_SIGNAL_TYPES)))
+    )
+    if signal_type:
+        query = query.filter(IntentSignal.signal_type == signal_type)
+    results = query.order_by(IntentSignal.captured_at.desc()).limit(limit).all()
+    rows = [
+        {
+            "id": s.id,
+            "lead_id": s.lead_id,
+            "lead_name": lead.name,
+            "company": lead.company,
+            "signal_type": s.signal_type,
+            "score": s.score,
+            "signal_metadata": getattr(s, "signal_metadata", None),
+            "triggered_at": s.captured_at.isoformat(),
+        }
+        for s, lead in results
+    ]
+    return {"signals": rows, "count": len(rows)}
 
 
 @app.patch("/leads/{lead_id}/bookings/{booking_id}")
@@ -1265,12 +1670,153 @@ def get_conversations(
             "channel": c.channel,
             "message_count": len(c.messages or []),
             "summary": c.summary,
+            "sentiment": c.sentiment,
+            "needs_human": c.needs_human,
+            "human_flagged_at": c.human_flagged_at.isoformat() if c.human_flagged_at else None,
             "updated_at": c.updated_at.isoformat() if c.updated_at else None,
-            "messages": (c.messages or [])[-10:],  # last 10 messages
+            "messages": (c.messages or [])[-20:],
         }
         for c in convs
     ]
     return {"conversations": rows, "count": len(rows)}
+
+
+# ===========================================================================
+# Global inbox — all conversations across leads, sorted by urgency
+# ===========================================================================
+
+@app.get("/inbox")
+def get_inbox(
+    needs_human: bool | None = Query(None, description="Filter to conversations flagged for human review"),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Return all conversation threads across leads, sorted: needs_human first, then newest."""
+    from app.database.models import Conversation, Lead as LeadModel
+    query = (
+        db.query(Conversation, LeadModel)
+        .join(LeadModel, Conversation.lead_id == LeadModel.id)
+    )
+    if needs_human is not None:
+        query = query.filter(Conversation.needs_human == needs_human)
+    results = (
+        query
+        .order_by(Conversation.needs_human.desc(), Conversation.updated_at.desc().nullslast())
+        .limit(limit)
+        .all()
+    )
+    rows = [
+        {
+            "id": c.id,
+            "lead_id": c.lead_id,
+            "lead_name": lead.name,
+            "lead_email": lead.email,
+            "company": lead.company,
+            "channel": c.channel,
+            "message_count": len(c.messages or []),
+            "summary": c.summary,
+            "sentiment": c.sentiment,
+            "needs_human": c.needs_human,
+            "human_flagged_at": c.human_flagged_at.isoformat() if c.human_flagged_at else None,
+            "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+            "messages": (c.messages or [])[-20:],
+        }
+        for c, lead in results
+    ]
+    needs_review = sum(1 for r in rows if r["needs_human"])
+    return {"conversations": rows, "count": len(rows), "needs_review": needs_review}
+
+
+@app.post("/conversations/{conv_id}/resolve")
+def resolve_conversation(
+    conv_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """Clear the needs_human flag — rep has handled the escalation."""
+    from app.database.models import Conversation
+    conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    conv.needs_human = False
+    conv.human_flagged_at = None
+    db.commit()
+    return {"status": "resolved", "conversation_id": conv_id}
+
+
+# ===========================================================================
+# Revenue funnel — conversion stages with value estimates
+# ===========================================================================
+
+_FUNNEL_STAGES = ["unqualified", "qualified", "contacted", "scheduled", "won", "lost"]
+_ACTIVE_STAGES = ["unqualified", "qualified", "contacted", "scheduled", "won"]
+
+
+@app.get("/analytics/funnel")
+def get_revenue_funnel(
+    acv: float = Query(25000.0, ge=0, description="Average contract value in dollars"),
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """
+    Return lead counts and estimated value by conversion stage.
+    Uses close_probability where available; falls back to stage-based multipliers.
+    """
+    from sqlalchemy import func
+    from app.database.models import Verdict
+
+    stage_multipliers = {
+        "unqualified": 0.05,
+        "qualified": 0.20,
+        "contacted": 0.35,
+        "scheduled": 0.65,
+        "won": 1.0,
+        "lost": 0.0,
+    }
+
+    stage_counts: dict[str, int] = {}
+    for stage in _FUNNEL_STAGES:
+        count = db.query(Lead).filter(Lead.conversion_status == stage).count()
+        stage_counts[stage] = count
+
+    # Fetch BANT-weighted close probabilities for each stage for better value estimates
+    stages_out = []
+    for stage in _ACTIVE_STAGES:
+        count = stage_counts.get(stage, 0)
+        multiplier = stage_multipliers[stage]
+        estimated_value = int(count * acv * multiplier)
+        stages_out.append({
+            "name": stage,
+            "label": stage.replace("_", " ").title(),
+            "count": count,
+            "estimated_value": estimated_value,
+            "multiplier": multiplier,
+        })
+
+    total_active = sum(s["count"] for s in stages_out if s["name"] != "won")
+    won = stage_counts.get("won", 0)
+    lost = stage_counts.get("lost", 0)
+    closed = won + lost
+    win_rate = round(won / closed, 3) if closed > 0 else None
+
+    # Conversion rates between adjacent active stages
+    for i, stage in enumerate(stages_out):
+        if i == 0:
+            stage["conversion_from_prev"] = None
+        else:
+            prev_count = stages_out[i - 1]["count"]
+            stage["conversion_from_prev"] = (
+                round(stage["count"] / prev_count, 3) if prev_count > 0 else None
+            )
+
+    return {
+        "stages": stages_out,
+        "lost": lost,
+        "win_rate": win_rate,
+        "total_active": total_active,
+        "acv": acv,
+    }
 
 
 # ===========================================================================
@@ -1306,13 +1852,14 @@ def get_intent_signals(
     signals = db.query(IntentSignal).filter(IntentSignal.lead_id == lead_id).all()
     return {
         "lead_id": lead_id,
-        "total_score": round(min(1.0, sum(s.score for s in signals)), 4),
+        "score": round(min(1.0, sum(s.score for s in signals)), 4),
+        "computed_at": signals[0].captured_at.isoformat() if signals else None,
         "signals": [
             {
-                "type": s.signal_type,
-                "score": s.score,
-                "source": s.source,
-                "captured_at": s.captured_at.isoformat(),
+                "rule": s.signal_type,
+                "description": s.source or s.signal_type,
+                "weight": s.score,
+                "triggered": True,
             }
             for s in signals
         ],
@@ -1514,11 +2061,33 @@ def track_open(email_id: str, db: Session = Depends(get_db)):
             db.commit()
             record_event(db, email_id, "opened")
             log.info(f"[track/open] Email {email_id} opened")
-            # Bayesian BANT update
+            # Bayesian BANT update + autonomous re-qualification check
             if email.lead_id:
                 from app.services.bayesian_updater import apply_bayesian_update
+                from app.database.models import Verdict as _Verdict
                 result = apply_bayesian_update(db, email.lead_id, "open")
                 if result:
+                    # If a Cold/Warm lead now crosses the Hot confidence threshold,
+                    # push them back into the full qualification pipeline.
+                    new_conf = result["new_confidence"]
+                    verdict_row = (
+                        db.query(_Verdict)
+                        .filter(_Verdict.lead_id == email.lead_id)
+                        .first()
+                    )
+                    current_verdict = verdict_row.final_verdict if verdict_row else None
+                    requeued = False
+                    if new_conf >= 0.70 and current_verdict in ("Cold", "Warm", None):
+                        try:
+                            push_lead_job(email.lead_id)
+                            crud.update_lead_status(db, email.lead_id, "pending")
+                            log.info(
+                                f"[track/open] Re-queued lead {email.lead_id[:8]} for re-qualification "
+                                f"(confidence {new_conf:.2f} crossed threshold, was {current_verdict})"
+                            )
+                            requeued = True
+                        except Exception as _rq_err:
+                            log.warning(f"[track/open] Re-queue failed: {_rq_err}")
                     try:
                         import redis as _redis, json as _json
                         _r = _redis.from_url(settings.REDIS_URL, decode_responses=True)
@@ -1526,7 +2095,8 @@ def track_open(email_id: str, db: Session = Depends(get_db)):
                             "type": "score_update",
                             "lead_id": email.lead_id,
                             "signal": "open",
-                            "new_confidence": result["new_confidence"],
+                            "new_confidence": new_conf,
+                            "requeued": requeued,
                         }))
                         _r.close()
                     except Exception:
@@ -1560,9 +2130,325 @@ def track_click(
                 record_event(db, email_id, "opened")
             db.commit()
             log.info(f"[track/click] Email {email_id} clicked → {url[:80]}")
+            # Clicks are a stronger intent signal than opens — apply Bayesian update
+            # and re-qualify at a lower threshold (0.60) since clicking shows real interest.
+            if email.lead_id:
+                from app.services.bayesian_updater import apply_bayesian_update
+                from app.database.models import Verdict as _VerdictC
+                result = apply_bayesian_update(db, email.lead_id, "click")
+                if result and result["new_confidence"] >= 0.60:
+                    verdict_row = (
+                        db.query(_VerdictC)
+                        .filter(_VerdictC.lead_id == email.lead_id)
+                        .first()
+                    )
+                    if verdict_row and verdict_row.final_verdict in ("Cold", "Warm", None):
+                        try:
+                            push_lead_job(email.lead_id)
+                            crud.update_lead_status(db, email.lead_id, "pending")
+                            log.info(
+                                f"[track/click] Re-queued lead {email.lead_id[:8]} after click "
+                                f"(confidence={result['new_confidence']:.2f})"
+                            )
+                        except Exception:
+                            pass
     except Exception as e:
         log.warning("[track/click] Failed to record click for {email_id}", error=str(e))
     return RedirectResponse(url=url, status_code=302)
+
+
+@app.get("/leads/{lead_id}/outreach/generate/stream", include_in_schema=False)
+async def stream_outreach_generation(
+    lead_id: str,
+    step: int = Query(1, ge=1, le=3, description="Sequence step to preview (1–3)"),
+    token: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Stream the LLM generation of an outreach email token-by-token.
+
+    Emits SSE events:
+      {"type": "token", "content": "Hi Sarah"}
+      {"type": "complete", "subject": "...", "body": "..."}
+
+    Frontend usage:
+      const es = new EventSource(`/leads/${id}/outreach/generate/stream?token=${jwt}`);
+      es.onmessage = e => {
+        const ev = JSON.parse(e.data);
+        if (ev.type === 'token') appendToPreview(ev.content);
+        if (ev.type === 'complete') es.close();
+      };
+    """
+    if token:
+        from app.auth.dependencies import _user_from_jwt
+        user = _user_from_jwt(token, db)
+        if not user or not user.is_active:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+    async def generate():
+        from app.database.models import Lead, Enrichment, OutreachSequence
+        from app.agents.outreach_agent import _PERSONALISE_PROMPT, OutreachAgent
+
+        lead = crud.get_lead(db, lead_id)
+        if not lead:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Lead not found'})}\n\n"
+            return
+
+        enrichment = db.query(Enrichment).filter(Enrichment.lead_id == lead_id).first()
+        agent = OutreachAgent()
+        profile = agent._build_profile(lead, enrichment)
+
+        seq = db.query(OutreachSequence).filter(
+            OutreachSequence.is_active == True  # noqa: E712
+        ).first()
+        if not seq or not seq.steps:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'No active sequence'})}\n\n"
+            return
+
+        steps = {s["step"]: s for s in seq.steps}
+        step_data = steps.get(step, seq.steps[0])
+
+        prompt = _PERSONALISE_PROMPT.format(
+            profile_json=json.dumps(profile, indent=2),
+            subject_template=step_data.get("subject_template", ""),
+            body_template=step_data.get("body_template", ""),
+        )
+
+        from app.services.providers import get_ai_client
+        ai = get_ai_client()
+        full_text = ""
+        try:
+            async for tok in ai.stream_generate(prompt):
+                full_text += tok
+                yield f"data: {json.dumps({'type': 'token', 'content': tok})}\n\n"
+        except (AttributeError, NotImplementedError):
+            full_text = ai.generate(prompt)
+            yield f"data: {json.dumps({'type': 'token', 'content': full_text})}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+            return
+
+        try:
+            match = re.search(r"\{.*\}", full_text, re.DOTALL)
+            parsed = json.loads(match.group()) if match else {}
+            subject = parsed.get("subject", "")
+            body = parsed.get("body", full_text)
+        except Exception:
+            subject, body = "", full_text
+
+        yield f"data: {json.dumps({'type': 'complete', 'subject': subject, 'body': body})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/track/visit", include_in_schema=False)
+def track_visit(
+    request: Request,
+    page: str = Query("unknown", description="Page slug, e.g. 'pricing', 'home'"),
+    ref: str = Query("", description="Document referrer (optional)"),
+    db: Session = Depends(get_db),
+):
+    """
+    Website visitor de-anonymization pixel.
+
+    Embed on any page to identify corporate visitors without a form submission:
+      <img src="{BASE_URL}/track/visit?page=pricing" width="1" height="1"
+           style="display:none" />
+
+    When a company employee visits from a corporate IP, we identify their
+    company via reverse-IP lookup and create a lead with source="ip_visit".
+    Subsequent visits from the same identified company add a pricing_page_visit
+    intent signal to the existing lead (capped to one per 3 days).
+
+    Returns the same 1x1 transparent GIF as the email open pixel.
+    """
+    from datetime import timedelta
+    from app.services.ip_intelligence import identify_visitor, is_private_ip
+    from app.database.models import Lead, IntentSignal
+
+    # Resolve real visitor IP through common proxy headers
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    ip = (
+        forwarded.split(",")[0].strip()
+        or request.headers.get("X-Real-IP", "")
+        or (request.client.host if request.client else "")
+    )
+
+    if ip and not is_private_ip(ip):
+        try:
+            identity = identify_visitor(ip)
+            if identity["identified"] and identity["company"]:
+                company = identity["company"]
+                domain = identity.get("domain") or ""
+                # Synthetic email built from company name — deterministic so dupes are caught
+                synthetic_email = f"visitor@{domain}" if domain else (
+                    f"visitor+{re.sub(r'[^a-z0-9]', '', company.lower())}@unknown.com"
+                )
+
+                existing = db.query(Lead).filter(Lead.email == synthetic_email).first()
+                if not existing:
+                    new_lead = crud.create_lead(
+                        db,
+                        name=f"{company} (Anonymous Visitor)",
+                        email=synthetic_email,
+                        company=company,
+                        source="ip_visit",
+                    )
+                    new_lead.identified_via_ip = True
+                    new_lead.quality_metadata = {
+                        "ip_org": identity.get("org_raw"),
+                        "city": identity.get("city"),
+                        "country": identity.get("country"),
+                        "visited_page": page,
+                        "referrer": ref[:200] if ref else "",
+                    }
+                    db.commit()
+                    try:
+                        from app.services.queue_service import push_lead_job
+                        push_lead_job(new_lead.id)
+                    except Exception:
+                        pass
+                    log.info(
+                        f"[track/visit] New IP lead: '{company}' "
+                        f"from {ip[:8]}*** page={page}"
+                    )
+                else:
+                    # Add / refresh a pricing_page_visit intent signal
+                    cutoff = datetime.utcnow() - timedelta(days=3)
+                    recent = (
+                        db.query(IntentSignal)
+                        .filter(
+                            IntentSignal.lead_id == existing.id,
+                            IntentSignal.signal_type == "pricing_page_visit",
+                            IntentSignal.captured_at > cutoff,
+                        )
+                        .first()
+                    )
+                    if not recent:
+                        db.add(IntentSignal(
+                            lead_id=existing.id,
+                            signal_type="pricing_page_visit",
+                            score=0.25,
+                            source="ip_intelligence",
+                            signal_metadata={
+                                "page": page,
+                                "city": identity.get("city"),
+                                "country_code": identity.get("country_code"),
+                            },
+                        ))
+                        db.commit()
+                        log.info(
+                            f"[track/visit] Visit signal added for '{existing.name}' "
+                            f"page={page}"
+                        )
+        except Exception as e:
+            log.debug(f"[track/visit] identification failed for {ip}: {e}")
+
+    return Response(content=_TRACKING_PIXEL, media_type="image/gif")
+
+
+# ===========================================================================
+# Inbound email reply webhook
+# ===========================================================================
+
+@app.post("/ingest/email-reply", status_code=202)
+async def ingest_email_reply(
+    payload: dict,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """
+    Webhook endpoint for inbound email replies from a sending platform
+    (Sendgrid Inbound Parse, Mailgun Routes, PostMark, etc.).
+
+    Expected payload (all fields optional except `reply_text`):
+      {
+        "reply_text":   "Thanks, I'd love to learn more...",
+        "from_email":   "jane@acme.com",
+        "subject":      "Re: Quick question about Acme",
+        "email_id":     "<uuid of the OutreachEmail that was replied to>",
+        "lead_id":      "<uuid — alternative to email_id>"
+      }
+
+    The ConversationalAgent generates a contextual reply, persists the thread,
+    and (if no SMTP is configured) marks the agent reply as "sent_demo".
+    """
+    from app.agents.conversational_agent import ConversationalAgent
+    from app.database.models import OutreachEmail as OutreachEmailModel
+
+    reply_text = (payload.get("reply_text") or "").strip()
+    if not reply_text:
+        raise HTTPException(status_code=422, detail="reply_text is required")
+
+    # Resolve lead_id: prefer explicit, fall back to OutreachEmail lookup
+    lead_id = payload.get("lead_id") or ""
+    email_id = payload.get("email_id") or ""
+    from_email = payload.get("from_email") or ""
+
+    if not lead_id and email_id:
+        email_rec = db.query(OutreachEmailModel).filter(OutreachEmailModel.id == email_id).first()
+        if email_rec:
+            lead_id = email_rec.lead_id
+
+    if not lead_id and from_email:
+        match = db.query(Lead).filter(Lead.email == from_email).first()
+        if match:
+            lead_id = match.id
+
+    if not lead_id:
+        raise HTTPException(
+            status_code=404,
+            detail="Could not resolve lead — provide lead_id, email_id, or from_email",
+        )
+
+    # Mark originating email as replied
+    if email_id:
+        email_rec = db.query(OutreachEmailModel).filter(OutreachEmailModel.id == email_id).first()
+        if email_rec and email_rec.status not in ("replied",):
+            email_rec.status = "replied"
+            email_rec.replied_at = datetime.utcnow()
+            db.commit()
+
+    # Bayesian update: reply is the strongest positive signal
+    from app.services.intent_scoring import apply_bayesian_update
+    apply_bayesian_update(db, lead_id, "replied")
+
+    def _handle_reply(lid: str, text: str) -> None:
+        from app.database.connection import SessionLocal
+        _db = SessionLocal()
+        try:
+            agent = ConversationalAgent()
+            result = agent.run(
+                _db,
+                lid,
+                {
+                    "channel": "email",
+                    "mode": "reply",
+                    "message": text,
+                },
+            )
+            log.info(
+                "[ingest/email-reply] Reply handled",
+                lead_id=lid[:8],
+                needs_human=result.get("needs_human"),
+                objection_type=result.get("objection_type"),
+            )
+        except Exception as exc:
+            log.error("[ingest/email-reply] Agent error", lead_id=lid[:8], error=str(exc))
+        finally:
+            _db.close()
+
+    background_tasks.add_task(_handle_reply, lead_id, reply_text)
+
+    return {
+        "status": "accepted",
+        "lead_id": lead_id,
+        "message": "Reply received and queued for autonomous response",
+    }
 
 
 # ===========================================================================
@@ -2228,6 +3114,63 @@ def crm_push(
 
 
 # ===========================================================================
+# Referral chain — org-chart traversal relationships
+# ===========================================================================
+
+@app.get("/leads/{lead_id}/referral-chain")
+def get_referral_chain(
+    lead_id: str,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """
+    Return the referral chain for a lead:
+      - referred_by: the lead whose org-chart traversal discovered this one
+      - discovered: leads this lead's traversal found (its org-chart children)
+    """
+    lead = crud.get_lead(db, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    def _lead_stub(l) -> dict:
+        return {
+            "id": l.id,
+            "name": l.name,
+            "email": l.email,
+            "company": l.company,
+            "job_title": l.enrichments[0].job_title if l.enrichments else None,
+            "seniority": l.enrichments[0].seniority if l.enrichments else None,
+            "final_verdict": l.verdicts[0].final_verdict if l.verdicts else None,
+            "status": l.status,
+        }
+
+    # Parent — who discovered this lead
+    referred_by = None
+    if lead.referred_by_lead_id:
+        parent = crud.get_lead(db, lead.referred_by_lead_id)
+        if parent:
+            referred_by = _lead_stub(parent)
+
+    # Children — leads this lead's org-chart traversal found
+    from sqlalchemy.orm import selectinload
+    children = (
+        db.query(Lead)
+        .options(selectinload(Lead.enrichments), selectinload(Lead.verdicts))
+        .filter(Lead.referred_by_lead_id == lead_id)
+        .order_by(Lead.created_at.asc())
+        .all()
+    )
+    discovered = [_lead_stub(c) for c in children]
+
+    return {
+        "lead_id": lead_id,
+        "referred_by": referred_by,
+        "discovered": discovered,
+        "has_chain": referred_by is not None or len(discovered) > 0,
+    }
+
+
+# ===========================================================================
 # Similar leads — cosine similarity over BANT + enrichment feature vectors
 # ===========================================================================
 
@@ -2359,6 +3302,158 @@ def get_multi_axis_ab(
 # ===========================================================================
 # Demo seeder endpoint — for the onboarding wizard
 # ===========================================================================
+
+@app.post("/seed/demo")
+@app.get("/analytics/pipeline-velocity")
+def get_pipeline_velocity(
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """
+    How fast does the system work?
+
+    Returns average durations (in hours) for each stage:
+      - time_to_qualify:  lead created → pipeline complete
+      - time_to_book:     pipeline complete → booking request created
+      - time_to_close:    pipeline complete → conversion_status in (won, converted)
+
+    Also returns p50 and p90 percentiles for time_to_qualify.
+    """
+    from app.database.models import BookingRequest as BookingModel
+
+    leads_with_times: list[dict] = []
+
+    complete_leads = (
+        db.query(Lead)
+        .filter(Lead.status == "complete", Lead.updated_at.isnot(None))
+        .all()
+    )
+
+    qualify_hours: list[float] = []
+    book_hours: list[float] = []
+    close_hours: list[float] = []
+
+    for lead in complete_leads:
+        if not lead.updated_at or not lead.created_at:
+            continue
+
+        ttq = (lead.updated_at - lead.created_at).total_seconds() / 3600
+        qualify_hours.append(ttq)
+
+        # Time to first booking
+        booking = (
+            db.query(BookingModel)
+            .filter(BookingModel.lead_id == lead.id)
+            .order_by(BookingModel.created_at)
+            .first()
+        )
+        if booking:
+            ttb = (booking.created_at - lead.updated_at).total_seconds() / 3600
+            book_hours.append(max(0, ttb))
+
+        # Time to close
+        if lead.conversion_status in ("won", "converted") and lead.conversion_updated_at:
+            ttc = (lead.conversion_updated_at - lead.updated_at).total_seconds() / 3600
+            close_hours.append(max(0, ttc))
+
+    def _stats(vals: list[float]) -> dict:
+        if not vals:
+            return {"avg": None, "p50": None, "p90": None, "count": 0}
+        vals_sorted = sorted(vals)
+        n = len(vals_sorted)
+        avg = sum(vals_sorted) / n
+        p50 = vals_sorted[n // 2]
+        p90 = vals_sorted[int(n * 0.9)]
+        return {
+            "avg": round(avg, 2),
+            "p50": round(p50, 2),
+            "p90": round(p90, 2),
+            "count": n,
+        }
+
+    return {
+        "time_to_qualify_hours": _stats(qualify_hours),
+        "time_to_book_hours": _stats(book_hours),
+        "time_to_close_hours": _stats(close_hours),
+        "total_complete": len(complete_leads),
+        "booking_rate": round(len(book_hours) / max(1, len(qualify_hours)), 4),
+        "close_rate": round(len(close_hours) / max(1, len(qualify_hours)), 4),
+    }
+
+
+@app.get("/analytics/rep-performance")
+def get_rep_performance(
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """
+    Per-rep performance leaderboard.
+
+    Returns each rep's: leads assigned, hot qualified, emails sent, meetings booked,
+    conversion count, and pipeline value (hot leads × ACV proxy).
+    """
+    from app.database.models import User as UserModel, BookingRequest as BookingModel, OutreachEmail as OutreachEmailModel, Verdict as VerdictModel
+
+    reps = db.query(UserModel).filter(UserModel.is_active == True).all()  # noqa: E712
+    rows = []
+
+    for rep in reps:
+        assigned = db.query(Lead).filter(Lead.assigned_to_id == rep.id).all()
+        lead_ids = [l.id for l in assigned]
+
+        hot_count = 0
+        conversions = 0
+        for lead in assigned:
+            if lead.conversion_status in ("won", "converted"):
+                conversions += 1
+            verdict = (
+                db.query(VerdictModel)
+                .filter(VerdictModel.lead_id == lead.id)
+                .first()
+            )
+            if verdict and verdict.final_verdict == "Hot":
+                hot_count += 1
+
+        emails_sent = 0
+        if lead_ids:
+            emails_sent = (
+                db.query(OutreachEmailModel)
+                .filter(
+                    OutreachEmailModel.lead_id.in_(lead_ids),
+                    OutreachEmailModel.status.in_(("sent", "opened", "replied")),
+                )
+                .count()
+            )
+
+        bookings = 0
+        if lead_ids:
+            bookings = (
+                db.query(BookingModel)
+                .filter(BookingModel.lead_id.in_(lead_ids))
+                .count()
+            )
+
+        rows.append({
+            "rep_id": rep.id,
+            "rep_email": rep.email,
+            "role": rep.role,
+            "leads_assigned": len(assigned),
+            "hot_qualified": hot_count,
+            "emails_sent": emails_sent,
+            "meetings_booked": bookings,
+            "conversions": conversions,
+            "conversion_rate": round(conversions / max(1, len(assigned)), 4),
+            "hot_rate": round(hot_count / max(1, len(assigned)), 4),
+        })
+
+    # Sort by conversions desc, then hot_qualified desc
+    rows.sort(key=lambda r: (-r["conversions"], -r["hot_qualified"]))
+
+    return {
+        "reps": rows,
+        "total_reps": len(rows),
+    }
+
 
 @app.post("/seed/demo")
 async def seed_demo(

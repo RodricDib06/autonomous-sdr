@@ -24,6 +24,8 @@ class LeadResponse(BaseModel):
     tags: list | None = None
     archived: bool = False
     final_verdict: str | None = None
+    lookalike_score: float | None = None
+    referred_by_lead_id: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -49,6 +51,8 @@ class LeadResponse(BaseModel):
                 "tags": v.tags,
                 "archived": v.archived,
                 "final_verdict": fv,
+                "lookalike_score": getattr(v, "lookalike_score", None),
+                "referred_by_lead_id": getattr(v, "referred_by_lead_id", None),
             }
         return v
 

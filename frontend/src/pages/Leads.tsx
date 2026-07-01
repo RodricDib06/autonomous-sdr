@@ -11,9 +11,10 @@ import { toast } from "sonner";
 import {
   leadsApi, intentApi, outreachApi, bookingApi, conversationsApi,
   pipelineApi, analyticsApi, optimizationApi, decayApi, enrichmentApi, crmApi,
+  debateApi, briefApi, signalApi, referralChainApi,
 } from "../lib/api";
 import { useKeyboardShortcuts, SHORTCUTS } from "../hooks/useKeyboardShortcuts";
-import type { LeadDetail, CRMPushResult } from "../types";
+import type { LeadDetail, CRMPushResult, DebateVoice, TriggerSignal, ReferralLeadStub } from "../types";
 import { Header } from "../components/layout/Header";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -36,6 +37,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 const TABS = [
   { id: "profile",  label: "Profile",  icon: Building2 },
+  { id: "intel",    label: "Intel",    icon: Brain },
   { id: "intent",   label: "Intent",   icon: Zap },
   { id: "outreach", label: "Outreach", icon: Mail },
   { id: "activity", label: "Activity", icon: MessageSquare },
@@ -59,6 +61,25 @@ function scoreColorClass(s: number) {
 }
 function barColorClass(s: number) {
   return s >= 0.7 ? "bg-emerald-500" : s >= 0.4 ? "bg-orange-400" : "bg-red-500";
+}
+
+// ── ReferralStubCard — shared by ProfileTab referral chain ─────────────────
+
+function ReferralStubCard({ stub }: { stub: ReferralLeadStub }) {
+  return (
+    <div className="flex items-center gap-2.5 text-xs">
+      <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-600/60 to-indigo-600/60 flex items-center justify-center text-[9px] font-bold text-white shrink-0">
+        {stub.name.slice(0, 2).toUpperCase()}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-medium truncate">{stub.name}</p>
+        <p className="text-[10px] text-muted-foreground truncate">
+          {stub.job_title ?? stub.company}{stub.seniority ? ` · ${stub.seniority}` : ""}
+        </p>
+      </div>
+      <VerdictBadge verdict={stub.final_verdict} />
+    </div>
+  );
 }
 
 // ── ProfileTab ─────────────────────────────────────────────────────────────
@@ -92,6 +113,15 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
     enabled: !!lead.verdict?.final_verdict,
   });
 
+  const [showExplanation, setShowExplanation] = useState(false);
+  const { data: explanation, isFetching: explanationLoading } = useQuery({
+    queryKey: ["verdict-explanation", lead.id],
+    queryFn: () => analyticsApi.verdictExplanation(lead.id),
+    enabled: showExplanation && !!lead.verdict?.final_verdict,
+    staleTime: 300_000,
+    retry: false,
+  });
+
   const { mutate: pushCRM, isPending: pushing } = useMutation({
     mutationFn: () => crmApi.push(lead.id, crmFormat),
     onSuccess: (data) => { setCrmResult(data); toast.success(`Formatted for ${crmFormat}`); },
@@ -105,6 +135,12 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
       else toast.success(`Found ${d.signals.length} signals · ${d.tech_stack.length} tech`);
     },
     onError: () => toast.error("Web enrichment failed"),
+  });
+
+  const { data: chainData } = useQuery({
+    queryKey: ["referral-chain", lead.id],
+    queryFn: () => referralChainApi.get(lead.id),
+    staleTime: 300_000,
   });
 
   const bantEntries = bant ? Object.entries(bant) : [];
@@ -192,6 +228,47 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
           )}
         </section>
       )}
+
+      {/* Lookalike Score */}
+      <section className="rounded-xl border border-border bg-card/60 overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-border/60">
+          <Users2 className="w-3.5 h-3.5 text-muted-foreground" />
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lookalike Score</h3>
+          <span className="ml-auto text-[10px] text-muted-foreground/60">vs. converted leads</span>
+        </div>
+        {lead.lookalike_score == null ? (
+          <p className="px-4 py-4 text-xs text-muted-foreground">
+            Not computed yet — runs nightly after at least 5 conversions.
+          </p>
+        ) : (
+          <div className="px-4 py-4 space-y-3">
+            <div className="flex items-end gap-4">
+              <div>
+                <p className={cn("text-4xl font-bold tabular-nums", scoreColorClass(lead.lookalike_score))}>
+                  {Math.round(lead.lookalike_score * 100)}%
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">similarity to your best-fit customers</p>
+              </div>
+              <div className="flex items-center gap-1.5 text-xs mb-1 text-muted-foreground">
+                {lead.lookalike_score >= 0.7
+                  ? <><TrendingUp className="w-3.5 h-3.5 text-emerald-400" /><span className="text-emerald-400">Strong fit</span></>
+                  : lead.lookalike_score >= 0.4
+                  ? <><Minus className="w-3.5 h-3.5 text-orange-400" /><span className="text-orange-400">Moderate fit</span></>
+                  : <><TrendingDown className="w-3.5 h-3.5 text-red-400" /><span className="text-red-400">Weak fit</span></>}
+              </div>
+            </div>
+            <div className="relative h-2.5 rounded-full bg-secondary overflow-hidden">
+              <div
+                className={cn("absolute inset-y-0 left-0 rounded-full transition-all", barColorClass(lead.lookalike_score))}
+                style={{ width: `${lead.lookalike_score * 100}%` }}
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
+              Computed via 8-dimensional cosine similarity across BANT scores, seniority, company size, industry, and engagement. Updated nightly.
+            </p>
+          </div>
+        )}
+      </section>
 
       {/* ML Close Probability */}
       <section className="rounded-xl border border-violet-500/20 bg-violet-500/5 overflow-hidden">
@@ -306,6 +383,35 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
         </section>
       )}
 
+      {/* Referral Chain */}
+      {chainData?.has_chain && (
+        <section className="space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+            <GitBranch className="w-3.5 h-3.5" /> Org-Chart Referral Chain
+          </h3>
+
+          {chainData.referred_by && (
+            <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 space-y-1">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-400 mb-2">Discovered via</p>
+              <ReferralStubCard stub={chainData.referred_by} />
+            </div>
+          )}
+
+          {chainData.discovered.length > 0 && (
+            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-400 mb-2">
+                {chainData.discovered.length} lead{chainData.discovered.length !== 1 ? "s" : ""} discovered by this lead
+              </p>
+              <div className="space-y-1.5">
+                {chainData.discovered.map((stub) => (
+                  <ReferralStubCard key={stub.id} stub={stub} />
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Web Signal Enrichment */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
@@ -395,13 +501,57 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
         )}
       </section>
 
-      {/* AI Reasoning */}
-      {lead.verdict?.reasoning && (
+      {/* Verdict Explanation */}
+      {lead.verdict?.final_verdict && (
         <section className="space-y-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI Reasoning</h3>
-          <p className="text-sm text-muted-foreground leading-relaxed bg-secondary/50 rounded-lg p-3">
-            {lead.verdict.reasoning}
-          </p>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI Reasoning</h3>
+            {!showExplanation && (
+              <button
+                onClick={() => setShowExplanation(true)}
+                className="text-[10px] text-violet-400 hover:text-violet-300 underline underline-offset-2"
+              >
+                Explain verdict
+              </button>
+            )}
+          </div>
+          {/* Always show raw reasoning as fallback */}
+          {lead.verdict?.reasoning && !showExplanation && (
+            <p className="text-sm text-muted-foreground leading-relaxed bg-secondary/50 rounded-lg p-3">
+              {lead.verdict.reasoning}
+            </p>
+          )}
+          {showExplanation && (
+            <div className="bg-secondary/50 rounded-lg p-3 space-y-3">
+              {explanationLoading ? (
+                <p className="text-xs text-muted-foreground animate-pulse">Generating explanation…</p>
+              ) : explanation ? (
+                <>
+                  <p className="text-sm text-foreground leading-relaxed">{explanation.summary}</p>
+                  {explanation.key_drivers.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Key Drivers</p>
+                      {explanation.key_drivers.map((d, i) => (
+                        <p key={i} className="text-xs text-muted-foreground flex gap-1.5">
+                          <span className="text-violet-400 shrink-0">›</span>{d}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                  {explanation.counterfactual && (
+                    <div className="border-t border-border pt-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">What Would Change It</p>
+                      <p className="text-xs text-muted-foreground italic">{explanation.counterfactual}</p>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  {lead.verdict?.reasoning ?? "No reasoning available."}
+                </p>
+              )}
+            </div>
+          )}
         </section>
       )}
 
@@ -494,6 +644,198 @@ function ProfileTab({ lead }: { lead: LeadDetail }) {
   );
 }
 
+// ── IntelTab ───────────────────────────────────────────────────────────────
+
+const SIGNAL_LABELS: Record<string, { label: string; color: string }> = {
+  funding_trigger:     { label: "Funding",     color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
+  job_posting_trigger: { label: "Hiring",      color: "text-blue-400 bg-blue-500/10 border-blue-500/20" },
+  news_trigger:        { label: "News",         color: "text-violet-400 bg-violet-500/10 border-violet-500/20" },
+  job_change_trigger:  { label: "Job Change",   color: "text-orange-400 bg-orange-500/10 border-orange-500/20" },
+};
+
+function DebateVoiceCard({ voice, role }: { voice: DebateVoice; role: "advocate" | "critic" }) {
+  const isAdvocate = role === "advocate";
+  return (
+    <div className={cn("rounded-lg border p-3 space-y-2 text-xs", isAdvocate ? "border-emerald-500/30 bg-emerald-500/5" : "border-red-500/30 bg-red-500/5")}>
+      <div className="flex items-center justify-between">
+        <span className={cn("font-semibold text-[11px] uppercase tracking-wide", isAdvocate ? "text-emerald-400" : "text-red-400")}>
+          {isAdvocate ? "Advocate" : "Critic"}
+        </span>
+        <Badge variant="secondary" className="text-[10px] capitalize">{voice.verdict}</Badge>
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
+        {Object.entries(voice.bant_scores).map(([dim, score]) => (
+          <div key={dim} className="flex items-center justify-between gap-1">
+            <span className="capitalize text-muted-foreground">{dim}</span>
+            <span className={cn("font-mono font-medium", scoreColorClass(score))}>{Math.round(score * 100)}%</span>
+          </div>
+        ))}
+      </div>
+      <p className="text-muted-foreground leading-relaxed">{voice.reasoning}</p>
+    </div>
+  );
+}
+
+function IntelTab({ leadId }: { leadId: string }) {
+  const { data: debate, isLoading: debateLoading } = useQuery({
+    queryKey: ["debate", leadId],
+    queryFn: () => debateApi.get(leadId),
+    enabled: !!leadId,
+  });
+
+  const { data: brief, isLoading: briefLoading } = useQuery({
+    queryKey: ["brief", leadId],
+    queryFn: () => briefApi.get(leadId),
+    enabled: !!leadId,
+  });
+
+  const { data: signalData, isLoading: signalsLoading } = useQuery({
+    queryKey: ["trigger-signals", leadId],
+    queryFn: () => signalApi.forLead(leadId),
+    enabled: !!leadId,
+  });
+
+  const transcript = debate?.debate_transcript ?? null;
+  const briefData = brief?.brief ?? null;
+  const signals: TriggerSignal[] = signalData?.signals ?? [];
+
+  return (
+    <div className="space-y-6">
+
+      {/* ── Adversarial BANT Debate ── */}
+      <section className="space-y-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+          <Brain className="w-3.5 h-3.5" /> Adversarial BANT Debate
+        </h3>
+        {debateLoading ? (
+          <div className="space-y-2">{[...Array(2)].map((_, i) => <div key={i} className="skeleton h-24 rounded" />)}</div>
+        ) : !transcript ? (
+          <p className="text-xs text-muted-foreground">No debate data yet. Pipeline must complete first.</p>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              <DebateVoiceCard voice={transcript.advocate} role="advocate" />
+              <DebateVoiceCard voice={transcript.critic} role="critic" />
+            </div>
+            {transcript.contested_dimensions.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 items-center">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Contested:</span>
+                {transcript.contested_dimensions.map((d) => (
+                  <span key={d} className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/10 border border-orange-500/20 text-orange-400 capitalize">{d}</span>
+                ))}
+              </div>
+            )}
+            <div className="rounded-lg bg-secondary/40 border border-border p-3 space-y-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-muted-foreground">Synthesis</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-muted-foreground">Confidence</span>
+                  <span className={cn("font-mono font-bold text-sm", scoreColorClass(transcript.confidence_score))}>
+                    {Math.round(transcript.confidence_score * 100)}%
+                  </span>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">{transcript.synthesis_reasoning}</p>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* ── Pre-call Brief ── */}
+      <section className="space-y-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+          <Calendar className="w-3.5 h-3.5" /> Pre-Call Brief
+        </h3>
+        {briefLoading ? (
+          <div className="skeleton h-32 rounded" />
+        ) : !briefData ? (
+          <p className="text-xs text-muted-foreground">
+            {brief?.booking_id ? "Brief is being generated…" : "No confirmed booking yet. Brief generates on booking confirmation."}
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {brief?.start_time && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Clock className="w-3.5 h-3.5 shrink-0" />
+                Meeting: {new Date(brief.start_time).toLocaleString()}
+              </div>
+            )}
+            <div className="rounded-lg border border-border bg-secondary/30 p-3 space-y-1">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Company Snapshot</p>
+              <p className="text-xs leading-relaxed">{briefData.company_snapshot}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/30 p-3 space-y-1">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Lead Context</p>
+              <p className="text-xs leading-relaxed">{briefData.lead_context}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-red-400">Likely Objections</p>
+                <ul className="space-y-1">
+                  {briefData.likely_objections.map((o, i) => (
+                    <li key={i} className="text-xs text-muted-foreground flex gap-1.5"><span className="text-red-400 shrink-0">·</span>{o}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Recommended Angles</p>
+                <ul className="space-y-1">
+                  {briefData.recommended_angles.map((a, i) => (
+                    <li key={i} className="text-xs text-muted-foreground flex gap-1.5"><span className="text-emerald-400 shrink-0">·</span>{a}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            {briefData.watch_out_for && (
+              <div className="rounded-lg border border-orange-500/20 bg-orange-500/5 p-2.5 flex gap-2 items-start">
+                <span className="text-orange-400 text-[10px] font-semibold uppercase tracking-wide shrink-0 mt-0.5">Watch out:</span>
+                <p className="text-xs text-muted-foreground">{briefData.watch_out_for}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* ── Trigger Signals ── */}
+      <section className="space-y-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+          <Zap className="w-3.5 h-3.5" /> Buying Signals
+        </h3>
+        {signalsLoading ? (
+          <div className="skeleton h-16 rounded" />
+        ) : signals.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No trigger signals detected yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {signals.map((s) => {
+              const meta = SIGNAL_LABELS[s.signal_type] ?? { label: s.signal_type, color: "text-muted-foreground bg-secondary/30 border-border" };
+              return (
+                <div key={s.id} className="rounded-lg border border-border p-3 space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className={cn("text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border", meta.color)}>{meta.label}</span>
+                    <span className="text-muted-foreground">{new Date(s.triggered_at).toLocaleDateString()}</span>
+                  </div>
+                  {s.signal_metadata && Object.keys(s.signal_metadata).length > 0 && (
+                    <div className="space-y-0.5">
+                      {Object.entries(s.signal_metadata).slice(0, 3).map(([k, v]) => (
+                        <p key={k} className="text-muted-foreground"><span className="capitalize">{k.replace(/_/g, " ")}: </span>{String(v)}</p>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Signal strength</span>
+                    <span className={cn("font-mono font-semibold", scoreColorClass(s.score))}>{Math.round(s.score * 100)}%</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 // ── IntentTab ──────────────────────────────────────────────────────────────
 
 function IntentTab({ leadId }: { leadId: string }) {
@@ -571,7 +913,14 @@ function OutreachTab({ leadId }: { leadId: string }) {
               {STATUS_ICON[e.status] ?? <Clock className="w-3.5 h-3.5 text-muted-foreground" />}
               <span className="text-xs font-medium">Step {e.step_number}</span>
             </div>
-            <Badge variant="secondary" className="text-[10px] capitalize">{e.status}</Badge>
+            <div className="flex items-center gap-1.5">
+              {e.quality_score != null && (
+                <span className={cn("text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded", e.quality_score >= 7 ? "bg-emerald-500/10 text-emerald-400" : e.quality_score >= 5 ? "bg-orange-500/10 text-orange-400" : "bg-red-500/10 text-red-400")}>
+                  Q:{Math.round(e.quality_score * 10)}
+                </span>
+              )}
+              <Badge variant="secondary" className="text-[10px] capitalize">{e.status}</Badge>
+            </div>
           </div>
           <p className="text-xs font-medium truncate">{e.subject}</p>
           <div className="flex gap-3 text-[10px] text-muted-foreground">
@@ -580,6 +929,18 @@ function OutreachTab({ leadId }: { leadId: string }) {
             {e.replied_at && <span>· Replied</span>}
             {e.scheduled_at && !e.sent_at && <span>Scheduled {new Date(e.scheduled_at).toLocaleDateString()}</span>}
           </div>
+          {e.quality_reasoning && (
+            <p className="text-[10px] text-muted-foreground italic leading-relaxed border-t border-border pt-1.5">{e.quality_reasoning}</p>
+          )}
+          {e.quality_flags && Object.keys(e.quality_flags).length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {Object.entries(e.quality_flags).map(([dim, score]) => (
+                <span key={dim} className={cn("text-[9px] px-1.5 py-0.5 rounded-full border capitalize", (score as number) >= 7 ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-orange-500/10 text-orange-400 border-orange-500/20")}>
+                  {dim}: {Math.round((score as number) * 10) / 10}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -732,6 +1093,7 @@ function LeadDetailPanel({ lead, onClose }: { lead: LeadDetail; onClose: () => v
       </div>
       <div className="flex-1 overflow-y-auto p-5">
         {activeTab === "profile"  && <ProfileTab lead={lead} />}
+        {activeTab === "intel"    && <IntelTab leadId={lead.id} />}
         {activeTab === "intent"   && <IntentTab leadId={lead.id} />}
         {activeTab === "outreach" && <OutreachTab leadId={lead.id} />}
         {activeTab === "activity" && <ActivityTab leadId={lead.id} />}
@@ -1012,7 +1374,7 @@ export default function Leads() {
                       onChange={(e) => setSelectedIds(e.target.checked ? new Set(filtered.map((l) => l.id)) : new Set())}
                     />
                   </th>
-                  {["Name", "Company", "Status", "Verdict", "Quality", "Created", ""].map((h) => (
+                  {["Name", "Company", "Status", "Verdict", "Lookalike", "Quality", "Created", ""].map((h) => (
                     <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">{h}</th>
                   ))}
                 </tr>
@@ -1021,12 +1383,12 @@ export default function Leads() {
                 {isLoading ? (
                   [...Array(8)].map((_, i) => (
                     <tr key={i} className="border-b border-border/50">
-                      <td colSpan={8} className="p-3"><div className="skeleton h-9 rounded" /></td>
+                      <td colSpan={9} className="p-3"><div className="skeleton h-9 rounded" /></td>
                     </tr>
                   ))
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-12 text-center text-muted-foreground">No leads found</td>
+                    <td colSpan={9} className="p-12 text-center text-muted-foreground">No leads found</td>
                   </tr>
                 ) : (
                   filtered.map((lead, idx) => (
@@ -1091,6 +1453,23 @@ export default function Leads() {
                             );
                           })()}
                         </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {lead.lookalike_score != null ? (
+                          <div className="flex items-center gap-2">
+                            <div className="w-16 h-1.5 rounded-full bg-secondary overflow-hidden">
+                              <div
+                                className={cn("h-full rounded-full transition-all", lead.lookalike_score >= 0.7 ? "bg-emerald-500" : lead.lookalike_score >= 0.4 ? "bg-orange-400" : "bg-red-500")}
+                                style={{ width: `${Math.round(lead.lookalike_score * 100)}%` }}
+                              />
+                            </div>
+                            <span className={cn("text-xs font-mono font-semibold tabular-nums", scoreColorClass(lead.lookalike_score))}>
+                              {Math.round(lead.lookalike_score * 100)}%
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/40">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <span className={cn("font-semibold", scoreColor(lead.data_quality_score))}>

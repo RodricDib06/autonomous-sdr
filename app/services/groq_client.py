@@ -43,3 +43,41 @@ class GroqClient:
         import asyncio
         tasks = [self.generate_async(p, model) for p in prompts]
         return await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def stream_generate(self, prompt: str, model: str = None):
+        """Async generator that yields text tokens from Groq's streaming API."""
+        import asyncio
+        loop = asyncio.get_event_loop()
+
+        def _iter_chunks():
+            stream = self._client.chat.completions.create(
+                model=model or self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=2048,
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta
+
+        # Run the blocking iterator in a thread pool and yield tokens
+        queue: asyncio.Queue = asyncio.Queue()
+        sentinel = object()
+
+        def _producer():
+            try:
+                for token in _iter_chunks():
+                    loop.call_soon_threadsafe(queue.put_nowait, token)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, sentinel)
+
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(_producer)
+            while True:
+                item = await queue.get()
+                if item is sentinel:
+                    break
+                yield item

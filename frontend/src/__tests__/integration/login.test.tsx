@@ -1,8 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
 import { renderWithProviders } from '../utils';
 import Login from '../../pages/Login';
+import { server } from '../mocks/server';
+
+afterEach(() => {
+  server.resetHandlers();
+});
 
 describe('Login page', () => {
   it('renders the login form', () => {
@@ -70,5 +76,50 @@ describe('Login page', () => {
   it('renders contact admin link', () => {
     renderWithProviders(<Login />);
     expect(screen.getByText(/contact admin/i)).toBeInTheDocument();
+  });
+
+  it('clicking Contact admin link shows info toast', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Login />);
+    await user.click(screen.getByText(/contact admin/i));
+    await waitFor(() => {
+      expect(screen.getByText(/Contact your administrator/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows error toast when login fails with API error', async () => {
+    server.use(
+      http.post('http://localhost:8000/auth/login', () =>
+        HttpResponse.json({ detail: 'Invalid credentials' }, { status: 401 })
+      )
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<Login />);
+
+    await user.type(screen.getByLabelText('Email'), 'wrong@example.com');
+    await user.type(screen.getByLabelText('Password'), 'wrongpassword');
+    fireEvent.submit(screen.getByRole('button', { name: /sign in/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Invalid credentials/i)).toBeInTheDocument();
+    }, { timeout: 3000 });
+  });
+
+  it('shows generic error toast when login fails without API message', async () => {
+    server.use(
+      http.post('http://localhost:8000/auth/login', () =>
+        HttpResponse.json({}, { status: 500 })
+      )
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<Login />);
+
+    await user.type(screen.getByLabelText('Email'), 'test@example.com');
+    await user.type(screen.getByLabelText('Password'), 'password123');
+    fireEvent.submit(screen.getByRole('button', { name: /sign in/i }).closest('form')!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Invalid credentials/i)).toBeInTheDocument();
+    }, { timeout: 3000 });
   });
 });

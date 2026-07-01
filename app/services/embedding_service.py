@@ -126,62 +126,84 @@ def semantic_search_conversations(
     vec = embed(query)
 
     if vec is not None:
-        return _vector_search(db, vec, lead_id, limit)
-    else:
-        return _keyword_search(db, query, lead_id, limit)
+        try:
+            results = _vector_search(db, vec, lead_id, limit)
+            if results:
+                return results
+            # no embeddings stored yet — fall through to keyword search
+        except Exception as e:
+            log.warning(f"[embedding] Vector search failed ({e}), falling back to keyword")
+            db.rollback()
+
+    return _keyword_search(db, query, lead_id, limit)
 
 
 def _vector_search(db: Session, vec: list[float], lead_id: str | None, limit: int) -> list[dict]:
     """Cosine similarity search using pgvector <=> operator."""
-    try:
-        sql = """
-            SELECT id, lead_id, channel, summary,
-                   1 - (embedding <=> :vec::vector) AS score
-            FROM conversations
-            WHERE embedding IS NOT NULL
-              {lead_filter}
-            ORDER BY embedding <=> :vec::vector
-            LIMIT :limit
-        """.format(lead_filter="AND lead_id = :lead_id" if lead_id else "")
+    vec_literal = f"'[{','.join(str(x) for x in vec)}]'::vector"
+    lead_filter = f"AND c.lead_id = :lead_id" if lead_id else ""
+    sql = f"""
+        SELECT c.id, c.lead_id, c.channel, c.summary,
+               1 - (c.embedding <=> {vec_literal}) AS similarity,
+               c.created_at, l.name AS lead_name
+        FROM conversations c
+        JOIN leads l ON l.id = c.lead_id
+        WHERE c.embedding IS NOT NULL
+          {lead_filter}
+        ORDER BY c.embedding <=> {vec_literal}
+        LIMIT :limit
+    """
 
-        params: dict = {"vec": str(vec), "limit": limit}
-        if lead_id:
-            params["lead_id"] = lead_id
+    params: dict = {"limit": limit}
+    if lead_id:
+        params["lead_id"] = lead_id
 
-        import sqlalchemy
-        rows = db.execute(sqlalchemy.text(sql), params).fetchall()
-        return [
-            {
-                "conversation_id": r[0],
-                "lead_id": r[1],
-                "channel": r[2],
-                "snippet": (r[3] or "")[:200],
-                "score": float(r[4]),
-                "search_type": "semantic",
-            }
-            for r in rows
-        ]
-    except Exception as e:
-        log.warning(f"[embedding] Vector search failed ({e}), falling back to keyword")
-        return _keyword_search(db, "", lead_id, limit)
+    import sqlalchemy
+    rows = db.execute(sqlalchemy.text(sql), params).fetchall()
+    return [
+        {
+            "conversation_id": r[0],
+            "lead_id": r[1],
+            "channel": r[2],
+            "snippet": (r[3] or "")[:200],
+            "similarity": float(r[4]),
+            "created_at": r[5].isoformat() if r[5] else None,
+            "lead_name": r[6] or "",
+            "search_type": "semantic",
+        }
+        for r in rows
+    ]
 
 
 def _keyword_search(db: Session, query: str, lead_id: str | None, limit: int) -> list[dict]:
-    """Fallback: search conversation summaries and JSONB message content by keyword."""
-    from app.database.models import Conversation
-    q = db.query(Conversation)
+    """Fallback: search conversation summaries, lead name/company by keyword."""
+    import sqlalchemy as sa
+    from app.database.models import Conversation, Lead
+    q = db.query(Conversation, Lead.name).join(Lead, Lead.id == Conversation.lead_id)
     if lead_id:
         q = q.filter(Conversation.lead_id == lead_id)
+    filtered = q
     if query:
-        q = q.filter(Conversation.summary.ilike(f"%{query}%"))
-    rows = q.limit(limit).all()
+        words = [w for w in query.lower().split() if len(w) > 3]
+        if words:
+            filtered = q.filter(sa.or_(
+                *[Conversation.summary.ilike(f"%{w}%") for w in words],
+                *[Lead.name.ilike(f"%{w}%") for w in words],
+                *[Lead.company.ilike(f"%{w}%") for w in words],
+            ))
+    rows = filtered.limit(limit).all()
+    # If no keyword hits, return all conversations so the UI always shows something
+    if not rows:
+        rows = q.limit(limit).all()
     return [
         {
-            "conversation_id": r.id,
-            "lead_id": r.lead_id,
-            "channel": r.channel,
-            "snippet": (r.summary or "")[:200],
-            "score": 1.0,
+            "conversation_id": r[0].id,
+            "lead_id": r[0].lead_id,
+            "channel": r[0].channel,
+            "snippet": (r[0].summary or "")[:200],
+            "similarity": None,
+            "created_at": r[0].created_at.isoformat() if r[0].created_at else None,
+            "lead_name": r[1] or "",
             "search_type": "keyword",
         }
         for r in rows

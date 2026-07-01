@@ -22,6 +22,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.database.models import OutreachEmail, OutreachSequence, ABTestResult
+from app.services.bandit import get_bandit_state
 
 log = logging.getLogger(__name__)
 
@@ -84,14 +85,20 @@ def record_event(db: Session, email_id: str, event: str) -> None:
 
 def get_test_results(db: Session, sequence_ids: list[str] | None = None) -> list[dict]:
     """
-    Return per-variant metrics and significance status for all (or selected) sequences.
+    Return per-variant metrics, significance status, and Thompson Sampling bandit state.
+
+    Each result includes:
+      - Standard funnel rates (open, reply, booking, conversion)
+      - bandit_alpha, bandit_beta: Beta distribution parameters
+      - bandit_mean: posterior mean conversion-rate estimate
+      - bandit_win_probability: P(this variant wins) via Monte Carlo
     """
     query = db.query(ABTestResult)
     if sequence_ids:
         query = query.filter(ABTestResult.sequence_id.in_(sequence_ids))
 
     rows = query.all()
-    results = []
+    base_results = []
     for row in rows:
         sent = row.emails_sent or 0
         opened = row.emails_opened or 0
@@ -99,7 +106,7 @@ def get_test_results(db: Session, sequence_ids: list[str] | None = None) -> list
         booked = row.meetings_booked or 0
         converted = row.conversions or 0
 
-        results.append({
+        base_results.append({
             "sequence_id": row.sequence_id,
             "variant": row.variant,
             "emails_sent": sent,
@@ -108,11 +115,30 @@ def get_test_results(db: Session, sequence_ids: list[str] | None = None) -> list
             "reply_rate": round(replied / sent, 4) if sent > 0 else 0.0,
             "booking_rate": round(booked / sent, 4) if sent > 0 else 0.0,
             "conversion_rate": round(converted / sent, 4) if sent > 0 else 0.0,
+            "conversions": converted,
             "sample_size": sent,
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         })
 
-    return results
+    # Attach Thompson Sampling bandit state — uses n_simulations=500 for speed
+    bandit_input = [
+        {"id": r["sequence_id"], "ab_variant": r["variant"],
+         "emails_sent": r["emails_sent"], "conversions": r["conversions"]}
+        for r in base_results
+    ]
+    try:
+        bandit_enriched = get_bandit_state(bandit_input, n_simulations=500)
+        bandit_by_id = {b["id"]: b for b in bandit_enriched}
+        for r in base_results:
+            bs = bandit_by_id.get(r["sequence_id"], {})
+            r["bandit_alpha"] = bs.get("bandit_alpha")
+            r["bandit_beta"] = bs.get("bandit_beta")
+            r["bandit_mean"] = bs.get("bandit_mean")
+            r["bandit_win_probability"] = bs.get("bandit_win_probability")
+    except Exception as e:
+        log.warning(f"[ab] bandit state computation failed: {e}")
+
+    return base_results
 
 
 def find_winner(db: Session) -> dict | None:

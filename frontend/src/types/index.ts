@@ -42,6 +42,26 @@ export interface Lead {
   tags: string[] | null;
   archived: boolean;
   final_verdict: "Hot" | "Warm" | "Cold" | null;
+  lookalike_score: number | null;
+  referred_by_lead_id: string | null;
+}
+
+export interface ReferralLeadStub {
+  id: string;
+  name: string;
+  email: string;
+  company: string;
+  job_title: string | null;
+  seniority: string | null;
+  final_verdict: "Hot" | "Warm" | "Cold" | null;
+  status: string;
+}
+
+export interface ReferralChain {
+  lead_id: string;
+  referred_by: ReferralLeadStub | null;
+  discovered: ReferralLeadStub[];
+  has_chain: boolean;
 }
 
 export interface Enrichment {
@@ -353,6 +373,9 @@ export interface OutreachEmail {
   opened_at: string | null;
   replied_at: string | null;
   error_message: string | null;
+  quality_score: number | null;
+  quality_flags: Record<string, number> | null;
+  quality_reasoning: string | null;
 }
 
 export interface BookingRequest {
@@ -363,10 +386,81 @@ export interface BookingRequest {
   meeting_time: string | null;
   notes: string | null;
   created_at: string;
+  pre_call_brief: string | null;
+}
+
+// ── Debate / Adversarial BANT ─────────────────────────────────────────────
+
+export interface DebateVoice {
+  bant_scores: Record<string, number>;
+  overall_score: number;
+  verdict: string;
+  reasoning: string;
+}
+
+export interface DebateTranscript {
+  advocate: DebateVoice;
+  critic: DebateVoice;
+  synthesis_reasoning: string;
+  contested_dimensions: string[];
+  confidence_score: number;
+}
+
+export interface DebateResult {
+  lead_id: string;
+  lead_name: string;
+  final_verdict: "Hot" | "Warm" | "Cold" | null;
+  confidence_score: number | null;
+  bant_scores: Record<string, number> | null;
+  debate_transcript: DebateTranscript | null;
+  flags: string[] | null;
+}
+
+// ── Pre-call brief ────────────────────────────────────────────────────────
+
+export interface PreCallBrief {
+  company_snapshot: string;
+  lead_context: string;
+  likely_objections: string[];
+  recommended_angles: string[];
+  watch_out_for: string;
+}
+
+export interface PreCallBriefResult {
+  lead_id: string;
+  lead_name: string;
+  booking_id: string | null;
+  booking_status: string | null;
+  start_time: string | null;
+  brief: PreCallBrief | null;
+}
+
+// ── Trigger signals ───────────────────────────────────────────────────────
+
+export type TriggerSignalType =
+  | "funding_trigger"
+  | "job_posting_trigger"
+  | "news_trigger"
+  | "job_change_trigger";
+
+export interface TriggerSignal {
+  id: string;
+  lead_id: string;
+  lead_name: string;
+  company: string;
+  signal_type: TriggerSignalType;
+  score: number;
+  signal_metadata: Record<string, unknown> | null;
+  triggered_at: string;
+}
+
+export interface SignalFeed {
+  signals: TriggerSignal[];
+  count: number;
 }
 
 export interface ConversationMessage {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "agent" | "lead";
   content: string;
   timestamp: string;
   channel?: string;
@@ -378,8 +472,65 @@ export interface Conversation {
   channel: string;
   messages: ConversationMessage[];
   summary: string | null;
+  sentiment: string | null;
+  needs_human: boolean;
+  human_flagged_at: string | null;
   created_at: string;
   updated_at: string | null;
+}
+
+// ── Inbox ─────────────────────────────────────────────────────────────────
+
+export interface InboxConversation {
+  id: string;
+  lead_id: string;
+  lead_name: string;
+  lead_email: string;
+  company: string;
+  channel: string;
+  message_count: number;
+  summary: string | null;
+  sentiment: string | null;
+  needs_human: boolean;
+  human_flagged_at: string | null;
+  updated_at: string | null;
+  messages: ConversationMessage[];
+}
+
+export interface InboxResponse {
+  conversations: InboxConversation[];
+  count: number;
+  needs_review: number;
+}
+
+export interface ChatResponse {
+  channel: string;
+  reply: string | null;
+  delivery: string;
+  conversation_id: string;
+  needs_human: boolean;
+  objection_type: string | null;
+  sentiment: string | null;
+  message_count: number;
+}
+
+// ── Revenue Funnel ────────────────────────────────────────────────────────
+
+export interface FunnelStage {
+  name: string;
+  label: string;
+  count: number;
+  estimated_value: number;
+  multiplier: number;
+  conversion_from_prev: number | null;
+}
+
+export interface FunnelData {
+  stages: FunnelStage[];
+  lost: number;
+  win_rate: number | null;
+  total_active: number;
+  acv: number;
 }
 
 export interface ABTestVariant {
@@ -446,4 +597,88 @@ export interface OutreachStats {
   open_rate: number;
   reply_rate: number;
   emails_by_status: Record<string, number>;
+}
+
+export type AutonomyEventType =
+  | "follow_up_sent"
+  | "trigger_fired"
+  | "lead_qualified"
+  | "bant_weights_updated";
+
+export interface AutonomyEvent {
+  type: AutonomyEventType;
+  ts: string;
+  // follow_up_sent
+  lead_name?: string;
+  company?: string;
+  step?: number;
+  subject?: string;
+  // trigger_fired
+  trigger?: string;
+  headline?: string;
+  score_delta?: number;
+  // lead_qualified
+  verdict?: string;
+  // bant_weights_updated
+  old_weights?: Record<string, number>;
+  new_weights?: Record<string, number>;
+  improvement?: number;
+  sample_size?: number;
+}
+
+export interface AutonomyFeedSummary {
+  window_hours: number;
+  total_events: number;
+  follow_ups_sent: number;
+  triggers_fired: number;
+  leads_qualified: number;
+  weight_updates: number;
+}
+
+export interface AutonomyFeed {
+  summary: AutonomyFeedSummary;
+  events: AutonomyEvent[];
+}
+
+export interface VelocityStats {
+  avg: number | null;
+  p50: number | null;
+  p90: number | null;
+  count: number;
+}
+
+export interface PipelineVelocity {
+  time_to_qualify_hours: VelocityStats;
+  time_to_book_hours: VelocityStats;
+  time_to_close_hours: VelocityStats;
+  total_complete: number;
+  booking_rate: number;
+  close_rate: number;
+}
+
+export interface RepPerformanceRow {
+  rep_id: string;
+  rep_email: string;
+  role: string;
+  leads_assigned: number;
+  hot_qualified: number;
+  emails_sent: number;
+  meetings_booked: number;
+  conversions: number;
+  conversion_rate: number;
+  hot_rate: number;
+}
+
+export interface RepPerformance {
+  reps: RepPerformanceRow[];
+  total_reps: number;
+}
+
+export interface VerdictExplanation {
+  lead_id: string;
+  verdict: string | null;
+  confidence_score: number | null;
+  summary: string;
+  counterfactual: string;
+  key_drivers: string[];
 }

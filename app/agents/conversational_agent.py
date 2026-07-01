@@ -42,11 +42,13 @@ PoC: persists conversation history in the DB and generates contextual replies
 #     to continue the thread.
 """
 
+import json
 import logging
 from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.agents.base import BaseAgent
+from app.agents.objection_handler import ObjectionHandlerAgent
 from app.database.models import Lead, Enrichment, Verdict, Conversation
 from app.database import crud
 from app.services.providers import get_ai_client
@@ -99,6 +101,7 @@ class ConversationalAgent(BaseAgent):
 
     def __init__(self):
         self._ai = get_ai_client()
+        self._objection_handler = ObjectionHandlerAgent()
 
     def run(self, db: Session, lead_id: str, input_data: dict) -> dict:
         """
@@ -141,23 +144,72 @@ class ConversationalAgent(BaseAgent):
 
         if mode == "initiate":
             reply = self._generate_opener(lead_context)
+            objection_meta = {}
+            delivery = self._deliver(channel, lead, reply, input_data)
         else:
             # Append inbound message to thread
             self._append_message(db, conversation, role="lead", content=inbound_message)
-            history_text = self._format_history(conversation.messages[:-1])  # exclude just-added msg
-            reply = self._generate_reply(lead_context, history_text, inbound_message)
+
+            # Classify objection + sentiment before generating reply
+            objection_meta = self._objection_handler.classify(
+                message=inbound_message,
+                lead_context=lead_context,
+            )
+
+            # Update conversation sentiment
+            conversation.sentiment = objection_meta["sentiment"]
+            if objection_meta["needs_human"]:
+                conversation.needs_human = True
+                conversation.human_flagged_at = datetime.utcnow()
+                db.commit()
+                self._fire_human_handoff_event(lead_id, conversation.id, objection_meta)
+                log.info(
+                    f"[conversational] Human handoff triggered for lead {lead_id[:8]} "
+                    f"(sentiment={objection_meta['sentiment']}, "
+                    f"objection={objection_meta['objection_type']})"
+                )
+                return {
+                    "channel": channel,
+                    "reply": None,
+                    "delivery": "human_handoff",
+                    "conversation_id": conversation.id,
+                    "needs_human": True,
+                    "objection_type": objection_meta["objection_type"],
+                    "sentiment": objection_meta["sentiment"],
+                    "message_count": len(conversation.messages),
+                }
+            db.commit()
+
+            # Generate reply informed by the objection strategy
+            history_text = self._format_history(conversation.messages[:-1])
+            reply = self._generate_reply(
+                lead_context, history_text, inbound_message,
+                strategy=objection_meta.get("strategy", ""),
+            )
+            delivery = self._deliver(channel, lead, reply, input_data)
 
         # Append agent reply to thread
         self._append_message(db, conversation, role="agent", content=reply)
 
-        # Deliver to channel
-        delivery = self._deliver(channel, lead, reply, input_data)
+        # Append event to lead event log
+        try:
+            crud.append_lead_event(db, lead_id, "conversation.reply", payload={
+                "channel": channel,
+                "objection_type": objection_meta.get("objection_type"),
+                "sentiment": objection_meta.get("sentiment"),
+                "reply_length": len(reply),
+            }, agent_name="conversational")
+        except Exception:
+            pass
 
         return {
             "channel": channel,
             "reply": reply,
             "delivery": delivery,
             "conversation_id": conversation.id,
+            "needs_human": False,
+            "objection_type": objection_meta.get("objection_type"),
+            "sentiment": objection_meta.get("sentiment"),
             "message_count": len(conversation.messages),
         }
 
@@ -171,17 +223,34 @@ class ConversationalAgent(BaseAgent):
             log.warning(f"[conversational] LLM opener failed: {e}")
             return "Hi! I noticed you stopped by — happy to answer any questions. What brings you here today?"
 
-    def _generate_reply(self, lead_context: str, history: str, message: str) -> str:
+    def _generate_reply(self, lead_context: str, history: str, message: str, strategy: str = "") -> str:
+        strategy_note = f"\nReply strategy for this objection type: {strategy}" if strategy else ""
         prompt = _REPLY_PROMPT.format(
             lead_context=lead_context,
             history=history,
             new_message=message,
-        )
+        ) + strategy_note
         try:
             return self._ai.generate(prompt).strip()
         except Exception as e:
             log.warning(f"[conversational] LLM reply failed: {e}")
             return "Thanks for your message! Let me look into that and get back to you shortly."
+
+    def _fire_human_handoff_event(self, lead_id: str, conversation_id: str, meta: dict) -> None:
+        """Publish a Redis SSE event so the dashboard shows the human-review badge."""
+        try:
+            from app.services.queue_service import get_redis
+            payload = json.dumps({
+                "type": "human_handoff_needed",
+                "lead_id": lead_id,
+                "conversation_id": conversation_id,
+                "reason": meta.get("sentiment"),
+                "objection_type": meta.get("objection_type"),
+                "key_phrase": meta.get("key_phrase", ""),
+            })
+            get_redis().publish("asdr:global_events", payload)
+        except Exception as e:
+            log.debug(f"[conversational] SSE handoff event failed: {e}")
 
     # ── Channel delivery ────────────────────────────────────────────────────
 

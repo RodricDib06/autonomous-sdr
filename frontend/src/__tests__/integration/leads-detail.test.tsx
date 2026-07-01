@@ -103,12 +103,13 @@ describe('Leads detail panel', () => {
     });
   });
 
-  it('switches to Trace tab and shows empty state', async () => {
+  it('switches to Trace tab and shows agent log entries', async () => {
     const user = await setupDetailPanel();
     await user.click(screen.getByText('Trace'));
 
     await waitFor(() => {
-      expect(screen.getByText(/no pipeline trace available/i)).toBeInTheDocument();
+      // Mock returns agent_logs with Enrich Agent and Score Agent
+      expect(screen.getByText('Enrich Agent')).toBeInTheDocument();
     });
   });
 

@@ -29,6 +29,7 @@ from email.mime.text import MIMEText
 from sqlalchemy.orm import Session
 
 from app.agents.base import BaseAgent
+from app.agents.email_judge_agent import EmailJudgeAgent
 from app.database import crud
 from app.database.models import Lead, Enrichment, Verdict, OutreachEmail, OutreachSequence
 from app.services.providers import get_ai_client
@@ -152,6 +153,34 @@ Respond with ONLY valid JSON:
   "body": "personalised email body here"
 }}"""
 
+_PERSONALISE_PROMPT_RETRY = """You are an expert B2B sales copywriter. Personalise the following email template for a specific lead.
+
+Lead profile:
+{profile_json}
+
+Email template:
+Subject: {subject_template}
+Body:
+{body_template}
+
+A quality reviewer rejected your previous attempt with this specific feedback:
+"{improvement_hint}"
+
+Fix exactly that issue. Do not introduce new problems.
+
+Instructions:
+- Replace all {{placeholders}} with real values from the lead profile
+- Make the subject line and opening line specific to the lead (mention their company, role, or industry)
+- Keep it under 120 words for the body
+- Do NOT add fake metrics or claims you can't verify
+- Sound human, not robotic
+
+Respond with ONLY valid JSON:
+{{
+  "subject": "personalised subject line here",
+  "body": "personalised email body here"
+}}"""
+
 
 class OutreachAgent(BaseAgent):
     """
@@ -163,6 +192,7 @@ class OutreachAgent(BaseAgent):
 
     def __init__(self):
         self._ai = get_ai_client()
+        self._judge = EmailJudgeAgent()
 
     def run(self, db: Session, lead_id: str, input_data: dict) -> dict:
         lead = crud.get_lead(db, lead_id)
@@ -191,7 +221,7 @@ class OutreachAgent(BaseAgent):
         # Personalise and schedule all steps
         scheduled_emails = []
         for step in sequence.steps:
-            subject, body = self._personalise(lead, enrichment, step)
+            subject, body, quality = self._personalise_with_judge(lead, enrichment, step)
             delay_days = step.get("delay_days", 0)
             scheduled_at = datetime.utcnow() + timedelta(days=delay_days)
 
@@ -203,6 +233,9 @@ class OutreachAgent(BaseAgent):
                 body=body,
                 status="scheduled",
                 scheduled_at=scheduled_at,
+                quality_score=quality.get("overall_score"),
+                quality_flags=quality.get("issues") or [],
+                quality_reasoning=quality.get("improvement_hint") or "",
             )
             db.add(email_record)
             scheduled_emails.append(email_record)
@@ -229,20 +262,37 @@ class OutreachAgent(BaseAgent):
     # ── Sequence selection ──────────────────────────────────────────────────
 
     def _pick_sequence(self, db: Session) -> OutreachSequence | None:
-        """Pick the A/B variant with fewest leads sent (even distribution)."""
+        """Select an A/B variant using Thompson Sampling.
+
+        Routes more traffic to the better-performing variant as conversion data
+        accumulates, while never fully stopping exploration of other variants.
+        Falls back to even-split when no sequences exist.
+        """
         from app.database.models import ABTestResult
+        from app.services.bandit import thompson_select
+
         sequences = db.query(OutreachSequence).filter(OutreachSequence.is_active).all()
         if not sequences:
             return None
 
-        # Count emails sent per sequence
-        counts: dict[str, int] = {}
+        # Build variant state dicts for the bandit
+        variant_states = []
         for seq in sequences:
-            result = db.query(ABTestResult).filter(ABTestResult.sequence_id == seq.id).first()
-            counts[seq.id] = result.emails_sent if result else 0
+            ab_result = db.query(ABTestResult).filter(ABTestResult.sequence_id == seq.id).first()
+            variant_states.append({
+                "id": seq.id,
+                "ab_variant": seq.ab_variant,
+                "emails_sent": ab_result.emails_sent if ab_result else 0,
+                "conversions": ab_result.conversions if ab_result else 0,
+            })
 
-        # Return sequence with fewest sends so variants stay balanced
-        return min(sequences, key=lambda s: counts.get(s.id, 0))
+        chosen = thompson_select(variant_states)
+        log.info(
+            f"[outreach] bandit selected variant={chosen.get('ab_variant')} "
+            f"θ={chosen.get('thompson_sample', 0):.3f}"
+        )
+
+        return next(s for s in sequences if s.id == chosen["id"])
 
     def _seed_default_sequences(self, db: Session) -> OutreachSequence:
         """Create both default A/B sequences on first run."""
@@ -259,14 +309,40 @@ class OutreachAgent(BaseAgent):
 
     # ── Personalisation ─────────────────────────────────────────────────────
 
-    def _personalise(
+    def _personalise_with_judge(
         self,
         lead: Lead,
         enrichment: Enrichment | None,
         step: dict,
-    ) -> tuple[str, str]:
-        """Use LLM to personalise subject + body for the lead. Falls back to template substitution."""
-        profile = {
+    ) -> tuple[str, str, dict]:
+        """Personalise an email and gate it through the quality judge.
+
+        Returns (subject, body, quality_result). On rejection, regenerates once
+        with the judge's improvement_hint. If the retry still fails the judge,
+        we use the retry output anyway (better than the original) and log it.
+        """
+        profile = self._build_profile(lead, enrichment)
+        subject, body = self._personalise(profile, step)
+
+        quality = self._judge.score(subject=subject, body=body, profile=profile)
+        if not quality["passed"] and quality.get("improvement_hint"):
+            log.info(
+                f"[outreach] email rejected by judge (score={quality['overall_score']:.1f}), "
+                f"retrying with hint: {quality['improvement_hint']}"
+            )
+            subject, body = self._personalise(profile, step, improvement_hint=quality["improvement_hint"])
+            # Score the retry — use it regardless of result
+            quality = self._judge.score(subject=subject, body=body, profile=profile)
+            if not quality["passed"]:
+                log.warning(
+                    f"[outreach] retry still below threshold (score={quality['overall_score']:.1f}) "
+                    "— using anyway"
+                )
+
+        return subject, body, quality
+
+    def _build_profile(self, lead: Lead, enrichment: Enrichment | None) -> dict:
+        return {
             "name": lead.name,
             "first_name": lead.name.split()[0] if lead.name else "there",
             "email": lead.email,
@@ -279,11 +355,26 @@ class OutreachAgent(BaseAgent):
             "sender_name": settings.OUTREACH_SENDER_NAME,
         }
 
-        prompt = _PERSONALISE_PROMPT.format(
-            profile_json=json.dumps(profile, indent=2),
-            subject_template=step["subject_template"],
-            body_template=step["body_template"],
-        )
+    def _personalise(
+        self,
+        profile: dict,
+        step: dict,
+        improvement_hint: str = "",
+    ) -> tuple[str, str]:
+        """LLM personalisation. Falls back to template substitution on error."""
+        if improvement_hint:
+            prompt = _PERSONALISE_PROMPT_RETRY.format(
+                profile_json=json.dumps(profile, indent=2),
+                subject_template=step["subject_template"],
+                body_template=step["body_template"],
+                improvement_hint=improvement_hint,
+            )
+        else:
+            prompt = _PERSONALISE_PROMPT.format(
+                profile_json=json.dumps(profile, indent=2),
+                subject_template=step["subject_template"],
+                body_template=step["body_template"],
+            )
 
         try:
             raw = self._ai.generate(prompt)
@@ -291,9 +382,8 @@ class OutreachAgent(BaseAgent):
             return parsed["subject"], parsed["body"]
         except Exception as e:
             log.warning(f"[outreach] LLM personalisation failed ({e}), using template fallback")
-            # Simple template substitution fallback
-            subject = step["subject_template"].format(**profile)
-            body = step["body_template"].format(**profile)
+            subject = step["subject_template"].format(**{k: v or "" for k, v in profile.items()})
+            body = step["body_template"].format(**{k: v or "" for k, v in profile.items()})
             return subject, body
 
     # ── SMTP delivery ───────────────────────────────────────────────────────
@@ -328,6 +418,15 @@ class OutreachAgent(BaseAgent):
         #   )
         #   return "sent" if resp.ok else "failed"
         """
+        # Demo mode: when SMTP is not configured, mark as "sent" so the
+        # autonomy feed and outreach stats reflect real scheduled-sequence behaviour.
+        if not settings.SMTP_HOST:
+            email_record.status = "sent"
+            email_record.sent_at = datetime.utcnow()
+            db.commit()
+            log.info(f"[outreach] Demo mode — email {email_record.id} marked sent (no SMTP)")
+            return "sent_demo"
+
         try:
             msg = MIMEMultipart("alternative")
             msg["Subject"] = email_record.subject
@@ -361,3 +460,52 @@ class OutreachAgent(BaseAgent):
             email_record.error_message = str(e)
             db.commit()
             return f"failed: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Scheduled follow-up sender (called by APScheduler every 15 min)
+# ---------------------------------------------------------------------------
+
+def send_pending_scheduled_emails(db: Session) -> dict:
+    """
+    Dispatch all OutreachEmail rows whose scheduled_at has passed and
+    whose status is still 'scheduled'. This is what makes the multi-step
+    sequence actually work — step 1 is sent immediately by the agent,
+    steps 2 and 3 sit in the DB until this job picks them up.
+
+    Returns {"sent": int, "failed": int, "skipped": int}.
+    """
+    now = datetime.utcnow()
+    from app.database.models import Lead as _Lead
+
+    pending = (
+        db.query(OutreachEmail)
+        .join(_Lead, OutreachEmail.lead_id == _Lead.id)
+        .filter(
+            OutreachEmail.status == "scheduled",
+            OutreachEmail.scheduled_at <= now,
+            _Lead.archived == False,  # noqa: E712
+        )
+        .limit(50)
+        .all()
+    )
+
+    sent = failed = skipped = 0
+    agent = OutreachAgent()
+
+    for email in pending:
+        lead = db.query(_Lead).filter(_Lead.id == email.lead_id).first()
+        if not lead or not lead.email:
+            skipped += 1
+            continue
+        result = agent._send_email(db, email, lead.email)
+        if result == "sent":
+            sent += 1
+            log.info(
+                f"[outreach_scheduler] Sent step {email.step_number} to "
+                f"{lead.name} @ {lead.company} ({lead.email[:20]}…)"
+            )
+        else:
+            failed += 1
+
+    return {"sent": sent, "failed": failed, "skipped": skipped}

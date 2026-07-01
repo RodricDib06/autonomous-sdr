@@ -1,8 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
 import { renderWithProviders } from '../utils';
 import ABTests from '../../pages/ABTests';
+import { server } from '../mocks/server';
+
+afterEach(() => {
+  server.resetHandlers();
+});
 
 describe('ABTests page', () => {
   it('renders the page header with correct title', () => {
@@ -70,8 +76,8 @@ describe('ABTests page', () => {
   it('displays mock optimization run data', async () => {
     renderWithProviders(<ABTests />);
     await waitFor(() => {
-      // Mock has 1 run with leads_analysed: 120
-      expect(screen.getByText(/120/)).toBeInTheDocument();
+      // Mock has 1 run with leads_analysed: 120 — multiple elements may match
+      expect(screen.getAllByText(/120/).length).toBeGreaterThan(0);
     });
   });
 
@@ -125,6 +131,63 @@ describe('ABTests page', () => {
       expect(screen.getAllByText('Sent').length).toBeGreaterThan(0);
       expect(screen.getAllByText('Opened').length).toBeGreaterThan(0);
       expect(screen.getAllByText('Replied').length).toBeGreaterThan(0);
+    });
+  });
+
+  it('shows multi-axis analysis section when data is available', async () => {
+    renderWithProviders(<ABTests />);
+    await waitFor(() => {
+      expect(screen.getByText(/Multi-Axis/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows Send Time section in multi-axis analysis', async () => {
+    renderWithProviders(<ABTests />);
+    await waitFor(() => {
+      expect(screen.getByText('Send Time')).toBeInTheDocument();
+    });
+  });
+
+  it('shows Subject Style section in multi-axis analysis', async () => {
+    renderWithProviders(<ABTests />);
+    await waitFor(() => {
+      expect(screen.getByText('Subject Style')).toBeInTheDocument();
+    });
+  });
+
+  it('shows Message Length section in multi-axis analysis', async () => {
+    renderWithProviders(<ABTests />);
+    await waitFor(() => {
+      expect(screen.getByText('Message Length')).toBeInTheDocument();
+    });
+  });
+
+  it('shows send time rows from multi-axis data', async () => {
+    renderWithProviders(<ABTests />);
+    await waitFor(() => {
+      expect(screen.getByText('morning')).toBeInTheDocument();
+      expect(screen.getByText('afternoon')).toBeInTheDocument();
+    });
+  });
+
+  it('shows email count badge in multi-axis section', async () => {
+    renderWithProviders(<ABTests />);
+    await waitFor(() => {
+      expect(screen.getByText('200 emails')).toBeInTheDocument();
+    });
+  });
+
+  it('does not show multi-axis section when no data', async () => {
+    server.use(
+      http.get('http://localhost:8000/ab-tests/multi-axis', () =>
+        HttpResponse.json({
+          send_time: [], subject_style: [], message_length: [], total_emails_analysed: 0,
+        })
+      )
+    );
+    renderWithProviders(<ABTests />);
+    await waitFor(() => {
+      expect(screen.queryByText('Send Time')).not.toBeInTheDocument();
     });
   });
 });

@@ -56,3 +56,35 @@ class ClaudeClient:
             messages=[{"role": "user", "content": prompt}],
         )
         return response.content[0].text
+
+    async def stream_generate(self, prompt: str):
+        """Async generator that yields text tokens using Anthropic's streaming API."""
+        import asyncio
+        loop = asyncio.get_event_loop()
+        import anthropic
+
+        queue: asyncio.Queue = asyncio.Queue()
+        sentinel = object()
+
+        def _stream():
+            try:
+                with self._client.messages.stream(
+                    model=self._model,
+                    max_tokens=1024,
+                    system=[{"type": "text", "text": _SYSTEM_PROMPT,
+                              "cache_control": {"type": "ephemeral"}}],
+                    messages=[{"role": "user", "content": prompt}],
+                ) as stream:
+                    for token in stream.text_stream:
+                        loop.call_soon_threadsafe(queue.put_nowait, token)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, sentinel)
+
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(_stream)
+            while True:
+                item = await queue.get()
+                if item is sentinel:
+                    break
+                yield item

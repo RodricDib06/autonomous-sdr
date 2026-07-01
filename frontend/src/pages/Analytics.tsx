@@ -4,8 +4,8 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from "recharts";
-import { TrendingUp, Flame, Target, Award, Mail, Sparkles, BarChart2 } from "lucide-react";
-import { leadsApi, outreachApi, optimizationApi, marketApi } from "../lib/api";
+import { TrendingUp, Flame, Target, Award, Mail, Sparkles, BarChart2, Zap, Users } from "lucide-react";
+import { leadsApi, outreachApi, optimizationApi, marketApi, analyticsApi } from "../lib/api";
 import { Header } from "../components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { formatPercent, cn } from "../lib/utils";
@@ -66,6 +66,18 @@ export default function Analytics() {
     queryKey: ["market-intelligence"],
     queryFn: marketApi.intelligence,
     staleTime: 120_000,
+  });
+
+  const { data: velocity } = useQuery({
+    queryKey: ["pipeline-velocity"],
+    queryFn: analyticsApi.pipelineVelocity,
+    staleTime: 60_000,
+  });
+
+  const { data: repPerf } = useQuery({
+    queryKey: ["rep-performance"],
+    queryFn: analyticsApi.repPerformance,
+    staleTime: 60_000,
   });
 
   const verdictData = stats
@@ -437,7 +449,141 @@ export default function Analytics() {
             </CardContent>
           </Card>
         </div>
-        {/* Row 5: Market Intelligence */}
+        {/* Row 5: Pipeline Velocity */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-yellow-400" />
+                <CardTitle className="text-sm">Pipeline Velocity</CardTitle>
+              </div>
+              <CardDescription>
+                How fast leads move from creation to qualification to close
+                {velocity ? ` · ${velocity.total_complete} completed leads` : ""}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {velocity ? (
+                <div className="space-y-4">
+                  {[
+                    { label: "Time to Qualify", stats: velocity.time_to_qualify_hours, color: "text-violet-400" },
+                    { label: "Time to Book", stats: velocity.time_to_book_hours, color: "text-emerald-400" },
+                    { label: "Time to Close", stats: velocity.time_to_close_hours, color: "text-orange-400" },
+                  ].map(({ label, stats, color }) => (
+                    <div key={label}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs text-muted-foreground">{label}</span>
+                        <span className="text-xs text-muted-foreground">{stats.count} leads</span>
+                      </div>
+                      {stats.avg !== null ? (
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          {[
+                            { key: "Avg", val: stats.avg },
+                            { key: "P50", val: stats.p50 },
+                            { key: "P90", val: stats.p90 },
+                          ].map(({ key, val }) => (
+                            <div key={key} className="rounded-lg bg-secondary/30 py-2">
+                              <p className={`text-sm font-semibold ${color}`}>
+                                {val !== null ? `${val}h` : "—"}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground">{key}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground italic">No data yet</p>
+                      )}
+                    </div>
+                  ))}
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border">
+                    <div className="text-center">
+                      <p className="text-sm font-semibold text-emerald-400">{(velocity.booking_rate * 100).toFixed(1)}%</p>
+                      <p className="text-[10px] text-muted-foreground">Booking rate</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-sm font-semibold text-orange-400">{(velocity.close_rate * 100).toFixed(1)}%</p>
+                      <p className="text-[10px] text-muted-foreground">Close rate</p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">
+                  No completed leads yet
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Row 5b: Rep Leaderboard */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-indigo-400" />
+                <CardTitle className="text-sm">Rep Leaderboard</CardTitle>
+              </div>
+              <CardDescription>
+                Performance by rep — conversions, hot leads, meetings booked
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {repPerf && repPerf.reps.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th className="py-2 text-left font-semibold text-muted-foreground">Rep</th>
+                        <th className="py-2 text-right font-semibold text-muted-foreground">Leads</th>
+                        <th className="py-2 text-right font-semibold text-muted-foreground">Hot</th>
+                        <th className="py-2 text-right font-semibold text-muted-foreground">Booked</th>
+                        <th className="py-2 text-right font-semibold text-muted-foreground">Won</th>
+                        <th className="py-2 text-right font-semibold text-muted-foreground">Conv%</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {repPerf.reps.map((rep, i) => (
+                        <tr key={rep.rep_id} className="border-b border-border/40 hover:bg-secondary/20">
+                          <td className="py-2.5">
+                            <div className="flex items-center gap-2">
+                              {i === 0 && <span className="text-yellow-400 text-[10px]">🥇</span>}
+                              {i === 1 && <span className="text-slate-400 text-[10px]">🥈</span>}
+                              {i === 2 && <span className="text-orange-400 text-[10px]">🥉</span>}
+                              <span className="font-medium truncate max-w-[100px]" title={rep.rep_email}>
+                                {rep.rep_email.split("@")[0]}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 text-right tabular-nums">{rep.leads_assigned}</td>
+                          <td className="py-2.5 text-right tabular-nums">
+                            <span className={rep.hot_qualified > 0 ? "text-red-400 font-semibold" : "text-muted-foreground"}>
+                              {rep.hot_qualified}
+                            </span>
+                          </td>
+                          <td className="py-2.5 text-right tabular-nums">{rep.meetings_booked}</td>
+                          <td className="py-2.5 text-right tabular-nums">
+                            <span className={rep.conversions > 0 ? "text-emerald-400 font-semibold" : "text-muted-foreground"}>
+                              {rep.conversions}
+                            </span>
+                          </td>
+                          <td className="py-2.5 text-right tabular-nums">
+                            <span className={rep.conversion_rate >= 0.3 ? "text-emerald-400" : rep.conversion_rate >= 0.1 ? "text-orange-400" : "text-muted-foreground"}>
+                              {(rep.conversion_rate * 100).toFixed(0)}%
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">
+                  No rep data yet — assign leads to reps to see the leaderboard
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Row 6: Market Intelligence */}
         {marketIntel && marketIntel.segments.length > 0 && (
           <Card>
             <CardHeader className="pb-3">

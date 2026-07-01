@@ -30,8 +30,16 @@ class Lead(Base):
     conversion_status: Mapped[str] = mapped_column(String(50), default="unqualified")
     conversion_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     conversion_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decay_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_decay_check_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reengagement_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_trigger_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    identified_via_ip: Mapped[bool] = mapped_column(Boolean, default=False)
+    lookalike_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    referred_by_lead_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("leads.id"), nullable=True)
 
     enrichments: Mapped[list["Enrichment"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
+    events: Mapped[list["LeadEvent"]] = relationship(back_populates="lead", cascade="all, delete-orphan", foreign_keys="LeadEvent.lead_id")
     verdicts: Mapped[list["Verdict"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
     agent_logs: Mapped[list["AgentLog"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
     history: Mapped[list["LeadHistory"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
@@ -75,6 +83,7 @@ class Verdict(Base):
     confidence_score: Mapped[float | None] = mapped_column(Float)
     consistency_notes: Mapped[str | None] = mapped_column(Text)
     flags: Mapped[dict | None] = mapped_column(JSONB)
+    debate_transcript: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     lead: Mapped["Lead"] = relationship(back_populates="verdicts")
@@ -190,6 +199,9 @@ class OutreachEmail(Base):
     opened_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     replied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quality_flags: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    quality_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     lead: Mapped["Lead"] = relationship(back_populates="outreach_emails", foreign_keys=[lead_id])
@@ -217,6 +229,10 @@ class Conversation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    sentiment: Mapped[str | None] = mapped_column(String(50), nullable=True)   # positive|neutral|frustrated|angry|confused
+    needs_human: Mapped[bool] = mapped_column(Boolean, default=False)
+    human_flagged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     lead: Mapped["Lead"] = relationship(back_populates="conversations", foreign_keys=[lead_id])
 
 
@@ -238,6 +254,7 @@ class BookingRequest(Base):
     start_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pre_call_brief: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -304,6 +321,32 @@ class ICPConfig(Base):
     max_employees: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# Lead event sourcing — append-only log of all pipeline + user actions
+# ---------------------------------------------------------------------------
+
+class LeadEvent(Base):
+    """
+    Append-only event log for a lead — the event-sourcing record.
+
+    Every pipeline node, trigger, decay check, and human action appends here.
+    Unlike LeadHistory (status-change audit), LeadEvent captures full payloads
+    so state can be projected or replayed from scratch.
+    """
+    __tablename__ = "lead_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    lead_id: Mapped[str] = mapped_column(String(36), ForeignKey("leads.id"), index=True)
+    event_type: Mapped[str] = mapped_column(String(100), index=True)
+    # e.g. "pipeline.analyse.complete" | "outreach.scheduled" | "trigger.funding_trigger"
+    # | "verdict.set" | "human.flagged" | "decay.computed"
+    agent_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    lead: Mapped["Lead"] = relationship(back_populates="events", foreign_keys=[lead_id])
 
 
 # Self-optimization

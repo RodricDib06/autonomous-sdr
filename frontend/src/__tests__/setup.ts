@@ -39,6 +39,16 @@ global.IntersectionObserver = class IntersectionObserver {
   unobserve() {}
 } as unknown as typeof IntersectionObserver;
 
+// Mock scrollTo (jsdom does not implement it)
+Element.prototype.scrollTo = vi.fn() as unknown as typeof Element.prototype.scrollTo;
+
+// Mock navigator.clipboard (jsdom does not implement it)
+Object.defineProperty(navigator, 'clipboard', {
+  value: { writeText: vi.fn().mockResolvedValue(undefined), readText: vi.fn().mockResolvedValue('') },
+  writable: true,
+  configurable: true,
+});
+
 // Mock ResizeObserver (used by recharts)
 global.ResizeObserver = class ResizeObserver {
   constructor() {}

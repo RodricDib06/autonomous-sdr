@@ -87,6 +87,9 @@ class BookingAgent(BaseAgent):
         # Notify Slack
         self._notify_slack(lead, verdict, booking_link)
 
+        # Generate pre-call brief asynchronously (best-effort, never blocks booking)
+        self._generate_brief_async(db, lead_id)
+
         log.info(f"[booking] Lead {lead_id}: booking link sent → {booking_link}")
         return {
             "status": "link_sent",
@@ -156,6 +159,25 @@ class BookingAgent(BaseAgent):
             log.info(f"[booking] No Cal.com URL configured — using mock link: {link}")
 
         return link, external_id
+
+    # ── Pre-call brief ──────────────────────────────────────────────────────
+
+    def _generate_brief_async(self, db: Session, lead_id: str) -> None:
+        """Generate a pre-call brief in a background thread so booking is instant."""
+        import threading
+        from app.database.connection import SessionLocal
+
+        def _run():
+            brief_db = SessionLocal()
+            try:
+                from app.agents.pre_call_brief_agent import PreCallBriefAgent
+                PreCallBriefAgent()._timed_run(brief_db, lead_id, {})
+            except Exception as e:
+                log.warning(f"[booking] Pre-call brief generation failed for {lead_id[:8]}: {e}")
+            finally:
+                brief_db.close()
+
+        threading.Thread(target=_run, daemon=True).start()
 
     # ── Slack notification ──────────────────────────────────────────────────
 

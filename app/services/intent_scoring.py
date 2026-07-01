@@ -70,17 +70,18 @@ _RULES: list[SignalRule] = [
     SignalRule("recent_funding",       0.20, "Raised a round in last 6 months — likely buying"),
     SignalRule("headcount_growth",     0.10, "Headcount growing >10% — scaling and spending"),
 
+    # Tier 2 real-time intelligence signals (live — not production stubs)
+    SignalRule("pricing_page_visit",   0.25, "Company identified on pricing page via IP de-anonymization"),
+    SignalRule("job_change_trigger",   0.30, "Contact changed companies — highest re-engagement signal"),
+    SignalRule("funding_trigger",      0.25, "Company raised a new round since last check"),
+    SignalRule("job_posting_trigger",  0.15, "Company actively hiring in a GTM/revenue role"),
+    SignalRule("news_trigger",         0.10, "Company appeared in relevant news with buying signal keywords"),
+
     # # PRODUCTION: Bombora surge topics detected for this domain
     # SignalRule("bombora_surge",        0.35, "Bombora surge topic match"),
     #
     # # PRODUCTION: G2 competitor comparison page visit
     # SignalRule("g2_intent",            0.30, "Viewed G2 category / competitor page"),
-    #
-    # # PRODUCTION: Clearbit Reveal — company visited our pricing page
-    # SignalRule("pricing_page_visit",   0.25, "Anonymous visitor de-anonymised on pricing page"),
-    #
-    # # PRODUCTION: Job postings signal (LinkedIn / Greenhouse scrape)
-    # SignalRule("hiring_for_role",      0.15, "Actively hiring in a role your product helps with"),
 ]
 
 _RULE_MAP = {r.signal_type: r for r in _RULES}

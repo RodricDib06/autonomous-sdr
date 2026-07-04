@@ -14,7 +14,6 @@ Endpoints:
     GET  /auth/api-keys          → list own API keys
     DELETE /auth/api-keys/{id}   → revoke API key
 """
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, APIKeyHeader
@@ -32,6 +31,7 @@ from app.services.auth_service import (
     verify_password,
 )
 from app.auth.dependencies import get_current_user, require_admin
+from app.utils.time import utcnow
 from app.schemas.auth import (
     AccessTokenResponse,
     APIKeyCreate,
@@ -145,7 +145,7 @@ def login(payload: UserLogin, db: Session = Depends(get_db)):
             detail="Account is disabled — contact your administrator",
         )
 
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = utcnow()
     db.commit()
 
     return _build_token_response(user)

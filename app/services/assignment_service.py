@@ -5,12 +5,12 @@ Handles lead-to-rep assignment, conversion status tracking, and audit history.
 """
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
 from app.database.models import Lead, LeadHistory
+from app.utils.time import utcnow
 
 if TYPE_CHECKING:
     pass
@@ -145,7 +145,7 @@ def update_conversion_status(
 
     old_status = lead.conversion_status
     lead.conversion_status = status
-    lead.conversion_updated_at = datetime.utcnow()
+    lead.conversion_updated_at = utcnow()
     if notes:
         lead.conversion_notes = notes
     db.add(lead)

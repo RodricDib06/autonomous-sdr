@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Literal
 
 import bcrypt
@@ -21,6 +21,7 @@ from app.config import settings
 # ---------------------------------------------------------------------------
 
 import os as _os
+from app.utils.time import utcnow
 _BCRYPT_ROUNDS = 4 if _os.getenv("TESTING") == "1" else 12
 
 
@@ -47,9 +48,9 @@ def create_token(
     token_type: TokenType,
 ) -> str:
     if token_type == "access":
-        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     else:
-        expire = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        expire = utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
 
     payload = {
         "sub": subject,

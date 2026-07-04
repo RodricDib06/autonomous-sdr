@@ -58,11 +58,11 @@ PoC: logs what would be synced. The export_service already generates
 """
 
 import logging
-from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.database.models import Lead, Enrichment, Verdict
 from app.config import settings
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ def _build_payload(lead: Lead, enrichment, verdict, first: str, last: str) -> di
         "confidence": verdict.confidence_score if verdict else None,
         "reasoning": verdict.analysis_reasoning if verdict else None,
         "bant_scores": verdict.bant_scores if verdict else None,
-        "synced_at": datetime.utcnow().isoformat(),
+        "synced_at": utcnow().isoformat(),
         "lead_id": lead.id,
     }
 

@@ -50,8 +50,9 @@ PoC: mock implementation that returns plausible synthetic data so the
 
 import logging
 import random
-from datetime import datetime, timedelta
+from datetime import timedelta
 from app.config import settings
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -150,7 +151,7 @@ def _mock_signals(company: str) -> dict:
     announced_on = None
     if recent_funding:
         days_ago = rng.randint(10, 170)
-        announced_on = (datetime.utcnow() - timedelta(days=days_ago)).date().isoformat()
+        announced_on = (utcnow() - timedelta(days=days_ago)).date().isoformat()
 
     return {
         "recent_funding":     recent_funding,

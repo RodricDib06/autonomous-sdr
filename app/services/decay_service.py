@@ -42,6 +42,7 @@ import logging
 import math
 from datetime import datetime
 from typing import TypedDict
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -119,10 +120,10 @@ def compute_decay_exponential(
     if candidates:
         last_at, eng_type = max(candidates, key=lambda t: t[0])
     else:
-        last_at = lead.created_at or datetime.utcnow()
+        last_at = lead.created_at or utcnow()
         eng_type = "created"
 
-    days_ago = max(0.0, (datetime.utcnow() - last_at).total_seconds() / 86400)
+    days_ago = max(0.0, (utcnow() - last_at).total_seconds() / 86400)
 
     effective_source = source or getattr(lead, "source", None) or "webhook"
     half_life = _HALF_LIVES.get(effective_source, _DEFAULT_HALF_LIFE)
@@ -246,7 +247,7 @@ def _create_reengagement_email(db, lead, enrichment) -> None:
         subject=subject,
         body=body,
         status="scheduled",
-        scheduled_at=datetime.utcnow(),
+        scheduled_at=utcnow(),
         quality_score=None,
         quality_flags=["reengagement"],
         quality_reasoning="Auto-generated re-engagement email from decay trigger",
@@ -255,7 +256,7 @@ def _create_reengagement_email(db, lead, enrichment) -> None:
 
     # Increment counter and record check time
     lead.reengagement_count = (lead.reengagement_count or 0) + 1
-    lead.last_decay_check_at = datetime.utcnow()
+    lead.last_decay_check_at = utcnow()
     lead.decay_score = 0.0  # reset; will be recomputed on next activity
 
     db.commit()
@@ -308,7 +309,7 @@ def run_decay_check_job(db) -> dict:
 
             # Persist current decay score and check timestamp
             lead.decay_score = decay["decay_score"]
-            lead.last_decay_check_at = datetime.utcnow()
+            lead.last_decay_check_at = utcnow()
             processed += 1
 
             if _should_reengage(lead, decay):

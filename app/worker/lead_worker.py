@@ -18,7 +18,7 @@ the heartbeat, and stale-job recovery. All business logic lives in the graph.
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from app.database.connection import SessionLocal, create_all_tables
 from app.database import crud
@@ -36,6 +36,7 @@ executor = ThreadPoolExecutor(max_workers=settings.MAX_CONCURRENT_LEADS)
 
 # Import graph at module level — this compiles the LangGraph state machine once
 from app.agents.graph import graph as lead_graph  # noqa: E402
+from app.utils.time import utcnow  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +83,7 @@ def process_lead(lead_id: str) -> None:
                 "lead_id": lead_id,
                 "lead_name": lead.name,
                 "company": lead.company,
-                "ts": datetime.utcnow().isoformat(),
+                "ts": utcnow().isoformat(),
             }))
             _r.close()
         except Exception as _pub_err:
@@ -115,7 +116,7 @@ def recover_stale_leads() -> int:
 
     db = SessionLocal()
     try:
-        cutoff = datetime.utcnow() - timedelta(minutes=15)
+        cutoff = utcnow() - timedelta(minutes=15)
         stale = db.query(Lead).filter(
             Lead.status == "processing",
             or_(

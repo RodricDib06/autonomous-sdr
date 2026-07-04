@@ -4,6 +4,7 @@ from sqlalchemy import String, Float, Boolean, Integer, Text, ForeignKey, DateTi
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database.connection import Base
+from app.utils.time import utcnow
 
 
 def new_uuid():
@@ -18,7 +19,7 @@ class Lead(Base):
     email: Mapped[str] = mapped_column(String(255), index=True)
     company: Mapped[str] = mapped_column(String(255))
     source: Mapped[str] = mapped_column(String(100), default="webhook")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="processing")
     completeness_score: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -63,7 +64,7 @@ class Enrichment(Base):
     tech_stack: Mapped[dict | None] = mapped_column(JSONB)
     confidence: Mapped[float | None] = mapped_column(Float)
     enrichment_source: Mapped[str | None] = mapped_column(String(100))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     lead: Mapped["Lead"] = relationship(back_populates="enrichments")
 
@@ -84,7 +85,7 @@ class Verdict(Base):
     consistency_notes: Mapped[str | None] = mapped_column(Text)
     flags: Mapped[dict | None] = mapped_column(JSONB)
     debate_transcript: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     lead: Mapped["Lead"] = relationship(back_populates="verdicts")
 
@@ -100,7 +101,7 @@ class AgentLog(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     success: Mapped[bool] = mapped_column(Boolean, default=True)
     error_message: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     lead: Mapped["Lead"] = relationship(back_populates="agent_logs")
 
@@ -113,7 +114,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(Text)
     role: Mapped[str] = mapped_column(String(20), default="rep")  # admin | manager | rep
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     api_keys: Mapped[list["APIKey"]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -128,7 +129,7 @@ class APIKey(Base):
     key_prefix: Mapped[str] = mapped_column(String(12))     # first 12 chars of raw key (for display)
     key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)  # SHA-256 hex
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="api_keys")
@@ -139,7 +140,7 @@ class ImportHistory(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     filename: Mapped[str] = mapped_column(String(255))
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     total: Mapped[int] = mapped_column(Integer, default=0)
     successful: Mapped[int] = mapped_column(Integer, default=0)
@@ -157,7 +158,7 @@ class LeadHistory(Base):
     old_value: Mapped[str | None] = mapped_column(String(255), nullable=True)
     new_value: Mapped[str | None] = mapped_column(String(255), nullable=True)
     changed_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
-    changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
     lead: Mapped["Lead"] = relationship(back_populates="history")
     changed_by: Mapped["User | None"] = relationship(foreign_keys=[changed_by_id])
@@ -186,7 +187,7 @@ class SuppressionEntry(Base):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     lead_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("leads.id"), nullable=True)
     created_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +204,7 @@ class OutreachSequence(Base):
     steps: Mapped[list] = mapped_column(JSONB, default=list)
     ab_variant: Mapped[str | None] = mapped_column(String(10), nullable=True)  # "A", "B", etc.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     emails: Mapped[list["OutreachEmail"]] = relationship(back_populates="sequence", cascade="all, delete-orphan")
 
@@ -228,7 +229,7 @@ class OutreachEmail(Base):
     quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     quality_flags: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     quality_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     lead: Mapped["Lead"] = relationship(back_populates="outreach_emails", foreign_keys=[lead_id])
     sequence: Mapped["OutreachSequence | None"] = relationship(back_populates="emails")
@@ -252,7 +253,7 @@ class Conversation(Base):
     # embedding: pgvector column for semantic search — nullable, populated by embedding_service
     # Requires: CREATE EXTENSION IF NOT EXISTS vector; ALTER TABLE conversations ADD COLUMN embedding vector(768);
     # Skipped in SQLAlchemy model definition to keep Postgres extension optional at startup.
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     sentiment: Mapped[str | None] = mapped_column(String(50), nullable=True)   # positive|neutral|frustrated|angry|confused
@@ -281,7 +282,7 @@ class BookingRequest(Base):
     end_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     pre_call_brief: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     lead: Mapped["Lead"] = relationship(back_populates="booking_requests", foreign_keys=[lead_id])
@@ -303,7 +304,7 @@ class IntentSignal(Base):
     # source: heuristic | bombora | g2 | web_scrape
     source: Mapped[str] = mapped_column(String(50), default="heuristic")
     signal_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    captured_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     lead: Mapped["Lead"] = relationship(back_populates="intent_signals", foreign_keys=[lead_id])
 
@@ -324,7 +325,7 @@ class ABTestResult(Base):
     replies: Mapped[int] = mapped_column(Integer, default=0)
     meetings_booked: Mapped[int] = mapped_column(Integer, default=0)
     conversions: Mapped[int] = mapped_column(Integer, default=0)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     sequence: Mapped["OutreachSequence"] = relationship()
 
@@ -370,7 +371,7 @@ class LeadEvent(Base):
     # | "verdict.set" | "human.flagged" | "decay.computed"
     agent_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
     lead: Mapped["Lead"] = relationship(back_populates="events", foreign_keys=[lead_id])
 
@@ -383,7 +384,7 @@ class OptimizationRun(Base):
     __tablename__ = "optimization_runs"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
-    run_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    run_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     # old/new ICP weights: {"budget": 0.25, "authority": 0.25, "need": 0.25, "timeline": 0.25}
     old_weights: Mapped[dict] = mapped_column(JSONB, default=dict)
     new_weights: Mapped[dict] = mapped_column(JSONB, default=dict)

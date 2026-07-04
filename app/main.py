@@ -2,7 +2,6 @@ import json
 import re
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime
 from fastapi import FastAPI, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, RedirectResponse, StreamingResponse
@@ -38,6 +37,7 @@ from app.routers.ingest import router as ingest_router
 from app.services.rate_limiter import limiter
 from app.config import settings
 from fastapi import UploadFile, File
+from app.utils.time import utcnow
 
 
 @asynccontextmanager
@@ -371,7 +371,7 @@ def get_lead_trend(
     from datetime import timedelta
     from sqlalchemy import func, case
 
-    since = datetime.utcnow() - timedelta(days=days)
+    since = utcnow() - timedelta(days=days)
     rows = (
         db.query(
             func.date(Lead.created_at).label("day"),
@@ -581,7 +581,7 @@ def get_duplicate_report(
 
         return {
             "report": report,
-            "generated_at": datetime.utcnow().isoformat()
+            "generated_at": utcnow().isoformat()
         }
     except Exception as e:
         log.error("Failed to generate duplicate report", error=str(e))
@@ -619,11 +619,10 @@ def reprocess_failed(
 ):
     """Re-queue all failed leads back into the processing pipeline."""
     from app.services.queue_service import push_lead_job
-    from datetime import datetime
     failed = db.query(Lead).filter(Lead.status == "failed").all()
     if not failed:
         return {"requeued": 0, "message": "No failed leads found"}
-    now = datetime.utcnow()
+    now = utcnow()
     for lead in failed:
         lead.status = "processing"
         lead.updated_at = now
@@ -1344,7 +1343,7 @@ def get_autonomy_feed(
     )
     from app.database.models import LeadEvent
 
-    since = datetime.utcnow() - timedelta(hours=hours)
+    since = utcnow() - timedelta(hours=hours)
     events = []
 
     # ── Follow-up emails sent by the scheduler (step > 1) ───────────────────
@@ -1622,7 +1621,7 @@ def update_booking_status(
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
     booking.status = status
-    booking.updated_at = datetime.utcnow()
+    booking.updated_at = utcnow()
     db.commit()
     return {"status": "updated", "booking_id": booking_id, "new_status": status}
 
@@ -2054,7 +2053,7 @@ def track_open(email_id: str, db: Session = Depends(get_db)):
     try:
         email = db.query(OutreachEmail).filter(OutreachEmail.id == email_id).first()
         if email and not email.opened_at:
-            email.opened_at = datetime.utcnow()
+            email.opened_at = utcnow()
             email.status = "opened"
             db.commit()
             record_event(db, email_id, "opened")
@@ -2124,7 +2123,7 @@ def track_click(
         email = db.query(OutreachEmail).filter(OutreachEmail.id == email_id).first()
         if email:
             if not email.opened_at:
-                email.opened_at = datetime.utcnow()
+                email.opened_at = utcnow()
                 email.status = "opened"
                 record_event(db, email_id, "opened")
             db.commit()
@@ -2455,7 +2454,7 @@ def track_visit(
                     )
                 else:
                     # Add / refresh a pricing_page_visit intent signal
-                    cutoff = datetime.utcnow() - timedelta(days=3)
+                    cutoff = utcnow() - timedelta(days=3)
                     recent = (
                         db.query(IntentSignal)
                         .filter(
@@ -2547,7 +2546,7 @@ async def ingest_email_reply(
         email_rec = db.query(OutreachEmailModel).filter(OutreachEmailModel.id == email_id).first()
         if email_rec and email_rec.status not in ("replied",):
             email_rec.status = "replied"
-            email_rec.replied_at = datetime.utcnow()
+            email_rec.replied_at = utcnow()
             db.commit()
 
     from app.services.compliance import (
@@ -3133,7 +3132,7 @@ async def global_event_stream(
             while True:
                 now = asyncio.get_event_loop().time()
                 if now - last_heartbeat >= 30:
-                    yield f"event: heartbeat\ndata: {json.dumps({'ts': datetime.utcnow().isoformat()})}\n\n"
+                    yield f"event: heartbeat\ndata: {json.dumps({'ts': utcnow().isoformat()})}\n\n"
                     last_heartbeat = now
 
                 message = await pubsub.get_message(
@@ -3267,7 +3266,7 @@ def crm_push(
         "lead_id": lead_id,
         "payload": payload,
         "simulated": True,
-        "pushed_at": datetime.utcnow().isoformat(),
+        "pushed_at": utcnow().isoformat(),
         "note": (
             "Production: uncomment CRM API calls in app/services/crm_sync.py "
             "and set the relevant API key env vars."

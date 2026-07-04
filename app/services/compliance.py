@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database.models import Lead, OutreachEmail, SuppressionEntry
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -183,7 +184,7 @@ def process_unsubscribe(
 # ---------------------------------------------------------------------------
 
 def sent_in_last_24h(db: Session) -> int:
-    cutoff = datetime.utcnow() - timedelta(hours=24)
+    cutoff = utcnow() - timedelta(hours=24)
     return (
         db.query(OutreachEmail)
         .filter(OutreachEmail.sent_at.isnot(None), OutreachEmail.sent_at >= cutoff)
@@ -200,7 +201,7 @@ def can_send_now(db: Session, now: datetime | None = None) -> tuple[bool, str]:
 
     Returns (allowed, human-readable reason).
     """
-    now = now or datetime.utcnow()
+    now = now or utcnow()
 
     if settings.OUTREACH_WEEKDAYS_ONLY and now.weekday() >= 5:
         return False, "Outside send window: weekends are excluded (OUTREACH_WEEKDAYS_ONLY)"

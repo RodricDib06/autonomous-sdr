@@ -32,11 +32,12 @@ within this window, since the person needs time to settle in.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -172,7 +173,7 @@ def _extract_company_from_snippet(snippet: str, name: str) -> str | None:
 
 def _is_on_cooldown(db: Session, lead_id: str) -> bool:
     from app.database.models import IntentSignal
-    cutoff = datetime.utcnow() - timedelta(days=_JOB_CHANGE_COOLDOWN_DAYS)
+    cutoff = utcnow() - timedelta(days=_JOB_CHANGE_COOLDOWN_DAYS)
     existing = (
         db.query(IntentSignal)
         .filter(
@@ -230,7 +231,7 @@ def run_job_change_check(db: Session) -> dict:
     from app.database.models import Lead, Verdict, OutreachEmail, IntentSignal
     from sqlalchemy.orm import selectinload
 
-    recheck_cutoff = datetime.utcnow() - timedelta(days=_RECHECK_INTERVAL_DAYS)
+    recheck_cutoff = utcnow() - timedelta(days=_RECHECK_INTERVAL_DAYS)
 
     candidates = (
         db.query(Lead)
@@ -253,7 +254,7 @@ def run_job_change_check(db: Session) -> dict:
     for lead in candidates:
         try:
             if _is_on_cooldown(db, lead.id):
-                lead.last_trigger_checked_at = datetime.utcnow()
+                lead.last_trigger_checked_at = utcnow()
                 checked += 1
                 continue
 
@@ -287,7 +288,7 @@ def run_job_change_check(db: Session) -> dict:
                     subject=subject,
                     body=body,
                     status="scheduled",
-                    scheduled_at=datetime.utcnow(),
+                    scheduled_at=utcnow(),
                     quality_flags=["job_change_trigger", f"confidence:{change['confidence']}"],
                     quality_reasoning=f"Job change: {lead.company} → {new_company}",
                 ))
@@ -300,7 +301,7 @@ def run_job_change_check(db: Session) -> dict:
 
                 changed += 1
 
-            lead.last_trigger_checked_at = datetime.utcnow()
+            lead.last_trigger_checked_at = utcnow()
             checked += 1
 
         except Exception as e:

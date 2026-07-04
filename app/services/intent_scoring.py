@@ -27,11 +27,11 @@ Each signal adds a weighted contribution. Final score = clipped sum of weights.
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.database.models import Lead, Enrichment, Verdict, IntentSignal
 from app.config import settings
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -202,7 +202,7 @@ def compute_intent_score(
             score=score,
             source=source,
             signal_metadata={"description": rule.description if rule else ""},
-            captured_at=datetime.utcnow(),
+            captured_at=utcnow(),
         ))
 
     db.commit()

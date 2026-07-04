@@ -18,11 +18,11 @@ PoC: all stats live in the `ab_test_results` Postgres table.
 
 import logging
 import math
-from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.database.models import OutreachEmail, OutreachSequence, ABTestResult
 from app.services.bandit import get_bandit_state
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ def record_event(db: Session, email_id: str, event: str) -> None:
     elif event == "converted":
         result.conversions = (result.conversions or 0) + 1
 
-    result.updated_at = datetime.utcnow()
+    result.updated_at = utcnow()
     db.commit()
     log.debug(f"[ab] event={event} → variant={sequence.ab_variant} sequence={sequence.id}")
 

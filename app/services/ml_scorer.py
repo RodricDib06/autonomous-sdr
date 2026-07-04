@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from threading import Lock
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -125,7 +126,7 @@ class CloseProbabilityModel:
             with self._lock:
                 self._model = model
                 self._scaler = scaler
-                self.trained_at = datetime.utcnow()
+                self.trained_at = utcnow()
                 self.n_samples = len(X)
                 self.n_converted = positives
                 self.n_lost = negatives

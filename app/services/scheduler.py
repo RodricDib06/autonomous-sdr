@@ -20,13 +20,14 @@ needed for light scheduled work.
 # Scheduler, AWS EventBridge).
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.config import settings
+from app.utils.time import utcnow
 
 log = structlog.get_logger(__name__)
 
@@ -56,7 +57,7 @@ async def _auto_enqueue_pending() -> None:
     from app.database.models import Lead
     from app.services.queue_service import push_lead_job
 
-    cutoff = datetime.utcnow() - timedelta(seconds=_AUTO_PROCESS_DELAY_SECONDS)
+    cutoff = utcnow() - timedelta(seconds=_AUTO_PROCESS_DELAY_SECONDS)
     db = SessionLocal()
     try:
         stale = (

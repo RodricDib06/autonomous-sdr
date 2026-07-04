@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from app.database.models import Lead, Enrichment, Verdict, AgentLog, LeadEvent
+from app.utils.time import utcnow
 
 
 def create_lead(db: Session, name: str, email: str, company: str, source: str = "webhook") -> Lead:
@@ -19,8 +20,7 @@ def get_all_leads(db: Session, limit: int = 100) -> list[Lead]:
 
 
 def update_lead_status(db: Session, lead_id: str, status: str) -> None:
-    from datetime import datetime
-    db.query(Lead).filter(Lead.id == lead_id).update({"status": status, "updated_at": datetime.utcnow()})
+    db.query(Lead).filter(Lead.id == lead_id).update({"status": status, "updated_at": utcnow()})
     db.commit()
 
 

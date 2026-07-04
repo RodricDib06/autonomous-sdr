@@ -8,8 +8,8 @@ All criteria are optional — unset criteria are skipped when evaluating.
 
 from __future__ import annotations
 import re
-from datetime import datetime
 from typing import TypedDict
+from app.utils.time import utcnow
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +169,7 @@ def upsert_icp_config(db, user_id: str, **fields):
 
     for k, v in fields.items():
         setattr(cfg, k, v)
-    cfg.updated_at = datetime.utcnow()
+    cfg.updated_at = utcnow()
     cfg.updated_by_id = user_id
 
     db.commit()

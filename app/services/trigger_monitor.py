@@ -31,6 +31,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def _detect_funding_trigger(company: str, domain: str | None) -> dict | None:
         announced = signals.get("announced_on")
         if announced:
             try:
-                days_ago = (datetime.utcnow().date() - datetime.fromisoformat(announced).date()).days
+                days_ago = (utcnow().date() - datetime.fromisoformat(announced).date()).days
                 if days_ago > 30:
                     return None
             except ValueError:
@@ -246,7 +247,7 @@ def _is_on_cooldown(db: Session, lead_id: str, trigger_type: str) -> bool:
     """Return True if this trigger was already fired recently for this lead."""
     from app.database.models import IntentSignal
     cooldown_days = _COOLDOWNS.get(trigger_type, 14)
-    cutoff = datetime.utcnow() - timedelta(days=cooldown_days)
+    cutoff = utcnow() - timedelta(days=cooldown_days)
     existing = (
         db.query(IntentSignal)
         .filter(
@@ -278,7 +279,7 @@ def run_trigger_check_job(db: Session) -> dict:
     from app.services.queue_service import push_lead_job
     from sqlalchemy.orm import selectinload
 
-    cutoff = datetime.utcnow() - timedelta(hours=_CHECK_INTERVAL_HOURS)
+    cutoff = utcnow() - timedelta(hours=_CHECK_INTERVAL_HOURS)
 
     # Include ALL complete leads (not just Warm/Hot) so Cold leads can be resurrected.
     candidates = (
@@ -359,7 +360,7 @@ def run_trigger_check_job(db: Session) -> dict:
                         subject=subject,
                         body=body,
                         status="scheduled",
-                        scheduled_at=datetime.utcnow(),
+                        scheduled_at=utcnow(),
                         quality_flags=[ttype],
                         quality_reasoning=f"Trigger-based outreach: {trigger.get('headline', '')}",
                     ))
@@ -371,7 +372,7 @@ def run_trigger_check_job(db: Session) -> dict:
                 )
                 break  # one trigger per lead per cycle
 
-            lead.last_trigger_checked_at = datetime.utcnow()
+            lead.last_trigger_checked_at = utcnow()
             checked += 1
 
         except Exception as e:

@@ -23,7 +23,7 @@ PoC: uses Python's smtplib with Gmail SMTP (free, 500 emails/day).
 import json
 import logging
 import smtplib
-from datetime import datetime, timedelta
+from datetime import timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from sqlalchemy.orm import Session
@@ -34,6 +34,7 @@ from app.database import crud
 from app.database.models import Lead, Enrichment, Verdict, OutreachEmail, OutreachSequence
 from app.services.providers import get_ai_client
 from app.config import settings
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -233,7 +234,7 @@ class OutreachAgent(BaseAgent):
         for step in sequence.steps:
             subject, body, quality = self._personalise_with_judge(lead, enrichment, step)
             delay_days = step.get("delay_days", 0)
-            scheduled_at = datetime.utcnow() + timedelta(days=delay_days)
+            scheduled_at = utcnow() + timedelta(days=delay_days)
 
             email_record = OutreachEmail(
                 lead_id=lead_id,
@@ -432,7 +433,7 @@ class OutreachAgent(BaseAgent):
         # autonomy feed and outreach stats reflect real scheduled-sequence behaviour.
         if not settings.SMTP_HOST:
             email_record.status = "sent"
-            email_record.sent_at = datetime.utcnow()
+            email_record.sent_at = utcnow()
             db.commit()
             log.info(f"[outreach] Demo mode — email {email_record.id} marked sent (no SMTP)")
             return "sent_demo"
@@ -474,7 +475,7 @@ class OutreachAgent(BaseAgent):
                 server.sendmail(settings.OUTREACH_FROM_EMAIL, [to_address], msg.as_string())
 
             email_record.status = "sent"
-            email_record.sent_at = datetime.utcnow()
+            email_record.sent_at = utcnow()
             db.commit()
             return "sent"
 
@@ -511,7 +512,7 @@ def send_pending_scheduled_emails(db: Session) -> dict:
         lead_has_replied,
     )
 
-    now = datetime.utcnow()
+    now = utcnow()
     from app.database.models import Lead as _Lead
 
     allowed, reason = can_send_now(db, now)

@@ -14,7 +14,7 @@ Signal weights (calibrated for SDR workflows):
 
 from __future__ import annotations
 import logging
-from datetime import datetime
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -81,5 +81,5 @@ def apply_bayesian_update(db, lead_id: str, signal: str) -> dict | None:
         "signal": signal,
         "updated_scores": updated,
         "new_confidence": verdict.confidence_score,
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": utcnow().isoformat(),
     }

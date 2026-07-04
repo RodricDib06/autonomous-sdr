@@ -14,7 +14,7 @@ weight adjustments in future optimization runs.
 
 from __future__ import annotations
 import logging
-from datetime import datetime
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ def compute_market_intelligence(db) -> dict:
             **global_counts,
             "global_hot_rate": round(global_hot_rate, 3),
         },
-        "computed_at": datetime.utcnow().isoformat(),
+        "computed_at": utcnow().isoformat(),
     }
 
 

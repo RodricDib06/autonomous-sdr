@@ -17,11 +17,11 @@ so it does not block the booking response.
 
 import json
 import logging
-from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.agents.base import BaseAgent
 from app.services.providers import get_ai_client
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -130,7 +130,7 @@ class PreCallBriefAgent(BaseAgent):
             lead_json=json.dumps(lead_json, indent=2),
             bant_json=json.dumps(bant_json, indent=2),
             research_notes=research_notes,
-            now=datetime.utcnow().isoformat(),
+            now=utcnow().isoformat(),
         )
 
         try:
@@ -147,7 +147,7 @@ class PreCallBriefAgent(BaseAgent):
                     "Reference their growth stage and scaling challenges.",
                 ],
                 "watch_out_for": "Lead may need internal approval — confirm decision-making authority early.",
-                "generated_at": datetime.utcnow().isoformat(),
+                "generated_at": utcnow().isoformat(),
             }
 
         # Serialize and persist on the booking request
@@ -160,7 +160,7 @@ class PreCallBriefAgent(BaseAgent):
         )
         if booking:
             booking.pre_call_brief = brief_text
-            booking.updated_at = datetime.utcnow()
+            booking.updated_at = utcnow()
             db.commit()
 
         # Notify Slack with brief highlights

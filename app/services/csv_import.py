@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.database.models import Lead
 from app.services.deduplication import DeduplicationService
 from app.services.data_quality import DataQualityService
+from app.utils.time import utcnow
 
 
 @dataclass
@@ -143,7 +144,7 @@ class CSVImportService:
         Returns:
             ImportResult with details of import operation
         """
-        started_at = datetime.utcnow()
+        started_at = utcnow()
         import_records = []
         successful_count = 0
         failed_count = 0
@@ -205,7 +206,7 @@ class CSVImportService:
                     "email_quality_score": scores["email_quality_score"],
                     "email_quality_label": scores["email_quality_label"],
                     "breakdown": scores["breakdown"],
-                    "scored_at": datetime.utcnow().isoformat(),
+                    "scored_at": utcnow().isoformat(),
                 }
 
                 import_records.append(ImportRecord(
@@ -235,7 +236,7 @@ class CSVImportService:
             self.db.rollback()
             raise e
 
-        completed_at = datetime.utcnow()
+        completed_at = utcnow()
         duration = (completed_at - started_at).total_seconds()
 
         return ImportResult(

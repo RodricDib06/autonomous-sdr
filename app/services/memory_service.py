@@ -23,11 +23,11 @@ PoC: Postgres-backed, per-lead per-channel threads with an optional LLM summary.
 """
 
 import logging
-from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.database.models import Conversation
 from app.services.providers import get_ai_client
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -60,10 +60,10 @@ def append_message(db: Session, conv: Conversation, role: str, content: str) -> 
     messages.append({
         "role": role,
         "content": content,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": utcnow().isoformat(),
     })
     conv.messages = messages
-    conv.updated_at = datetime.utcnow()
+    conv.updated_at = utcnow()
     db.commit()
 
 
@@ -99,7 +99,7 @@ def summarise_conversation(db: Session, conv: Conversation) -> str:
     try:
         summary = ai.generate(prompt).strip()
         conv.summary = summary
-        conv.updated_at = datetime.utcnow()
+        conv.updated_at = utcnow()
         db.commit()
 
         # Embed the summary for semantic search (no-op if Ollama / pgvector unavailable)

@@ -10,10 +10,11 @@ Stored on Lead: completeness_score, data_quality_score, quality_metadata, update
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import timezone
 from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
+from app.utils.time import utcnow
 
 if TYPE_CHECKING:
     from app.database.models import Lead
@@ -77,7 +78,7 @@ class DataQualityService:
         if reference is None:
             return 50.0
 
-        now = datetime.utcnow()
+        now = utcnow()
         # Make naive comparison safe
         if reference.tzinfo is not None:
             now = now.replace(tzinfo=timezone.utc)
@@ -143,13 +144,13 @@ class DataQualityService:
 
         lead.completeness_score = scores["completeness_score"]
         lead.data_quality_score = scores["data_quality_score"]
-        lead.updated_at = datetime.utcnow()
+        lead.updated_at = utcnow()
         lead.quality_metadata = {
             "freshness_score": scores["freshness_score"],
             "email_quality_score": scores["email_quality_score"],
             "email_quality_label": scores["email_quality_label"],
             "breakdown": scores["breakdown"],
-            "scored_at": datetime.utcnow().isoformat(),
+            "scored_at": utcnow().isoformat(),
         }
 
         db.add(lead)

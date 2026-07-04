@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.database.connection import get_db
 from app.database.models import User, APIKey
 from app.services.auth_service import decode_token, hash_api_key
+from app.utils.time import utcnow
 
 # ---------------------------------------------------------------------------
 # Security schemes
@@ -69,8 +70,7 @@ def _user_from_api_key(raw_key: str, db: Session) -> User | None:
         return None
 
     # Touch last_used_at without a full commit round-trip
-    from datetime import datetime
-    api_key.last_used_at = datetime.utcnow()
+    api_key.last_used_at = utcnow()
     db.add(api_key)
     db.commit()
 

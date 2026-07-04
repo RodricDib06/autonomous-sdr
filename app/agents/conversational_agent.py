@@ -44,7 +44,6 @@ PoC: persists conversation history in the DB and generates contextual replies
 
 import json
 import logging
-from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.agents.base import BaseAgent
@@ -52,6 +51,7 @@ from app.agents.objection_handler import ObjectionHandlerAgent
 from app.database.models import Lead, Enrichment, Verdict, Conversation
 from app.database import crud
 from app.services.providers import get_ai_client
+from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ class ConversationalAgent(BaseAgent):
             conversation.sentiment = objection_meta["sentiment"]
             if objection_meta["needs_human"]:
                 conversation.needs_human = True
-                conversation.human_flagged_at = datetime.utcnow()
+                conversation.human_flagged_at = utcnow()
                 db.commit()
                 self._fire_human_handoff_event(lead_id, conversation.id, objection_meta)
                 log.info(
@@ -309,10 +309,10 @@ class ConversationalAgent(BaseAgent):
         messages.append({
             "role": role,
             "content": content,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utcnow().isoformat(),
         })
         conv.messages = messages
-        conv.updated_at = datetime.utcnow()
+        conv.updated_at = utcnow()
         db.commit()
 
     def _format_history(self, messages: list) -> str:

@@ -524,17 +524,21 @@ def send_pending_scheduled_emails(db: Session) -> dict:
     Returns {"sent": int, "failed": int, "skipped": int, "cancelled": int, "reason": str | None}.
     """
     from app.services.compliance import (
-        can_send_now,
+        can_send_to_recipient,
         cancel_scheduled_emails,
         is_suppressed,
         lead_has_replied,
+        sent_in_last_24h,
     )
 
     now = utcnow()
     from app.database.models import Lead as _Lead
 
-    allowed, reason = can_send_now(db, now)
-    if not allowed:
+    # Daily cap is global (protects the sending domain); the time-of-day
+    # window is evaluated per recipient below, on their local clock.
+    sent_24h = sent_in_last_24h(db)
+    if sent_24h >= settings.OUTREACH_DAILY_SEND_LIMIT:
+        reason = f"Daily send cap reached ({sent_24h}/{settings.OUTREACH_DAILY_SEND_LIMIT} in last 24h)"
         log.info(f"[outreach_scheduler] Holding sends — {reason}")
         return {"sent": 0, "failed": 0, "skipped": 0, "cancelled": 0, "reason": reason}
 
@@ -576,6 +580,17 @@ def send_pending_scheduled_emails(db: Session) -> dict:
         # Never email suppressed addresses; kill the rest of their cadence too
         if is_suppressed(db, lead.email, org_id=lead.org_id):
             cancelled += cancel_scheduled_emails(db, lead.id, "Address on suppression list")
+            continue
+
+        # Recipient-local send window (falls back to global UTC window)
+        window_ok, window_reason = can_send_to_recipient(lead, now)
+        if not window_ok:
+            log.debug(f"[outreach_scheduler] Holding {lead.email}: {window_reason}")
+            skipped += 1
+            continue
+
+        if sent_24h + sent >= settings.OUTREACH_DAILY_SEND_LIMIT:
+            skipped += 1
             continue
 
         result = agent._send_email(db, email, lead.email)

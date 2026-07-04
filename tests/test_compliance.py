@@ -237,16 +237,16 @@ def test_old_sends_do_not_count_toward_cap(test_db):
 def test_scheduled_sender_holds_outside_window(test_db):
     from app.agents.outreach_agent import send_pending_scheduled_emails
 
-    lead = _make_lead(test_db)
+    lead = _make_lead(test_db)  # .com address -> no timezone -> global UTC window
     _make_email(test_db, lead, status="scheduled")
 
-    # start == end makes the window empty, so sends are always held
-    with _patch_settings(OUTREACH_SEND_WINDOW_START=0, OUTREACH_SEND_WINDOW_END=0):
+    # start == end makes the window empty, so the recipient gate always holds
+    with _patch_settings(OUTREACH_SEND_WINDOW_START=0, OUTREACH_SEND_WINDOW_END=0, SMTP_HOST=""):
         summary = send_pending_scheduled_emails(test_db)
 
     assert summary["sent"] == 0
-    assert summary["reason"] is not None
-    # Email untouched
+    assert summary["skipped"] == 1
+    # Email untouched — stays scheduled for a tick inside the window
     assert test_db.query(OutreachEmail).filter_by(status="scheduled").count() == 1
 
 

@@ -187,6 +187,7 @@ class CSVImportService:
                         continue
 
                 # Create new lead
+                from app.services.timezone_service import infer_timezone
                 new_lead = Lead(
                     name=record['name'],
                     email=record['email'],
@@ -194,6 +195,7 @@ class CSVImportService:
                     source=record['source'],
                     status="processing",
                     org_id=org_id,
+                    timezone=infer_timezone(record['email']),
                 )
 
                 self.db.add(new_lead)

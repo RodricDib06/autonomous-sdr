@@ -60,6 +60,8 @@ class Lead(Base):
     identified_via_ip: Mapped[bool] = mapped_column(Boolean, default=False)
     lookalike_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     referred_by_lead_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("leads.id"), nullable=True)
+    # IANA timezone inferred from email TLD; gates the recipient-local send window
+    timezone: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     enrichments: Mapped[list["Enrichment"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
     events: Mapped[list["LeadEvent"]] = relationship(back_populates="lead", cascade="all, delete-orphan", foreign_keys="LeadEvent.lead_id")

@@ -92,7 +92,8 @@ def test_cannot_deactivate_global_sequence(client, test_session_factory):
     headers = _login_admin(client)
     db = test_session_factory()
     g = OutreachSequence(name="Global", steps=VALID_STEPS, org_id=None)
-    db.add(g); db.commit()
+    db.add(g)
+    db.commit()
     gid = g.id
     db.close()
 

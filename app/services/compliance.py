@@ -222,6 +222,31 @@ def can_send_now(db: Session, now: datetime | None = None) -> tuple[bool, str]:
     return True, f"OK — {sent}/{settings.OUTREACH_DAILY_SEND_LIMIT} sent in last 24h"
 
 
+def can_send_to_recipient(lead, now: datetime | None = None) -> tuple[bool, str]:
+    """
+    Send-window check on the recipient's local clock, falling back to the
+    global UTC window when the lead has no inferable timezone.
+    (The daily cap and weekday policy are enforced separately by the caller.)
+    """
+    from app.services.timezone_service import within_recipient_window
+
+    now = now or utcnow()
+    start, end = settings.OUTREACH_SEND_WINDOW_START, settings.OUTREACH_SEND_WINDOW_END
+
+    ok, reason = within_recipient_window(
+        getattr(lead, "timezone", None), now, start, end, settings.OUTREACH_WEEKDAYS_ONLY
+    )
+    if ok is not None:
+        return ok, reason
+
+    # No recipient timezone — global UTC window
+    if settings.OUTREACH_WEEKDAYS_ONLY and now.weekday() >= 5:
+        return False, "weekend (UTC fallback)"
+    if not (start <= now.hour < end):
+        return False, f"outside {start:02d}–{end:02d} UTC (no recipient timezone)"
+    return True, "inside global UTC window"
+
+
 def guardrail_status(db: Session) -> dict:
     allowed, reason = can_send_now(db)
     return {

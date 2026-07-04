@@ -15,7 +15,11 @@ def create_lead(
         # Unauthenticated ingest (public webhooks) lands in the default org
         from app.services.tenancy import get_default_org
         org_id = get_default_org(db).id
-    lead = Lead(name=name, email=email, company=company, source=source, org_id=org_id)
+    from app.services.timezone_service import infer_timezone
+    lead = Lead(
+        name=name, email=email, company=company, source=source, org_id=org_id,
+        timezone=infer_timezone(email),
+    )
     db.add(lead)
     db.commit()
     db.refresh(lead)

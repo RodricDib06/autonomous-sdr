@@ -280,6 +280,7 @@ def receive_lead(
             email=payload.email,
             company=payload.company,
             source=payload.source,
+            org_id=current_user.org_id,
         )
         push_lead_job(lead.id)
         log.info("lead.created", lead_id=lead.id[:8], email=lead.email)
@@ -305,6 +306,8 @@ def list_leads(
     from sqlalchemy.orm import selectinload
     try:
         query = db.query(Lead).options(selectinload(Lead.verdicts))
+        if current_user.org_id is not None:
+            query = query.filter(Lead.org_id == current_user.org_id)
 
         bant_filters = {k: v for k, v in {
             "authority": bant_authority,
@@ -551,7 +554,9 @@ def import_csv_leads(
 
         # Import using CSVImportService
         import_service = CSVImportService(db)
-        result = import_service.import_leads(content, check_duplicates=check_duplicates)
+        result = import_service.import_leads(
+            content, check_duplicates=check_duplicates, org_id=current_user.org_id
+        )
 
         # Persist import audit record
         import_service.persist_history(db, file.filename or "unknown.csv", result)
@@ -773,7 +778,7 @@ def get_lead(
 ):
     """Get detailed information about a specific lead"""
     try:
-        lead = crud.get_lead(db, lead_id)
+        lead = crud.get_lead(db, lead_id, org_id=current_user.org_id)
         if not lead:
             raise HTTPException(status_code=404, detail="Lead not found")
 
@@ -2213,6 +2218,8 @@ def list_suppressions(
     from app.database.models import SuppressionEntry
 
     q = db.query(SuppressionEntry).order_by(SuppressionEntry.created_at.desc())
+    if current_user.org_id is not None:
+        q = q.filter(SuppressionEntry.org_id == current_user.org_id)
     total = q.count()
     entries = q.offset(offset).limit(limit).all()
     return {
@@ -2252,14 +2259,18 @@ def create_suppression(
     entry = add_suppression(
         db, value, source="manual",
         reason=payload.get("reason"), created_by_id=current_user.id,
+        org_id=current_user.org_id,
     )
 
     # Stop pending cadences for every lead this entry now covers
     cancelled = 0
+    match_q = db.query(Lead)
+    if current_user.org_id is not None:
+        match_q = match_q.filter(Lead.org_id == current_user.org_id)
     if entry.kind == "email":
-        matches = db.query(Lead).filter(Lead.email.ilike(value)).all()
+        matches = match_q.filter(Lead.email.ilike(value)).all()
     else:
-        matches = db.query(Lead).filter(Lead.email.ilike(f"%@{value}")).all()
+        matches = match_q.filter(Lead.email.ilike(f"%@{value}")).all()
     for lead in matches:
         cancelled += cancel_scheduled_emails(db, lead.id, "Address added to suppression list")
 
@@ -2929,7 +2940,7 @@ def get_icp(
 ):
     """Return the current ICP configuration."""
     from app.services.icp_service import get_icp_config
-    cfg = get_icp_config(db)
+    cfg = get_icp_config(db, org_id=current_user.org_id)
     if cfg is None:
         return {
             "configured": False,
@@ -2992,7 +3003,7 @@ def update_icp(
     if not fields:
         raise HTTPException(status_code=422, detail="No valid fields provided")
 
-    cfg = upsert_icp_config(db, user_id=current_user.id, **fields)
+    cfg = upsert_icp_config(db, user_id=current_user.id, org_id=current_user.org_id, **fields)
     return {
         "configured": True,
         "industries": cfg.industries or [],
@@ -3035,7 +3046,7 @@ def get_lead_icp_evaluation(
         raise HTTPException(status_code=404, detail="Lead not found")
 
     enrichment = lead.enrichments[0] if lead.enrichments else None
-    config = get_icp_config(db)
+    config = get_icp_config(db, org_id=lead.org_id)
     evaluation = evaluate_icp(enrichment, config)
 
     return {

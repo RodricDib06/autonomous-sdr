@@ -133,7 +133,8 @@ class CSVImportService:
         return records, errors
 
     def import_leads(self, csv_content: str,
-                    check_duplicates: bool = True) -> ImportResult:
+                    check_duplicates: bool = True,
+                    org_id: str | None = None) -> ImportResult:
         """
         Import leads from CSV
 
@@ -191,7 +192,8 @@ class CSVImportService:
                     email=record['email'],
                     company=record['company'],
                     source=record['source'],
-                    status="processing"
+                    status="processing",
+                    org_id=org_id,
                 )
 
                 self.db.add(new_lead)

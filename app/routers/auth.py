@@ -90,8 +90,8 @@ def register(
 
     is_first_user = db.query(User).count() == 0
 
+    caller: User | None = None
     if not is_first_user:
-        caller: User | None = None
         if credentials:
             caller = _user_from_jwt(credentials.credentials, db)
         if caller is None and api_key_header:
@@ -112,10 +112,19 @@ def register(
     # First user always becomes admin regardless of requested role
     role = "admin" if is_first_user else payload.role
 
+    # Tenancy: first user lands in the default org; users registered by an
+    # admin join that admin's org.
+    from app.services.tenancy import get_default_org
+    if caller is not None and caller.org_id:
+        org_id = caller.org_id
+    else:
+        org_id = get_default_org(db).id
+
     user = User(
         email=payload.email.lower(),
         password_hash=hash_password(payload.password),
         role=role,
+        org_id=org_id,
     )
     db.add(user)
     db.commit()

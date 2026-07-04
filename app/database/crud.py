@@ -3,20 +3,37 @@ from app.database.models import Lead, Enrichment, Verdict, AgentLog, LeadEvent
 from app.utils.time import utcnow
 
 
-def create_lead(db: Session, name: str, email: str, company: str, source: str = "webhook") -> Lead:
-    lead = Lead(name=name, email=email, company=company, source=source)
+def create_lead(
+    db: Session,
+    name: str,
+    email: str,
+    company: str,
+    source: str = "webhook",
+    org_id: str | None = None,
+) -> Lead:
+    if org_id is None:
+        # Unauthenticated ingest (public webhooks) lands in the default org
+        from app.services.tenancy import get_default_org
+        org_id = get_default_org(db).id
+    lead = Lead(name=name, email=email, company=company, source=source, org_id=org_id)
     db.add(lead)
     db.commit()
     db.refresh(lead)
     return lead
 
 
-def get_lead(db: Session, lead_id: str) -> Lead | None:
-    return db.query(Lead).filter(Lead.id == lead_id).first()
+def get_lead(db: Session, lead_id: str, org_id: str | None = None) -> Lead | None:
+    q = db.query(Lead).filter(Lead.id == lead_id)
+    if org_id is not None:
+        q = q.filter(Lead.org_id == org_id)
+    return q.first()
 
 
-def get_all_leads(db: Session, limit: int = 100) -> list[Lead]:
-    return db.query(Lead).order_by(Lead.created_at.desc()).limit(limit).all()
+def get_all_leads(db: Session, limit: int = 100, org_id: str | None = None) -> list[Lead]:
+    q = db.query(Lead)
+    if org_id is not None:
+        q = q.filter(Lead.org_id == org_id)
+    return q.order_by(Lead.created_at.desc()).limit(limit).all()
 
 
 def update_lead_status(db: Session, lead_id: str, status: str) -> None:

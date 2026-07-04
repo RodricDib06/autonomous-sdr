@@ -152,19 +152,24 @@ def evaluate_icp(enrichment, config) -> ICPEvaluation:
 # DB helpers
 # ---------------------------------------------------------------------------
 
-def get_icp_config(db):
-    """Return the singleton ICPConfig row, or None if not yet configured."""
+def get_icp_config(db, org_id: str | None = None):
+    """Return the org's ICPConfig row (falls back to the legacy singleton)."""
     from app.database.models import ICPConfig
+    if org_id is not None:
+        cfg = db.query(ICPConfig).filter(ICPConfig.org_id == org_id).first()
+        if cfg is not None:
+            return cfg
     return db.query(ICPConfig).filter(ICPConfig.id == "default").first()
 
 
-def upsert_icp_config(db, user_id: str, **fields):
-    """Create or update the singleton ICP config row."""
+def upsert_icp_config(db, user_id: str, org_id: str | None = None, **fields):
+    """Create or update the org's ICP config row (one per organization)."""
     from app.database.models import ICPConfig
 
-    cfg = db.query(ICPConfig).filter(ICPConfig.id == "default").first()
+    row_id = org_id or "default"
+    cfg = db.query(ICPConfig).filter(ICPConfig.id == row_id).first()
     if cfg is None:
-        cfg = ICPConfig(id="default")
+        cfg = ICPConfig(id=row_id, org_id=org_id)
         db.add(cfg)
 
     for k, v in fields.items():

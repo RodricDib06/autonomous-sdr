@@ -39,7 +39,7 @@ def domain_of(email: str) -> str:
     return email.split("@", 1)[1] if "@" in email else email
 
 
-def is_suppressed(db: Session, email: str) -> SuppressionEntry | None:
+def is_suppressed(db: Session, email: str, org_id: str | None = None) -> SuppressionEntry | None:
     """Return the matching suppression entry (exact email or its domain), or None."""
     email = normalise(email)
     if not email:
@@ -47,11 +47,10 @@ def is_suppressed(db: Session, email: str) -> SuppressionEntry | None:
     candidates = [email]
     if "@" in email:
         candidates.append(domain_of(email))
-    return (
-        db.query(SuppressionEntry)
-        .filter(SuppressionEntry.value.in_(candidates))
-        .first()
-    )
+    q = db.query(SuppressionEntry).filter(SuppressionEntry.value.in_(candidates))
+    if org_id is not None:
+        q = q.filter(SuppressionEntry.org_id == org_id)
+    return q.first()
 
 
 def add_suppression(
@@ -61,12 +60,16 @@ def add_suppression(
     reason: str | None = None,
     lead_id: str | None = None,
     created_by_id: str | None = None,
+    org_id: str | None = None,
 ) -> SuppressionEntry:
-    """Idempotently add an email or domain to the do-not-contact list."""
+    """Idempotently add an email or domain to the org's do-not-contact list."""
     value = normalise(value)
     kind = "email" if "@" in value else "domain"
 
-    existing = db.query(SuppressionEntry).filter(SuppressionEntry.value == value).first()
+    q = db.query(SuppressionEntry).filter(SuppressionEntry.value == value)
+    if org_id is not None:
+        q = q.filter(SuppressionEntry.org_id == org_id)
+    existing = q.first()
     if existing:
         return existing
 
@@ -77,6 +80,7 @@ def add_suppression(
         reason=reason,
         lead_id=lead_id,
         created_by_id=created_by_id,
+        org_id=org_id,
     )
     db.add(entry)
     db.commit()
@@ -167,6 +171,7 @@ def process_unsubscribe(
         db, lead.email, source=source,
         reason=reason or "Lead opted out of communications",
         lead_id=lead.id,
+        org_id=lead.org_id,
     )
     cancelled = cancel_scheduled_emails(db, lead.id, f"Lead unsubscribed ({source})")
 

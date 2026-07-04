@@ -202,7 +202,7 @@ class OutreachAgent(BaseAgent):
 
         # Never contact suppressed addresses (unsubscribed / bounced / DNC)
         from app.services.compliance import is_suppressed
-        suppression = is_suppressed(db, lead.email)
+        suppression = is_suppressed(db, lead.email, org_id=lead.org_id)
         if suppression:
             log.info(
                 f"[outreach] Lead {lead_id} is on the suppression list "
@@ -218,8 +218,8 @@ class OutreachAgent(BaseAgent):
 
         enrichment = db.query(Enrichment).filter(Enrichment.lead_id == lead_id).first()
 
-        # Pick A/B sequence variant
-        sequence = self._pick_sequence(db)
+        # Pick A/B sequence variant (org's own sequences, falling back to global)
+        sequence = self._pick_sequence(db, org_id=lead.org_id)
         if sequence is None:
             sequence = self._seed_default_sequences(db)
 
@@ -272,7 +272,7 @@ class OutreachAgent(BaseAgent):
 
     # ── Sequence selection ──────────────────────────────────────────────────
 
-    def _pick_sequence(self, db: Session) -> OutreachSequence | None:
+    def _pick_sequence(self, db: Session, org_id: str | None = None) -> OutreachSequence | None:
         """Select an A/B variant using Thompson Sampling.
 
         Routes more traffic to the better-performing variant as conversion data
@@ -282,7 +282,13 @@ class OutreachAgent(BaseAgent):
         from app.database.models import ABTestResult
         from app.services.bandit import thompson_select
 
-        sequences = db.query(OutreachSequence).filter(OutreachSequence.is_active).all()
+        seq_q = db.query(OutreachSequence).filter(OutreachSequence.is_active)
+        if org_id is not None:
+            org_sequences = seq_q.filter(OutreachSequence.org_id == org_id).all()
+            # Fall back to global (org-less) sequences when the org has none
+            sequences = org_sequences or seq_q.filter(OutreachSequence.org_id.is_(None)).all()
+        else:
+            sequences = seq_q.all()
         if not sequences:
             return None
 
@@ -547,7 +553,7 @@ def send_pending_scheduled_emails(db: Session) -> dict:
             continue
 
         # Never email suppressed addresses; kill the rest of their cadence too
-        if is_suppressed(db, lead.email):
+        if is_suppressed(db, lead.email, org_id=lead.org_id):
             cancelled += cancel_scheduled_emails(db, lead.id, "Address on suppression list")
             continue
 

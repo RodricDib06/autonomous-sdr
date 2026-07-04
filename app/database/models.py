@@ -11,10 +11,32 @@ def new_uuid():
     return str(uuid.uuid4())
 
 
+class Organization(Base):
+    """
+    Tenant boundary. Every user belongs to exactly one organization; leads,
+    sequences, suppression entries, and ICP config are scoped to it.
+
+    `org_id` columns are nullable for backward compatibility — rows created
+    before the tenancy migration are backfilled to the default organization,
+    and queries fall back to unscoped when the caller has no org (legacy JWTs).
+    """
+    __tablename__ = "organizations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    name: Mapped[str] = mapped_column(String(255))
+    slug: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    # Per-org settings: autonomy_mode (draft|approve|auto), acv, sdr_cost, …
+    settings: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    users: Mapped[list["User"]] = relationship(back_populates="organization")
+
+
 class Lead(Base):
     __tablename__ = "leads"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
     email: Mapped[str] = mapped_column(String(255), index=True)
     company: Mapped[str] = mapped_column(String(255))
@@ -110,6 +132,7 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(Text)
     role: Mapped[str] = mapped_column(String(20), default="rep")  # admin | manager | rep
@@ -118,6 +141,7 @@ class User(Base):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     api_keys: Mapped[list["APIKey"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    organization: Mapped["Organization | None"] = relationship(back_populates="users")
 
 
 class APIKey(Base):
@@ -179,8 +203,9 @@ class SuppressionEntry(Base):
     __tablename__ = "suppression_list"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
     # Lower-cased email ("jane@acme.com") or bare domain ("acme.com")
-    value: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    value: Mapped[str] = mapped_column(String(255), index=True)
     kind: Mapped[str] = mapped_column(String(20), default="email")  # email | domain
     # unsubscribe_link | reply_keyword | bounce | manual | gdpr_request
     source: Mapped[str] = mapped_column(String(50), default="manual")
@@ -199,6 +224,7 @@ class OutreachSequence(Base):
     __tablename__ = "outreach_sequences"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
     # steps: list of {step: int, delay_days: int, subject_template: str, body_template: str}
     steps: Mapped[list] = mapped_column(JSONB, default=list)
@@ -338,6 +364,7 @@ class ICPConfig(Base):
     """Ideal Customer Profile — stored as a single editable row."""
     __tablename__ = "icp_config"
 
+    org_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default="default")
     # Target lists — None means "any"
     industries: Mapped[list | None] = mapped_column(JSONB, nullable=True)

@@ -61,7 +61,6 @@ class ClaudeClient:
         """Async generator that yields text tokens using Anthropic's streaming API."""
         import asyncio
         loop = asyncio.get_event_loop()
-        import anthropic
 
         queue: asyncio.Queue = asyncio.Queue()
         sentinel = object()

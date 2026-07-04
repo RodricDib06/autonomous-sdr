@@ -158,7 +158,7 @@ def get_icp_config(db):
     return db.query(ICPConfig).filter(ICPConfig.id == "default").first()
 
 
-def upsert_icp_config(db, user_id: str, **fields) -> "ICPConfig":
+def upsert_icp_config(db, user_id: str, **fields):
     """Create or update the singleton ICP config row."""
     from app.database.models import ICPConfig
 
@@ -182,7 +182,7 @@ def icp_match_counts(db) -> dict:
     Return how many leads currently match the ICP, broken down by verdict.
     Used for the live preview on the ICP Builder page.
     """
-    from app.database.models import Lead, Verdict, Enrichment
+    from app.database.models import Lead
     from sqlalchemy.orm import selectinload
 
     config = get_icp_config(db)

@@ -1,4 +1,5 @@
-import sys, os
+import sys
+import os
 import requests
 
 email = os.getenv("EMAIL", "admin@autonomoussdr.com")

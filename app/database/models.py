@@ -164,6 +164,32 @@ class LeadHistory(Base):
 
 
 # ---------------------------------------------------------------------------
+# Compliance — do-not-contact suppression list
+# ---------------------------------------------------------------------------
+
+class SuppressionEntry(Base):
+    """
+    An email address or whole domain that must never be contacted.
+
+    Populated by: the one-click unsubscribe link, unsubscribe-intent detection
+    on inbound replies, hard bounces, or manual entry by a manager.
+    Checked before every outreach send (initial and scheduled follow-ups).
+    """
+    __tablename__ = "suppression_list"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    # Lower-cased email ("jane@acme.com") or bare domain ("acme.com")
+    value: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String(20), default="email")  # email | domain
+    # unsubscribe_link | reply_keyword | bounce | manual | gdpr_request
+    source: Mapped[str] = mapped_column(String(50), default="manual")
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lead_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("leads.id"), nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+# ---------------------------------------------------------------------------
 # Outreach
 # ---------------------------------------------------------------------------
 

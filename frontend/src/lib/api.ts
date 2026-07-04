@@ -361,4 +361,37 @@ export const autonomyApi = {
     api.get<AutonomyFeed>("/autonomy-feed", { params: { hours } }).then((r) => r.data),
 };
 
+// ── Compliance — suppression list + send guardrails ───────────────────────────
+export interface SuppressionEntry {
+  id: string;
+  value: string;
+  kind: "email" | "domain";
+  source: string;
+  reason: string | null;
+  lead_id: string | null;
+  created_at: string | null;
+}
+
+export interface GuardrailStatus {
+  can_send: boolean;
+  reason: string;
+  sent_last_24h: number;
+  daily_limit: number;
+  window_start_hour_utc: number;
+  window_end_hour_utc: number;
+  weekdays_only: boolean;
+  suppression_count: number;
+}
+
+export const complianceApi = {
+  guardrails: () =>
+    api.get<GuardrailStatus>("/outreach/guardrails").then((r) => r.data),
+  listSuppressions: (limit = 200) =>
+    api.get<{ total: number; entries: SuppressionEntry[] }>("/suppressions", { params: { limit } }).then((r) => r.data),
+  addSuppression: (value: string, reason?: string) =>
+    api.post<{ id: string; value: string; kind: string; cancelled_emails: number }>("/suppressions", { value, reason }).then((r) => r.data),
+  removeSuppression: (id: string) =>
+    api.delete(`/suppressions/${id}`).then((r) => r.data),
+};
+
 export default api;

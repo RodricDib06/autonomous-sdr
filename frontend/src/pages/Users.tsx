@@ -12,7 +12,7 @@ import { Badge } from "../components/ui/badge";
 import { Card } from "../components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "../components/ui/dialog";
-import { formatDate } from "../lib/utils";
+import { formatDate, apiErrorMessage } from "../lib/utils";
 import { useAuthStore } from "../store/authStore";
 
 function CreateUserDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
@@ -31,8 +31,8 @@ function CreateUserDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
       toast.success(`User ${email} created`);
       onOpenChange(false);
       setEmail(""); setPassword(""); setRole("rep");
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail ?? "Failed to create user");
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Failed to create user"));
     } finally {
       setLoading(false);
     }
@@ -121,7 +121,7 @@ export default function Users() {
   const { mutate: deactivate } = useMutation({
     mutationFn: authApi.deactivateUser,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["users"] }); toast.success("User deactivated"); },
-    onError: (e: any) => toast.error(e.response?.data?.detail ?? "Failed"),
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Failed")),
   });
 
   return (
@@ -226,7 +226,7 @@ export default function Users() {
                 <div>
                   <div className="flex items-center gap-2 mb-0.5">
                     <p className="font-medium text-sm">{label}</p>
-                    <Badge variant={role as any} className="text-[10px]">{role}</Badge>
+                    <Badge variant={role as "admin" | "manager" | "rep"} className="text-[10px]">{role}</Badge>
                   </div>
                   <p className="text-xs text-muted-foreground">{desc}</p>
                 </div>

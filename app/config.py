@@ -93,6 +93,15 @@ class Settings(BaseSettings):
     OUTREACH_FROM_EMAIL: str = ""
     OUTREACH_SENDER_NAME: str = "Sales Team"
 
+    # ── Outreach guardrails (compliance & deliverability) ─────────────────────
+    # Max emails sent in any rolling 24h window — protects sender reputation
+    OUTREACH_DAILY_SEND_LIMIT: int = 200
+    # Only send between these hours (UTC). Cold email at 3 a.m. reads as spam.
+    OUTREACH_SEND_WINDOW_START: int = 8
+    OUTREACH_SEND_WINDOW_END: int = 18
+    # Skip Saturday/Sunday sends
+    OUTREACH_WEEKDAYS_ONLY: bool = True
+
     # ── Booking — Cal.com ──────────────────────────────────────────────────────
     CAL_API_KEY: str = ""
     CAL_SCHEDULING_URL: str = ""

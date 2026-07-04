@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import TypedDict
 
 log = logging.getLogger(__name__)
@@ -163,7 +163,7 @@ def get_cooling_leads(db, limit: int = 20) -> list[dict]:
     Return Warm leads that are losing engagement, sorted by most overdue.
     Uses exponential decay scores and includes bandit-relevant fields.
     """
-    from app.database.models import Lead, Verdict, OutreachEmail, BookingRequest
+    from app.database.models import Lead, Verdict
     from sqlalchemy.orm import selectinload
 
     warm_leads = (

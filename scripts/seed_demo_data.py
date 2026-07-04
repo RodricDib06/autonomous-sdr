@@ -844,9 +844,9 @@ def seed(db):
 
     print(f"\n  ✓ Seeded {grand_total} leads:")
     print(f"     {hot_total} Hot  ·  {warm_total} Warm  ·  {cold_total} Cold  ·  {len(inflight)} in-flight/failed")
-    print(f"  ✓ 2 outreach sequences (A/B test — Variant A leading)")
-    print(f"  ✓ 6 optimization runs showing BANT weight convergence over 28 days")
-    print(f"  ✓ Leads distributed across 30 days with campaign spike simulation")
+    print("  ✓ 2 outreach sequences (A/B test — Variant A leading)")
+    print("  ✓ 6 optimization runs showing BANT weight convergence over 28 days")
+    print("  ✓ Leads distributed across 30 days with campaign spike simulation")
 
 
 if __name__ == "__main__":

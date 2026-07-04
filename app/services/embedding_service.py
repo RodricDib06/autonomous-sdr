@@ -141,7 +141,7 @@ def semantic_search_conversations(
 def _vector_search(db: Session, vec: list[float], lead_id: str | None, limit: int) -> list[dict]:
     """Cosine similarity search using pgvector <=> operator."""
     vec_literal = f"'[{','.join(str(x) for x in vec)}]'::vector"
-    lead_filter = f"AND c.lead_id = :lead_id" if lead_id else ""
+    lead_filter = "AND c.lead_id = :lead_id" if lead_id else ""
     sql = f"""
         SELECT c.id, c.lead_id, c.channel, c.summary,
                1 - (c.embedding <=> {vec_literal}) AS similarity,

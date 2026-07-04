@@ -380,6 +380,48 @@ export const handlers = [
     HttpResponse.json({ enabled: false })
   ),
 
+  // ── Compliance — guardrails + suppression list ─────────────────────────────
+  http.get(`${API_BASE_URL}/outreach/guardrails`, () =>
+    HttpResponse.json({
+      can_send: true,
+      reason: 'OK — 12/200 sent in last 24h',
+      sent_last_24h: 12,
+      daily_limit: 200,
+      window_start_hour_utc: 8,
+      window_end_hour_utc: 18,
+      weekdays_only: true,
+      suppression_count: 1,
+    })
+  ),
+
+  http.get(`${API_BASE_URL}/suppressions`, () =>
+    HttpResponse.json({
+      total: 1,
+      entries: [
+        {
+          id: 'sup-1',
+          value: 'optout@corp.com',
+          kind: 'email',
+          source: 'unsubscribe_link',
+          reason: null,
+          lead_id: null,
+          created_at: '2026-07-01T10:00:00Z',
+        },
+      ],
+    })
+  ),
+
+  http.post(`${API_BASE_URL}/suppressions`, () =>
+    HttpResponse.json(
+      { id: 'sup-2', value: 'spam@corp.com', kind: 'email', cancelled_emails: 0 },
+      { status: 201 }
+    )
+  ),
+
+  http.delete(`${API_BASE_URL}/suppressions/:id`, () =>
+    HttpResponse.json({ status: 'deleted', id: 'sup-1' })
+  ),
+
   // ── Decay / cooling leads ──────────────────────────────────────────────────
   http.get(`${API_BASE_URL}/leads/cooling`, () =>
     HttpResponse.json({ leads: [], count: 0 })

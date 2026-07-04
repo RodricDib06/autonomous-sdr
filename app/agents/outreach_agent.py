@@ -199,6 +199,16 @@ class OutreachAgent(BaseAgent):
         if lead is None:
             raise ValueError(f"Lead {lead_id} not found")
 
+        # Never contact suppressed addresses (unsubscribed / bounced / DNC)
+        from app.services.compliance import is_suppressed
+        suppression = is_suppressed(db, lead.email)
+        if suppression:
+            log.info(
+                f"[outreach] Lead {lead_id} is on the suppression list "
+                f"({suppression.value}, source={suppression.source}) — skipping outreach"
+            )
+            return {"status": "skipped", "reason": "suppressed", "suppression_source": suppression.source}
+
         # Skip if a verdict exists and it's Cold
         verdict = db.query(Verdict).filter(Verdict.lead_id == lead_id).first()
         if verdict and verdict.final_verdict == "Cold":
@@ -427,12 +437,24 @@ class OutreachAgent(BaseAgent):
             log.info(f"[outreach] Demo mode — email {email_record.id} marked sent (no SMTP)")
             return "sent_demo"
 
+        # CAN-SPAM: every commercial email carries a working opt-out
+        unsubscribe_url = (
+            f"{settings.APP_BASE_URL}/unsubscribe/{email_record.id}"
+            if settings.APP_BASE_URL else ""
+        )
+        plain_body = email_record.body
+        if unsubscribe_url:
+            plain_body += f"\n\n—\nDon't want to hear from us? Unsubscribe: {unsubscribe_url}"
+
         try:
             msg = MIMEMultipart("alternative")
             msg["Subject"] = email_record.subject
             msg["From"] = settings.OUTREACH_FROM_EMAIL
             msg["To"] = to_address
-            msg.attach(MIMEText(email_record.body, "plain"))
+            if unsubscribe_url:
+                msg["List-Unsubscribe"] = f"<{unsubscribe_url}>"
+                msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+            msg.attach(MIMEText(plain_body, "plain"))
 
             # HTML part with open-tracking pixel embedded
             # The pixel fires a GET /track/open/{email_id} which records the open
@@ -441,6 +463,8 @@ class OutreachAgent(BaseAgent):
                 pixel_url = f"{settings.APP_BASE_URL}/track/open/{email_record.id}"
                 html_body = (
                     f"<html><body><pre style='font-family:sans-serif'>{email_record.body}</pre>"
+                    f"<p style='font-size:11px;color:#888'>Don't want to hear from us? "
+                    f"<a href='{unsubscribe_url}'>Unsubscribe</a></p>"
                     f"<img src='{pixel_url}' width='1' height='1' style='display:none' /></body></html>"
                 )
                 msg.attach(MIMEText(html_body, "html"))
@@ -473,10 +497,27 @@ def send_pending_scheduled_emails(db: Session) -> dict:
     sequence actually work — step 1 is sent immediately by the agent,
     steps 2 and 3 sit in the DB until this job picks them up.
 
-    Returns {"sent": int, "failed": int, "skipped": int}.
+    Guardrails applied before anything leaves the building:
+      - global send window / weekday / daily-cap check (compliance.can_send_now)
+      - per-lead: skip + cancel remaining steps if the lead has replied
+      - per-lead: skip + cancel remaining steps if the address is suppressed
+
+    Returns {"sent": int, "failed": int, "skipped": int, "cancelled": int, "reason": str | None}.
     """
+    from app.services.compliance import (
+        can_send_now,
+        cancel_scheduled_emails,
+        is_suppressed,
+        lead_has_replied,
+    )
+
     now = datetime.utcnow()
     from app.database.models import Lead as _Lead
+
+    allowed, reason = can_send_now(db, now)
+    if not allowed:
+        log.info(f"[outreach_scheduler] Holding sends — {reason}")
+        return {"sent": 0, "failed": 0, "skipped": 0, "cancelled": 0, "reason": reason}
 
     pending = (
         db.query(OutreachEmail)
@@ -490,7 +531,7 @@ def send_pending_scheduled_emails(db: Session) -> dict:
         .all()
     )
 
-    sent = failed = skipped = 0
+    sent = failed = skipped = cancelled = 0
     agent = OutreachAgent()
 
     for email in pending:
@@ -498,8 +539,19 @@ def send_pending_scheduled_emails(db: Session) -> dict:
         if not lead or not lead.email:
             skipped += 1
             continue
+
+        # The lead answered — a human owns this thread now, stop the cadence
+        if lead_has_replied(db, lead.id):
+            cancelled += cancel_scheduled_emails(db, lead.id, "Lead replied — sequence stopped")
+            continue
+
+        # Never email suppressed addresses; kill the rest of their cadence too
+        if is_suppressed(db, lead.email):
+            cancelled += cancel_scheduled_emails(db, lead.id, "Address on suppression list")
+            continue
+
         result = agent._send_email(db, email, lead.email)
-        if result == "sent":
+        if result.startswith("sent"):
             sent += 1
             log.info(
                 f"[outreach_scheduler] Sent step {email.step_number} to "
@@ -508,4 +560,4 @@ def send_pending_scheduled_emails(db: Session) -> dict:
         else:
             failed += 1
 
-    return {"sent": sent, "failed": failed, "skipped": skipped}
+    return {"sent": sent, "failed": failed, "skipped": skipped, "cancelled": cancelled, "reason": None}

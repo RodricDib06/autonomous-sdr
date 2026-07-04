@@ -4,9 +4,7 @@ Performance benchmark for AutonomousSDR pipeline
 """
 import time
 import requests
-import subprocess
 import sys
-from pathlib import Path
 
 def time_function(func, *args, **kwargs):
     """Time a function execution"""
@@ -20,7 +18,7 @@ def submit_lead(base_url: str, lead_data: dict) -> bool:
     try:
         response = requests.post(f"{base_url}/leads", json=lead_data, timeout=10)
         return response.status_code == 200
-    except:
+    except requests.RequestException:
         return False
 
 def benchmark_pipeline(base_url: str, num_leads: int = 10) -> dict:
@@ -31,7 +29,7 @@ def benchmark_pipeline(base_url: str, num_leads: int = 10) -> dict:
     try:
         response = requests.get(f"{base_url}/leads", timeout=10)
         initial_lead_count = len(response.json()) if response.status_code == 200 else 0
-    except:
+    except requests.RequestException:
         initial_lead_count = 0
 
     # Sample lead data - use realistic names like the test data generator
@@ -146,12 +144,12 @@ def main():
         print(f"  Total time: {results['total_time']:.1f}s")
     
     if results['failed'] > 0:
-        print(f"\n⚠️  Note: 'Failed' means the lead encountered an error during processing.")
-        print(f"   This could be due to LLM timeouts, validation errors, or other issues.")
-        print(f"   The pipeline includes error recovery, so some failures are expected.")
+        print("\n⚠️  Note: 'Failed' means the lead encountered an error during processing.")
+        print("   This could be due to LLM timeouts, validation errors, or other issues.")
+        print("   The pipeline includes error recovery, so some failures are expected.")
 
     throughput = results['completed'] / total_time if total_time > 0 else 0
-    print(".2f")
+    print(f"Throughput: {throughput:.2f} leads/sec")
 
 if __name__ == "__main__":
     main()

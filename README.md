@@ -33,12 +33,14 @@ Universal Webhook               PostgreSQL + pgvector + Redis
 | **Runtime config toggle** | `POST /config/enrichment-provider` switches synthetic/hunter/pdl without restart |
 | **Semantic memory** | pgvector HNSW index + embeddings; keyword fallback |
 | **Email tracking** | 1×1 pixel open tracking + click redirect |
+| **Compliance & send safety** | Do-not-contact suppression list (email + domain), RFC 8058 one-click unsubscribe, opt-out intent detection on replies, auto-stop sequences on reply |
+| **Send guardrails** | Rolling 24h send cap, quiet-hours window, weekday-only sends — enforced before every scheduled batch |
 | **5 enrichment sources** | Synthetic · Hunter.io · People Data Labs · Crunchbase signals |
 | **Full auth** | JWT access + refresh tokens; RBAC (admin / manager / rep); API key auth |
 | **Prometheus metrics** | Queue depth, node duration histograms, LLM call counters, in-flight gauge |
 | **React dashboard** | Live pipeline SSE stream, A/B results, BANT weight chart, lead detail drawer |
 | **Production hardening** | Rate limiting (slowapi), security headers middleware, CORS from env var, Alembic migrations |
-| **222 tests** | Backend: pytest + mocks. Ingest, auth, A/B, enrichment, graph routing, intent scoring, … |
+| **261 backend + 430 frontend tests** | pytest + mocks; vitest + MSW. Ingest, auth, A/B, enrichment, graph routing, intent scoring, compliance, … |
 
 ---
 
@@ -252,7 +254,7 @@ Full interactive docs: `http://localhost:8000/docs`
 ## Testing
 
 ```bash
-make test           # 222 tests, all passing
+make test           # 261 tests, all passing
 make lint           # ruff check
 make fmt            # ruff format
 ```
@@ -350,7 +352,7 @@ frontend/src/pages/
 ├── Leads.tsx                    # Lead table with verdict/BANT filters
 └── Settings.tsx                 # Slack, SMTP, API key management
 
-tests/                           # 222 tests — pytest + unittest.mock
+tests/                           # 261 tests — pytest + unittest.mock
 ```
 
 ---

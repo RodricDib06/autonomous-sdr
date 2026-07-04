@@ -7,6 +7,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { authApi } from "../lib/api";
 import { useAuthStore } from "../store/authStore";
+import { apiErrorMessage } from "../lib/utils";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -24,8 +25,8 @@ export default function Login() {
       setAuth(data.user, data.access_token, data.refresh_token);
       toast.success(`Welcome back, ${data.user.email}`);
       navigate("/");
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail ?? "Invalid credentials");
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Invalid credentials"));
     } finally {
       setLoading(false);
     }

@@ -37,10 +37,8 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
 from sqlalchemy.orm import Session
 
-from app.config import settings
 
 log = logging.getLogger(__name__)
 
@@ -143,7 +141,7 @@ def traverse_org_chart(db: Session, lead_id: str) -> dict:
         reason_skipped: str | None,
       }
     """
-    from app.database.models import Lead, Verdict, Enrichment
+    from app.database.models import Verdict, Enrichment
     from app.database import crud
     from app.services.queue_service import push_lead_job, LOW_PRIORITY
     from app.agents.research_agent import _search_web

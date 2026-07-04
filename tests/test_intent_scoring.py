@@ -76,7 +76,7 @@ def test_high_seniority_adds_signal():
     lead = _make_lead(source="website_form")
     enr = _make_enrichment(seniority="VP")
     with patch("app.services.enrichment.crunchbase.get_funding_signals", side_effect=Exception("skip")):
-        score = compute_intent_score(db, lead, enrichment=enr, verdict=None)
+        compute_intent_score(db, lead, enrichment=enr, verdict=None)
     added = [c.args[0].signal_type for c in db.add.call_args_list]
     assert "high_seniority" in added
 

@@ -26,7 +26,6 @@ Web search uses Tavily (1000 free searches/month) or DuckDuckGo as fallback.
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
@@ -275,7 +274,7 @@ def run_trigger_check_job(db: Session) -> dict:
 
     Returns a summary dict for logging.
     """
-    from app.database.models import Lead, Verdict, Enrichment, OutreachEmail, IntentSignal
+    from app.database.models import Lead, Verdict, OutreachEmail, IntentSignal
     from app.services.queue_service import push_lead_job
     from sqlalchemy.orm import selectinload
 

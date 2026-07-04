@@ -2,7 +2,6 @@
 Re-queues leads that are stuck in 'processing' or 'failed' back into the Redis
 worker queue so they get processed on the next worker cycle.
 """
-import sys
 import logging
 from datetime import datetime, timedelta
 

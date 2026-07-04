@@ -54,3 +54,13 @@ export function scoreLabel(score: number | null | undefined): string {
 export function truncate(str: string, n: number): string {
   return str.length > n ? str.slice(0, n - 1) + "…" : str;
 }
+
+/** Extract a human-readable message from an API error (axios-shaped or plain). */
+export function apiErrorMessage(err: unknown, fallback: string): string {
+  if (typeof err === "object" && err !== null) {
+    const maybe = err as { response?: { data?: { detail?: unknown } }; message?: unknown };
+    const detail = maybe.response?.data?.detail;
+    if (typeof detail === "string" && detail) return detail;
+  }
+  return fallback;
+}

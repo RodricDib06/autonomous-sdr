@@ -408,8 +408,9 @@ describe('Settings page', () => {
     renderWithProviders(<Settings />);
     await waitFor(() => screen.getByText('Production Key'));
 
-    // Click the trash/revoke button
-    const revokeBtn = document.querySelector('button[class*="text-red-400"]') as HTMLElement;
+    // Click the trash/revoke button inside the API-key row (not other sections' delete buttons)
+    const keyRow = screen.getByText('Production Key').closest('div[class*="border"]') as HTMLElement;
+    const revokeBtn = keyRow.querySelector('button[class*="text-red-400"]') as HTMLElement;
     if (revokeBtn) {
       await user.click(revokeBtn);
       await waitFor(() => {
@@ -431,7 +432,8 @@ describe('Settings page', () => {
     renderWithProviders(<Settings />);
     await waitFor(() => screen.getByText('Production Key'));
 
-    const revokeBtn = document.querySelector('button[class*="text-red-400"]') as HTMLElement;
+    const keyRow = screen.getByText('Production Key').closest('div[class*="border"]') as HTMLElement;
+    const revokeBtn = keyRow.querySelector('button[class*="text-red-400"]') as HTMLElement;
     if (revokeBtn) {
       await user.click(revokeBtn);
       // Key stays in the list (not revoked)
@@ -571,6 +573,74 @@ describe('Settings page', () => {
     // After click, dialog remains open and key text is still shown
     await waitFor(() => {
       expect(screen.getByText('sk_test_full_key')).toBeInTheDocument();
+    });
+  });
+});
+
+describe('Settings — Compliance & Send Safety', () => {
+  it('renders the compliance section with guardrail status', async () => {
+    renderWithProviders(<Settings />);
+    await waitFor(() => {
+      expect(screen.getByText('Compliance & Send Safety')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Sending allowed')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/12 \/ 200 in last 24h/)).toBeInTheDocument();
+  });
+
+  it('shows sends-held badge when guardrails block sending', async () => {
+    server.use(
+      http.get('http://localhost:8000/outreach/guardrails', () =>
+        HttpResponse.json({
+          can_send: false,
+          reason: 'Daily send cap reached (200/200 in last 24h)',
+          sent_last_24h: 200,
+          daily_limit: 200,
+          window_start_hour_utc: 8,
+          window_end_hour_utc: 18,
+          weekdays_only: true,
+          suppression_count: 1,
+        })
+      )
+    );
+    renderWithProviders(<Settings />);
+    await waitFor(() => {
+      expect(screen.getByText('Sends held')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Daily send cap reached/)).toBeInTheDocument();
+  });
+
+  it('lists existing suppression entries', async () => {
+    renderWithProviders(<Settings />);
+    await waitFor(() => {
+      expect(screen.getByText('optout@corp.com')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/unsubscribe link/)).toBeInTheDocument();
+  });
+
+  it('suppress button disabled until a plausible value is typed', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />);
+    await waitFor(() => screen.getByPlaceholderText(/jane@acme.com or acme.com/i));
+
+    const btn = screen.getByRole('button', { name: /suppress/i });
+    expect(btn).toBeDisabled();
+
+    await user.type(screen.getByPlaceholderText(/jane@acme.com or acme.com/i), 'spam@corp.com');
+    expect(btn).toBeEnabled();
+  });
+
+  it('adds a suppression entry and shows a success toast', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />);
+    await waitFor(() => screen.getByPlaceholderText(/jane@acme.com or acme.com/i));
+
+    await user.type(screen.getByPlaceholderText(/jane@acme.com or acme.com/i), 'spam@corp.com');
+    await user.click(screen.getByRole('button', { name: /suppress/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/added to do-not-contact list/)).toBeInTheDocument();
     });
   });
 });

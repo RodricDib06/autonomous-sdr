@@ -70,7 +70,7 @@ class PreCallBriefAgent(BaseAgent):
         self._ai = get_ai_client()
 
     def run(self, db: Session, lead_id: str, input_data: dict) -> dict:
-        from app.database.models import Lead, Enrichment, Verdict, BookingRequest, AgentLog
+        from app.database.models import Enrichment, Verdict, BookingRequest, AgentLog
         from app.database import crud
 
         lead = crud.get_lead(db, lead_id)

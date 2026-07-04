@@ -44,8 +44,8 @@ def test_persist_history_fields_match(test_db):
 
 def test_persist_history_ordering(test_db):
     service = CSVImportService(test_db)
-    r1 = service.persist_history(test_db, "first.csv", _make_result())
-    r2 = service.persist_history(test_db, "second.csv", _make_result())
+    service.persist_history(test_db, "first.csv", _make_result())
+    service.persist_history(test_db, "second.csv", _make_result())
 
     records = (
         test_db.query(ImportHistory)

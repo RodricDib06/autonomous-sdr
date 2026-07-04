@@ -1,2 +1,5 @@
 [lint.per-file-ignores]
 "app/main.py" = ["E402"]
+# Scripts bootstrap sys.path before importing app modules
+"scripts/*.py" = ["E402"]
+"tests/conftest.py" = ["E402"]

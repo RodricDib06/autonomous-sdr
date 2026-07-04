@@ -1340,7 +1340,7 @@ def get_autonomy_feed(
     """
     from datetime import timedelta
     from app.database.models import (
-        OutreachEmail, IntentSignal, OptimizationRun, Lead as LeadModel, Verdict,
+        OutreachEmail, IntentSignal, OptimizationRun, Lead as LeadModel,
     )
     from app.database.models import LeadEvent
 
@@ -1763,8 +1763,6 @@ def get_revenue_funnel(
     Return lead counts and estimated value by conversion stage.
     Uses close_probability where available; falls back to stage-based multipliers.
     """
-    from sqlalchemy import func
-    from app.database.models import Verdict
 
     stage_multipliers = {
         "unqualified": 0.05,
@@ -2089,7 +2087,8 @@ def track_open(email_id: str, db: Session = Depends(get_db)):
                         except Exception as _rq_err:
                             log.warning(f"[track/open] Re-queue failed: {_rq_err}")
                     try:
-                        import redis as _redis, json as _json
+                        import redis as _redis
+                        import json as _json
                         _r = _redis.from_url(settings.REDIS_URL, decode_responses=True)
                         _r.publish("asdr:global_events", _json.dumps({
                             "type": "score_update",
@@ -2157,6 +2156,144 @@ def track_click(
     return RedirectResponse(url=url, status_code=302)
 
 
+# ===========================================================================
+# Compliance — one-click unsubscribe + suppression list + send guardrails
+# ===========================================================================
+
+_UNSUBSCRIBE_PAGE = """<!doctype html>
+<html><head><title>Unsubscribed</title></head>
+<body style="font-family:sans-serif;max-width:480px;margin:80px auto;text-align:center">
+<h2>{title}</h2><p>{message}</p>
+</body></html>"""
+
+
+@app.api_route("/unsubscribe/{email_id}", methods=["GET", "POST"])
+def unsubscribe(email_id: str, db: Session = Depends(get_db)):
+    """
+    One-click unsubscribe landing page (public, no auth).
+
+    Linked from every outreach email footer and the RFC 8058
+    List-Unsubscribe-Post header (POST for mail-client one-click).
+    Suppresses the lead's address and cancels all pending follow-ups.
+    """
+    from fastapi.responses import HTMLResponse
+    from app.database.models import OutreachEmail as OutreachEmailModel
+    from app.services.compliance import process_unsubscribe
+
+    email_rec = db.query(OutreachEmailModel).filter(OutreachEmailModel.id == email_id).first()
+    if not email_rec:
+        return HTMLResponse(
+            _UNSUBSCRIBE_PAGE.format(
+                title="Link not recognised",
+                message="This unsubscribe link is invalid or has expired.",
+            ),
+            status_code=404,
+        )
+
+    lead = db.query(Lead).filter(Lead.id == email_rec.lead_id).first()
+    if lead:
+        process_unsubscribe(db, lead, source="unsubscribe_link")
+        log.info(f"[unsubscribe] Lead {lead.id[:8]} opted out via one-click link")
+
+    return HTMLResponse(
+        _UNSUBSCRIBE_PAGE.format(
+            title="You're unsubscribed",
+            message="You won't receive any further emails from us. Sorry to see you go.",
+        )
+    )
+
+
+@app.get("/suppressions")
+def list_suppressions(
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
+    """Do-not-contact list — emails and domains that will never be messaged."""
+    from app.database.models import SuppressionEntry
+
+    q = db.query(SuppressionEntry).order_by(SuppressionEntry.created_at.desc())
+    total = q.count()
+    entries = q.offset(offset).limit(limit).all()
+    return {
+        "total": total,
+        "entries": [
+            {
+                "id": e.id,
+                "value": e.value,
+                "kind": e.kind,
+                "source": e.source,
+                "reason": e.reason,
+                "lead_id": e.lead_id,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in entries
+        ],
+    }
+
+
+@app.post("/suppressions", status_code=201)
+def create_suppression(
+    payload: dict,
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually add an email or bare domain to the do-not-contact list.
+    Body: {"value": "jane@acme.com" | "acme.com", "reason": "optional"}
+    Cancels any scheduled outreach to matching leads.
+    """
+    from app.services.compliance import add_suppression, cancel_scheduled_emails, normalise
+
+    value = normalise(payload.get("value") or "")
+    if not value or ("." not in value):
+        raise HTTPException(status_code=422, detail="Provide a valid email address or domain")
+
+    entry = add_suppression(
+        db, value, source="manual",
+        reason=payload.get("reason"), created_by_id=current_user.id,
+    )
+
+    # Stop pending cadences for every lead this entry now covers
+    cancelled = 0
+    if entry.kind == "email":
+        matches = db.query(Lead).filter(Lead.email.ilike(value)).all()
+    else:
+        matches = db.query(Lead).filter(Lead.email.ilike(f"%@{value}")).all()
+    for lead in matches:
+        cancelled += cancel_scheduled_emails(db, lead.id, "Address added to suppression list")
+
+    return {"id": entry.id, "value": entry.value, "kind": entry.kind, "cancelled_emails": cancelled}
+
+
+@app.delete("/suppressions/{entry_id}")
+def delete_suppression(
+    entry_id: str,
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    from app.services.compliance import remove_suppression
+
+    if not remove_suppression(db, entry_id):
+        raise HTTPException(status_code=404, detail="Suppression entry not found")
+    return {"status": "deleted", "id": entry_id}
+
+
+@app.get("/outreach/guardrails")
+def get_outreach_guardrails(
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """
+    Live send-safety status: whether the scheduler is currently allowed to
+    send, how much of the daily cap is used, and the active quiet-hours window.
+    """
+    from app.services.compliance import guardrail_status
+
+    return guardrail_status(db)
+
+
 @app.get("/leads/{lead_id}/outreach/generate/stream", include_in_schema=False)
 async def stream_outreach_generation(
     lead_id: str,
@@ -2186,7 +2323,7 @@ async def stream_outreach_generation(
             raise HTTPException(status_code=401, detail="Invalid token")
 
     async def generate():
-        from app.database.models import Lead, Enrichment, OutreachSequence
+        from app.database.models import Enrichment, OutreachSequence
         from app.agents.outreach_agent import _PERSONALISE_PROMPT, OutreachAgent
 
         lead = crud.get_lead(db, lead_id)
@@ -2412,6 +2549,31 @@ async def ingest_email_reply(
             email_rec.status = "replied"
             email_rec.replied_at = datetime.utcnow()
             db.commit()
+
+    from app.services.compliance import (
+        cancel_scheduled_emails,
+        detect_unsubscribe_intent,
+        process_unsubscribe,
+    )
+
+    # Opt-out request ("unsubscribe", "remove me", …): suppress the address,
+    # kill the cadence, and do NOT let the agent argue with them.
+    if detect_unsubscribe_intent(reply_text):
+        lead_obj = db.query(Lead).filter(Lead.id == lead_id).first()
+        if lead_obj:
+            result = process_unsubscribe(
+                db, lead_obj, source="reply_keyword",
+                reason=f"Reply text: {reply_text[:200]}",
+            )
+            return {
+                "status": "unsubscribed",
+                "lead_id": lead_id,
+                "cancelled_emails": result["cancelled_emails"],
+                "message": "Opt-out detected — lead suppressed and sequence stopped",
+            }
+
+    # A human answered — stop the automated cadence for this lead
+    cancel_scheduled_emails(db, lead_id, "Lead replied — sequence stopped")
 
     # Bayesian update: reply is the strongest positive signal
     from app.services.intent_scoring import apply_bayesian_update
@@ -2679,7 +2841,7 @@ def get_close_probability(
         "feature_importances": None,
         "model_info": None,
         "fallback": True,
-        "fallback_reason": f"Need at least 3 converted and 3 lost leads to train the ML model.",
+        "fallback_reason": "Need at least 3 converted and 3 lost leads to train the ML model.",
     }
 
 
@@ -3038,7 +3200,7 @@ def get_outreach_stats(
 @app.post("/leads/{lead_id}/crm-push")
 def crm_push(
     lead_id: str,
-    format: str = Query("hubspot", regex="^(hubspot|salesforce|pipedrive)$"),
+    format: str = Query("hubspot", pattern="^(hubspot|salesforce|pipedrive)$"),
     current_user: User = Depends(require_rep),
     db: Session = Depends(get_db),
 ):
@@ -3132,16 +3294,16 @@ def get_referral_chain(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    def _lead_stub(l) -> dict:
+    def _lead_stub(ld) -> dict:
         return {
-            "id": l.id,
-            "name": l.name,
-            "email": l.email,
-            "company": l.company,
-            "job_title": l.enrichments[0].job_title if l.enrichments else None,
-            "seniority": l.enrichments[0].seniority if l.enrichments else None,
-            "final_verdict": l.verdicts[0].final_verdict if l.verdicts else None,
-            "status": l.status,
+            "id": ld.id,
+            "name": ld.name,
+            "email": ld.email,
+            "company": ld.company,
+            "job_title": ld.enrichments[0].job_title if ld.enrichments else None,
+            "seniority": ld.enrichments[0].seniority if ld.enrichments else None,
+            "final_verdict": ld.verdicts[0].final_verdict if ld.verdicts else None,
+            "status": ld.status,
         }
 
     # Parent — who discovered this lead
@@ -3299,11 +3461,6 @@ def get_multi_axis_ab(
     }
 
 
-# ===========================================================================
-# Demo seeder endpoint — for the onboarding wizard
-# ===========================================================================
-
-@app.post("/seed/demo")
 @app.get("/analytics/pipeline-velocity")
 def get_pipeline_velocity(
     current_user: User = Depends(require_rep),
@@ -3320,8 +3477,6 @@ def get_pipeline_velocity(
     Also returns p50 and p90 percentiles for time_to_qualify.
     """
     from app.database.models import BookingRequest as BookingModel
-
-    leads_with_times: list[dict] = []
 
     complete_leads = (
         db.query(Lead)
@@ -3399,7 +3554,7 @@ def get_rep_performance(
 
     for rep in reps:
         assigned = db.query(Lead).filter(Lead.assigned_to_id == rep.id).all()
-        lead_ids = [l.id for l in assigned]
+        lead_ids = [ld.id for ld in assigned]
 
         hot_count = 0
         conversions = 0
@@ -3471,8 +3626,9 @@ async def seed_demo(
     if existing > 0:
         return {"status": "already_seeded", "count": existing, "message": f"{existing} demo leads already exist."}
 
-    async def _run():
-        import sys, os
+    def _run():
+        import sys
+        import os
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from scripts.seed_demo_data import seed
         from app.database.connection import SessionLocal

@@ -7,7 +7,7 @@ import type { ImportResult } from "../types";
 import { Header } from "../components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
-import { formatDate, cn } from "../lib/utils";
+import { formatDate, cn, apiErrorMessage } from "../lib/utils";
 
 function DropZone({ onFile }: { onFile: (f: File) => void }) {
   const [dragging, setDragging] = useState(false);
@@ -149,9 +149,9 @@ export default function Import() {
       qc.invalidateQueries({ queryKey: ["import-history"] });
       qc.invalidateQueries({ queryKey: ["leads"] });
       toast.success(`Imported ${result.successful} leads from ${file.name}`);
-    } catch (err: any) {
+    } catch (err) {
       clearInterval(interval);
-      toast.error(err.response?.data?.detail ?? "Import failed");
+      toast.error(apiErrorMessage(err, "Import failed"));
     } finally {
       setTimeout(() => { setUploading(false); setUploadProgress(0); }, 500);
     }

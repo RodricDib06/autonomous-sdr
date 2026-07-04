@@ -32,7 +32,7 @@ def compute_market_intelligence(db) -> dict:
         computed_at    — ISO timestamp
     """
     from sqlalchemy.orm import selectinload
-    from app.database.models import Lead, Verdict, Enrichment
+    from app.database.models import Lead
 
     leads = (
         db.query(Lead)
@@ -132,7 +132,7 @@ def similar_leads(db, lead_id: str, limit: int = 5) -> list[dict]:
     """
     import math
     from sqlalchemy.orm import selectinload
-    from app.database.models import Lead, Verdict, Enrichment
+    from app.database.models import Lead
 
     _SENIORITY = {"C-Level": 1.0, "VP": 0.8, "Director": 0.6, "Manager": 0.4, "IC": 0.2}
 

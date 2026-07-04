@@ -15,7 +15,6 @@ All requests have a 6-second timeout. Falls back gracefully on any error.
 from __future__ import annotations
 import logging
 import re
-from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup

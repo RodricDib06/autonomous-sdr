@@ -118,7 +118,7 @@ def main(count: int = 20, base_url: str = "http://localhost:8000", delay: float 
 
     print(f"\n{'─'*50}")
     print(f"Submitted {success}/{count} leads. Worker is processing them now.")
-    print(f"Watch the worker terminal or open http://localhost:3001 to see them flow through.")
+    print("Watch the worker terminal or open http://localhost:3001 to see them flow through.")
 
 
 if __name__ == "__main__":

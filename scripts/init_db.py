@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.database.connection import create_all_tables, engine
-from app.database import crud, models
+from app.database import models
 from sqlalchemy.orm import sessionmaker
 
 logging.basicConfig(

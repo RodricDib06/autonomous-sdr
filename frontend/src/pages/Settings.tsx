@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { MessageSquare, Key, Lock, Eye, EyeOff, Plus, Trash2, Copy, CheckCircle2, Send, WifiOff, Shield } from "lucide-react";
+import { MessageSquare, Key, Lock, Eye, EyeOff, Plus, Trash2, Copy, CheckCircle2, Send, WifiOff, Shield, ShieldBan, Gauge } from "lucide-react";
 import { toast } from "sonner";
-import { authApi, configApi } from "../lib/api";
+import { authApi, configApi, complianceApi } from "../lib/api";
 import type { APIKeyCreated } from "../types";
 import { Header } from "../components/layout/Header";
 import { Button } from "../components/ui/button";
@@ -11,7 +11,7 @@ import { Label } from "../components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "../components/ui/dialog";
-import { formatDate } from "../lib/utils";
+import { formatDate, apiErrorMessage } from "../lib/utils";
 import { useAuthStore } from "../store/authStore";
 
 function SlackSection() {
@@ -25,7 +25,7 @@ function SlackSection() {
   const { mutate: save } = useMutation({
     mutationFn: (url: string) => configApi.setSlack(url),
     onSuccess: () => { toast.success("Slack webhook saved"); setWebhook(""); },
-    onError: (e: any) => toast.error(e.response?.data?.detail ?? "Failed to save"),
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Failed to save")),
   });
 
   const { mutate: testHook, isPending: testPending } = useMutation({
@@ -122,8 +122,8 @@ function NewKeyDialog({ open, onOpenChange, onCreate }: {
       onCreate(key);
       onOpenChange(false);
       setName("");
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail ?? "Failed");
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Failed"));
     } finally {
       setLoading(false);
     }
@@ -274,8 +274,8 @@ function PasswordSection() {
       await authApi.changePassword(current, next);
       toast.success("Password changed successfully");
       setCurrent(""); setNext("");
-    } catch (err: any) {
-      toast.error(err.response?.data?.detail ?? "Failed to change password");
+    } catch (err) {
+      toast.error(apiErrorMessage(err, "Failed to change password"));
     } finally {
       setLoading(false);
     }
@@ -316,6 +316,151 @@ function PasswordSection() {
   );
 }
 
+function ComplianceSection() {
+  const qc = useQueryClient();
+  const [value, setValue] = useState("");
+  const [reason, setReason] = useState("");
+
+  const { data: guardrails } = useQuery({
+    queryKey: ["guardrails"],
+    queryFn: complianceApi.guardrails,
+    refetchInterval: 60_000,
+  });
+
+  const { data: suppressions } = useQuery({
+    queryKey: ["suppressions"],
+    queryFn: () => complianceApi.listSuppressions(),
+  });
+
+  const { mutate: add, isPending: adding } = useMutation({
+    mutationFn: () => complianceApi.addSuppression(value.trim(), reason.trim() || undefined),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["suppressions"] });
+      qc.invalidateQueries({ queryKey: ["guardrails"] });
+      setValue(""); setReason("");
+      toast.success(
+        res.cancelled_emails > 0
+          ? `${res.value} suppressed — ${res.cancelled_emails} pending email(s) cancelled`
+          : `${res.value} added to do-not-contact list`
+      );
+    },
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Failed to add suppression")),
+  });
+
+  const { mutate: remove } = useMutation({
+    mutationFn: complianceApi.removeSuppression,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["suppressions"] });
+      qc.invalidateQueries({ queryKey: ["guardrails"] });
+      toast.success("Suppression removed");
+    },
+  });
+
+  const capPct = guardrails
+    ? Math.min(100, Math.round((guardrails.sent_last_24h / Math.max(1, guardrails.daily_limit)) * 100))
+    : 0;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-emerald-500/10">
+            <ShieldBan className="w-5 h-5 text-emerald-400" />
+          </div>
+          <div>
+            <CardTitle className="text-sm">Compliance &amp; Send Safety</CardTitle>
+            <CardDescription>Do-not-contact list, unsubscribe handling, and send guardrails</CardDescription>
+          </div>
+          {guardrails && (
+            <Badge variant={guardrails.can_send ? "success" : "warning"} className="ml-auto">
+              {guardrails.can_send ? "Sending allowed" : "Sends held"}
+            </Badge>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {guardrails && (
+          <div className="p-3 rounded-lg border border-border space-y-2">
+            <div className="flex items-center gap-2 text-sm">
+              <Gauge className="w-4 h-4 text-muted-foreground" />
+              <span className="font-medium">Daily send cap</span>
+              <span className="ml-auto text-xs text-muted-foreground">
+                {guardrails.sent_last_24h} / {guardrails.daily_limit} in last 24h
+              </span>
+            </div>
+            <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+              <div
+                className={`h-full rounded-full ${capPct >= 90 ? "bg-red-500" : capPct >= 70 ? "bg-yellow-500" : "bg-emerald-500"}`}
+                style={{ width: `${capPct}%` }}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {guardrails.reason} · Window {String(guardrails.window_start_hour_utc).padStart(2, "0")}:00–{String(guardrails.window_end_hour_utc).padStart(2, "0")}:00 UTC
+              {guardrails.weekdays_only ? " · weekdays only" : ""}
+            </p>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <Label>Add to do-not-contact list</Label>
+          <div className="flex gap-2">
+            <Input
+              placeholder="jane@acme.com or acme.com"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              className="flex-1"
+            />
+            <Input
+              placeholder="Reason (optional)"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="flex-1"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!value.includes(".") || adding}
+              onClick={() => add()}
+              className="gap-1.5 shrink-0"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Suppress
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            A bare domain (e.g. <code className="bg-secondary px-1 rounded">acme.com</code>) blocks every address at that company. Pending sequence emails are cancelled immediately.
+          </p>
+        </div>
+
+        {suppressions && suppressions.entries.length > 0 && (
+          <div className="space-y-2">
+            <Label>Suppressed ({suppressions.total})</Label>
+            <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+              {suppressions.entries.map((entry) => (
+                <div key={entry.id} className="flex items-center gap-3 p-2.5 rounded-lg border border-border text-sm">
+                  <span className="font-mono text-xs">{entry.value}</span>
+                  <Badge variant="secondary" className="text-[10px]">{entry.kind}</Badge>
+                  <span className="text-xs text-muted-foreground truncate flex-1">
+                    {entry.source.replace(/_/g, " ")}{entry.reason ? ` — ${entry.reason}` : ""}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-red-400 hover:bg-red-500/10 hover:text-red-400 shrink-0 h-7 w-7"
+                    onClick={() => { if (confirm(`Allow contacting ${entry.value} again?`)) remove(entry.id); }}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Settings() {
   const { user } = useAuthStore();
 
@@ -333,13 +478,14 @@ export default function Settings() {
             <div>
               <p className="font-semibold">{user?.email}</p>
               <div className="flex items-center gap-2 mt-0.5">
-                <Badge variant={user?.role as any}>{user?.role}</Badge>
+                <Badge variant={(user?.role ?? "rep") as "admin" | "manager" | "rep"}>{user?.role}</Badge>
                 <span className="text-xs text-muted-foreground">Member since {user ? formatDate(user.created_at) : "—"}</span>
               </div>
             </div>
           </CardContent>
         </Card>
 
+        <ComplianceSection />
         <SlackSection />
         <APIKeysSection />
         <PasswordSection />

@@ -227,7 +227,7 @@ def run_job_change_check(db: Session) -> dict:
     Eligibility: status=complete, not on cooldown, last_trigger_checked_at >
     RECHECK_INTERVAL_DAYS ago (shared field with trigger_monitor).
     """
-    from app.database.models import Lead, Verdict, Enrichment, OutreachEmail, IntentSignal
+    from app.database.models import Lead, Verdict, OutreachEmail, IntentSignal
     from sqlalchemy.orm import selectinload
 
     recheck_cutoff = datetime.utcnow() - timedelta(days=_RECHECK_INTERVAL_DAYS)

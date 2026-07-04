@@ -3,8 +3,6 @@
 Simple dashboard for reviewing AutonomousSDR leads
 """
 import requests
-import json
-from datetime import datetime
 from typing import Dict, List, Any
 
 class LeadDashboard:
@@ -48,7 +46,7 @@ def display_stats(stats: Dict[str, Any]):
     print(".1%")
     
     verdict_breakdown = stats['verdict_breakdown']
-    print(f"\n🎯 Verdict Breakdown:")
+    print("\n🎯 Verdict Breakdown:")
     print(f"  Hot leads: {verdict_breakdown['hot']}")
     print(f"  Warm leads: {verdict_breakdown['warm']}")
     print(f"  Cold leads: {verdict_breakdown['cold']}")
@@ -63,7 +61,6 @@ def display_hot_leads(hot_leads: List[Dict[str, Any]]):
     print("-" * 60)
     
     for i, lead in enumerate(hot_leads, 1):
-        confidence_pct = lead['confidence'] * 100
         print(f"{i}. {lead['name']} @ {lead['company']}")
         print(f"   Email: {lead['email']}")
         print(f"   Title: {lead.get('job_title', 'Unknown')}")

@@ -162,6 +162,9 @@ app.include_router(ingest_router)
 from app.routers.approvals import router as approvals_router  # noqa: E402
 app.include_router(approvals_router)
 
+from app.routers.sequences import router as sequences_router  # noqa: E402
+app.include_router(sequences_router)
+
 # Global Slack notifier
 slack_notifier = SlackNotifier()
 # Store webhook URL in memory (in production, use database)

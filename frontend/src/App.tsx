@@ -15,6 +15,7 @@ import ICP from "./pages/ICP";
 import Signals from "./pages/Signals";
 import Inbox from "./pages/Inbox";
 import Approvals from "./pages/Approvals";
+import Sequences from "./pages/Sequences";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 
 const queryClient = new QueryClient({
@@ -36,6 +37,7 @@ export default function App() {
               <Route path="signals" element={<Signals />} />
               <Route path="inbox" element={<Inbox />} />
               <Route path="approvals" element={<Approvals />} />
+              <Route path="sequences" element={<Sequences />} />
               <Route path="icp" element={<ICP />} />
               <Route path="pipeline" element={<Pipeline />} />
               <Route path="ab-tests" element={<ABTests />} />

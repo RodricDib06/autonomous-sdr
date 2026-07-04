@@ -380,6 +380,42 @@ export const handlers = [
     HttpResponse.json({ enabled: false })
   ),
 
+  // ── Sequences — cadence authoring ──────────────────────────────────────────
+  http.get(`${API_BASE_URL}/sequences`, () =>
+    HttpResponse.json({
+      total: 2,
+      sequences: [
+        {
+          id: 'seq-1', name: 'Standard 3-Step (Variant A)', ab_variant: 'A', is_active: true,
+          is_global: true, emails_sent: 42, conversions: 6, created_at: '2026-01-01T00:00:00Z',
+          steps: [
+            { step: 1, delay_days: 0, subject_template: 'Quick question about {company}', body_template: 'Hi {first_name}…' },
+            { step: 2, delay_days: 3, subject_template: 'Re: {company}', body_template: 'Following up…' },
+          ],
+        },
+        {
+          id: 'seq-2', name: 'My Custom Cadence', ab_variant: 'C', is_active: true,
+          is_global: false, emails_sent: 10, conversions: 2, created_at: '2026-06-01T00:00:00Z',
+          steps: [
+            { step: 1, delay_days: 0, subject_template: 'Hello {first_name}', body_template: 'Body…' },
+          ],
+        },
+      ],
+    })
+  ),
+
+  http.post(`${API_BASE_URL}/sequences`, () =>
+    HttpResponse.json({ id: 'seq-new', name: 'New', ab_variant: null, is_active: true, is_global: false, steps: [], emails_sent: 0, conversions: 0, created_at: null }, { status: 201 })
+  ),
+
+  http.put(`${API_BASE_URL}/sequences/:id`, () =>
+    HttpResponse.json({ id: 'seq-2', name: 'Updated', ab_variant: 'C', is_active: true, is_global: false, steps: [], emails_sent: 0, conversions: 0, created_at: null, cloned_from_global: false })
+  ),
+
+  http.delete(`${API_BASE_URL}/sequences/:id`, () =>
+    HttpResponse.json({ status: 'deactivated', id: 'seq-2' })
+  ),
+
   // ── Approvals — autonomy dial + pending queue ──────────────────────────────
   http.get(`${API_BASE_URL}/outreach/autonomy`, () =>
     HttpResponse.json({ mode: 'approve', modes: ['draft', 'approve', 'auto'], pending_count: 1 })

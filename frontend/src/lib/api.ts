@@ -393,6 +393,37 @@ export const approvalsApi = {
     api.post<{ approved: number }>("/outreach/approvals/approve-all").then((r) => r.data),
 };
 
+// ── Sequences — cadence authoring ─────────────────────────────────────────────
+export interface SequenceStep {
+  step: number;
+  delay_days: number;
+  subject_template: string;
+  body_template: string;
+}
+
+export interface Sequence {
+  id: string;
+  name: string;
+  ab_variant: string | null;
+  is_active: boolean;
+  is_global: boolean;
+  steps: SequenceStep[];
+  emails_sent: number;
+  conversions: number;
+  created_at: string | null;
+}
+
+export const sequencesApi = {
+  list: () =>
+    api.get<{ sequences: Sequence[]; total: number }>("/sequences").then((r) => r.data),
+  create: (payload: { name: string; ab_variant: string | null; steps: SequenceStep[] }) =>
+    api.post<Sequence>("/sequences", payload).then((r) => r.data),
+  update: (id: string, payload: { name?: string; ab_variant?: string | null; steps?: SequenceStep[]; is_active?: boolean }) =>
+    api.put<Sequence & { cloned_from_global?: boolean }>(`/sequences/${id}`, payload).then((r) => r.data),
+  deactivate: (id: string) =>
+    api.delete(`/sequences/${id}`).then((r) => r.data),
+};
+
 // ── Compliance — suppression list + send guardrails ───────────────────────────
 export interface SuppressionEntry {
   id: string;

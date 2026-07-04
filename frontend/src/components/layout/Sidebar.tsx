@@ -1,7 +1,7 @@
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard, Users2, Upload, BarChart3,
-  Settings, Zap, ChevronRight, LogOut, GitBranch, FlaskConical, Target, Radio, MessageSquare, ShieldCheck,
+  Settings, Zap, ChevronRight, LogOut, GitBranch, FlaskConical, Target, Radio, MessageSquare, ShieldCheck, ListOrdered,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
@@ -15,6 +15,7 @@ const navItems = [
   { to: "/signals", icon: Radio, label: "Signals" },
   { to: "/inbox", icon: MessageSquare, label: "Inbox" },
   { to: "/approvals", icon: ShieldCheck, label: "Approvals" },
+  { to: "/sequences", icon: ListOrdered, label: "Sequences" },
   { to: "/icp", icon: Target, label: "ICP Builder" },
   { to: "/pipeline", icon: GitBranch, label: "Pipeline" },
   { to: "/ab-tests", icon: FlaskConical, label: "A/B Tests" },

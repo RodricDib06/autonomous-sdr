@@ -361,6 +361,38 @@ export const autonomyApi = {
     api.get<AutonomyFeed>("/autonomy-feed", { params: { hours } }).then((r) => r.data),
 };
 
+// ── Approvals — human-in-the-loop autonomy dial ───────────────────────────────
+export type AutonomyMode = "draft" | "approve" | "auto";
+
+export interface PendingEmail {
+  id: string;
+  lead_id: string;
+  lead_name: string | null;
+  lead_email: string | null;
+  company: string | null;
+  step_number: number;
+  subject: string;
+  body: string;
+  quality_score: number | null;
+  scheduled_at: string | null;
+  created_at: string | null;
+}
+
+export const approvalsApi = {
+  getAutonomy: () =>
+    api.get<{ mode: AutonomyMode; modes: AutonomyMode[]; pending_count: number }>("/outreach/autonomy").then((r) => r.data),
+  setAutonomy: (mode: AutonomyMode) =>
+    api.put<{ mode: AutonomyMode }>("/outreach/autonomy", { mode }).then((r) => r.data),
+  list: () =>
+    api.get<{ total: number; mode: AutonomyMode; emails: PendingEmail[] }>("/outreach/approvals").then((r) => r.data),
+  approve: (id: string, edits?: { subject?: string; body?: string }) =>
+    api.post(`/outreach/approvals/${id}/approve`, edits ?? {}).then((r) => r.data),
+  reject: (id: string, reason?: string) =>
+    api.post(`/outreach/approvals/${id}/reject`, { reason }).then((r) => r.data),
+  approveAll: () =>
+    api.post<{ approved: number }>("/outreach/approvals/approve-all").then((r) => r.data),
+};
+
 // ── Compliance — suppression list + send guardrails ───────────────────────────
 export interface SuppressionEntry {
   id: string;

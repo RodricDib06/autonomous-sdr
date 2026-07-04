@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     OUTREACH_FROM_EMAIL: str = ""
     OUTREACH_SENDER_NAME: str = "Sales Team"
 
+    # ── Autonomy dial ──────────────────────────────────────────────────────────
+    # Default outreach autonomy for orgs that haven't chosen one (Settings → Autonomy):
+    #   draft   — agent writes emails, sends nothing (copy-out only)
+    #   approve — every email waits in the approval queue before sending
+    #   auto    — full autonomy: step 1 sends immediately, follow-ups on schedule
+    DEFAULT_AUTONOMY_MODE: str = "auto"
+
     # ── Outreach guardrails (compliance & deliverability) ─────────────────────
     # Max emails sent in any rolling 24h window — protects sender reputation
     OUTREACH_DAILY_SEND_LIMIT: int = 200

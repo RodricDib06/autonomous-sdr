@@ -380,6 +380,50 @@ export const handlers = [
     HttpResponse.json({ enabled: false })
   ),
 
+  // ── Approvals — autonomy dial + pending queue ──────────────────────────────
+  http.get(`${API_BASE_URL}/outreach/autonomy`, () =>
+    HttpResponse.json({ mode: 'approve', modes: ['draft', 'approve', 'auto'], pending_count: 1 })
+  ),
+
+  http.put(`${API_BASE_URL}/outreach/autonomy`, async ({ request }) => {
+    const body = (await request.json()) as { mode: string };
+    return HttpResponse.json({ mode: body.mode });
+  }),
+
+  http.get(`${API_BASE_URL}/outreach/approvals`, () =>
+    HttpResponse.json({
+      total: 1,
+      mode: 'approve',
+      emails: [
+        {
+          id: 'em-1',
+          lead_id: 'lead-1',
+          lead_name: 'Alice Chen',
+          lead_email: 'alice@startup.io',
+          company: 'Startup IO',
+          step_number: 1,
+          subject: 'Quick question about Startup IO',
+          body: 'Hi Alice,\n\nSaw your team is scaling…',
+          quality_score: 0.87,
+          scheduled_at: '2026-07-03T10:00:00Z',
+          created_at: '2026-07-03T09:00:00Z',
+        },
+      ],
+    })
+  ),
+
+  http.post(`${API_BASE_URL}/outreach/approvals/:id/approve`, () =>
+    HttpResponse.json({ status: 'scheduled', id: 'em-1', edited: false })
+  ),
+
+  http.post(`${API_BASE_URL}/outreach/approvals/:id/reject`, () =>
+    HttpResponse.json({ status: 'rejected', id: 'em-1' })
+  ),
+
+  http.post(`${API_BASE_URL}/outreach/approvals/approve-all`, () =>
+    HttpResponse.json({ approved: 1 })
+  ),
+
   // ── Compliance — guardrails + suppression list ─────────────────────────────
   http.get(`${API_BASE_URL}/outreach/guardrails`, () =>
     HttpResponse.json({

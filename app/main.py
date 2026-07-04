@@ -159,6 +159,9 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(ingest_router)
 
+from app.routers.approvals import router as approvals_router  # noqa: E402
+app.include_router(approvals_router)
+
 # Global Slack notifier
 slack_notifier = SlackNotifier()
 # Store webhook URL in memory (in production, use database)

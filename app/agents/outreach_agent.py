@@ -229,6 +229,14 @@ class OutreachAgent(BaseAgent):
             log.info(f"[outreach] Lead {lead_id} already has outreach scheduled — skipping")
             return {"status": "already_scheduled", "lead_id": lead_id}
 
+        # Autonomy dial: in "approve" and "draft" modes nothing sends until a
+        # human signs off — emails land in the approval queue instead.
+        from app.services.tenancy import get_org_setting
+        autonomy_mode = get_org_setting(
+            db, lead.org_id, "autonomy_mode", settings.DEFAULT_AUTONOMY_MODE
+        )
+        initial_status = "scheduled" if autonomy_mode == "auto" else "pending_approval"
+
         # Personalise and schedule all steps
         scheduled_emails = []
         for step in sequence.steps:
@@ -242,7 +250,7 @@ class OutreachAgent(BaseAgent):
                 step_number=step["step"],
                 subject=subject,
                 body=body,
-                status="scheduled",
+                status=initial_status,
                 scheduled_at=scheduled_at,
                 quality_score=quality.get("overall_score"),
                 quality_flags=quality.get("issues") or [],
@@ -255,15 +263,19 @@ class OutreachAgent(BaseAgent):
         for e in scheduled_emails:
             db.refresh(e)
 
-        # Send step 1 immediately if SMTP is configured
+        # Send step 1 immediately — full-auto mode only
         step1 = next((e for e in scheduled_emails if e.step_number == 1), None)
-        send_result = "smtp_not_configured"
-        if step1 and settings.SMTP_HOST:
+        if autonomy_mode != "auto":
+            send_result = f"held_for_approval ({autonomy_mode} mode)"
+        elif step1 and settings.SMTP_HOST:
             send_result = self._send_email(db, step1, lead.email)
+        else:
+            send_result = "smtp_not_configured"
 
         log.info(f"[outreach] Lead {lead_id}: {len(scheduled_emails)} steps scheduled, step1={send_result}")
         return {
-            "status": "scheduled",
+            "status": "scheduled" if autonomy_mode == "auto" else "pending_approval",
+            "autonomy_mode": autonomy_mode,
             "sequence": sequence.name,
             "variant": sequence.ab_variant,
             "steps_scheduled": len(scheduled_emails),
@@ -539,11 +551,20 @@ def send_pending_scheduled_emails(db: Session) -> dict:
     )
 
     sent = failed = skipped = cancelled = 0
+    _mode_cache: dict = {}
     agent = OutreachAgent()
 
     for email in pending:
         lead = db.query(_Lead).filter(_Lead.id == email.lead_id).first()
         if not lead or not lead.email:
+            skipped += 1
+            continue
+
+        # Org flipped to draft-only mode after these were scheduled? Hold them.
+        from app.services.tenancy import get_org_setting as _gos
+        if lead.org_id not in _mode_cache:
+            _mode_cache[lead.org_id] = _gos(db, lead.org_id, "autonomy_mode", settings.DEFAULT_AUTONOMY_MODE)
+        if _mode_cache[lead.org_id] == "draft":
             skipped += 1
             continue
 

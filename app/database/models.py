@@ -245,8 +245,13 @@ class OutreachEmail(Base):
     step_number: Mapped[int] = mapped_column(Integer, default=1)
     subject: Mapped[str] = mapped_column(String(500))
     body: Mapped[str] = mapped_column(Text)
-    # status: scheduled | sent | opened | clicked | replied | bounced | failed
+    # status: pending_approval | rejected | scheduled | sent | opened | clicked
+    #         | replied | bounced | failed | cancelled
     status: Mapped[str] = mapped_column(String(50), default="scheduled")
+    # Human-in-the-loop approval (autonomy modes "approve" and "draft")
+    approved_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     opened_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

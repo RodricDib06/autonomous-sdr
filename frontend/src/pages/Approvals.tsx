@@ -1,0 +1,257 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { CheckCircle2, XCircle, PencilLine, ShieldCheck, Bot, FileEdit, Inbox as InboxIcon } from "lucide-react";
+import { toast } from "sonner";
+import { approvalsApi, type AutonomyMode, type PendingEmail } from "../lib/api";
+import { Header } from "../components/layout/Header";
+import { Button } from "../components/ui/button";
+import { Card, CardContent } from "../components/ui/card";
+import { Badge } from "../components/ui/badge";
+import { cn, formatDate, apiErrorMessage } from "../lib/utils";
+import { useAuthStore } from "../store/authStore";
+
+const MODE_META: Record<AutonomyMode, { label: string; hint: string; icon: typeof Bot }> = {
+  draft: { label: "Draft only", hint: "Agent writes, never sends — copy content out manually", icon: FileEdit },
+  approve: { label: "Approve first", hint: "Every email waits here for your sign-off before sending", icon: ShieldCheck },
+  auto: { label: "Full auto", hint: "Agent sends immediately and follows up on schedule", icon: Bot },
+};
+
+function AutonomyDial() {
+  const qc = useQueryClient();
+  const { user } = useAuthStore();
+  const canEdit = user?.role === "admin" || user?.role === "manager";
+
+  const { data } = useQuery({ queryKey: ["autonomy"], queryFn: approvalsApi.getAutonomy });
+
+  const { mutate: setMode } = useMutation({
+    mutationFn: approvalsApi.setAutonomy,
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["autonomy"] });
+      qc.invalidateQueries({ queryKey: ["approvals"] });
+      toast.success(`Autonomy set to "${MODE_META[res.mode].label}"`);
+    },
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Failed to change autonomy mode")),
+  });
+
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-sm font-semibold">Autonomy dial</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              How much rope does the agent get? Start cautious, graduate to full auto.
+            </p>
+          </div>
+          {data && <Badge variant={data.mode === "auto" ? "success" : "warning"}>{MODE_META[data.mode].label}</Badge>}
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {(Object.keys(MODE_META) as AutonomyMode[]).map((mode) => {
+            const Meta = MODE_META[mode];
+            const active = data?.mode === mode;
+            return (
+              <button
+                key={mode}
+                disabled={!canEdit}
+                onClick={() => setMode(mode)}
+                className={cn(
+                  "p-3 rounded-lg border text-left transition-colors",
+                  active ? "border-violet-500 bg-violet-500/10" : "border-border hover:bg-secondary/40",
+                  !canEdit && "opacity-60 cursor-not-allowed"
+                )}
+              >
+                <Meta.icon className={cn("w-4 h-4 mb-1.5", active ? "text-violet-400" : "text-muted-foreground")} />
+                <p className="text-sm font-medium">{Meta.label}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">{Meta.hint}</p>
+              </button>
+            );
+          })}
+        </div>
+        {!canEdit && (
+          <p className="text-[11px] text-muted-foreground mt-2">Only managers and admins can move the dial.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function EmailCard({ email, draftMode }: { email: PendingEmail; draftMode: boolean }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [subject, setSubject] = useState(email.subject);
+  const [body, setBody] = useState(email.body);
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["approvals"] });
+    qc.invalidateQueries({ queryKey: ["autonomy"] });
+  };
+
+  const { mutate: approve, isPending: approving } = useMutation({
+    mutationFn: () =>
+      approvalsApi.approve(
+        email.id,
+        editing ? { subject, body } : undefined
+      ),
+    onSuccess: () => { invalidate(); toast.success("Approved — will send on the next scheduler tick"); },
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Approval failed")),
+  });
+
+  const { mutate: reject, isPending: rejecting } = useMutation({
+    mutationFn: () => {
+      const reason = window.prompt("Why reject? (optional — feeds prompt tuning)") ?? undefined;
+      return approvalsApi.reject(email.id, reason);
+    },
+    onSuccess: () => { invalidate(); toast.success("Draft rejected"); },
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Rejection failed")),
+  });
+
+  const copyOut = () => {
+    navigator.clipboard.writeText(`Subject: ${email.subject}\n\n${email.body}`);
+    toast.success("Email copied to clipboard");
+  };
+
+  return (
+    <Card>
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-medium truncate">{email.lead_name ?? "Unknown lead"}</p>
+              <span className="text-xs text-muted-foreground truncate">{email.company}</span>
+              <Badge variant="secondary" className="text-[10px] shrink-0">step {email.step_number}</Badge>
+              {email.quality_score != null && (
+                <Badge
+                  variant={email.quality_score >= 0.8 ? "success" : "warning"}
+                  className="text-[10px] shrink-0"
+                >
+                  quality {Math.round(email.quality_score * 100)}
+                </Badge>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground truncate">{email.lead_email} · drafted {formatDate(email.created_at)}</p>
+          </div>
+        </div>
+
+        {editing ? (
+          <div className="space-y-2">
+            <input
+              className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              aria-label="Email subject"
+            />
+            <textarea
+              className="w-full min-h-[140px] rounded-md border border-input bg-transparent p-3 text-sm font-mono"
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              aria-label="Email body"
+            />
+          </div>
+        ) : (
+          <div className="rounded-lg bg-secondary/40 border border-border p-3">
+            <p className="text-sm font-medium mb-1.5">{email.subject}</p>
+            <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-sans leading-relaxed">{email.body}</pre>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2">
+          {draftMode ? (
+            <Button size="sm" variant="outline" onClick={copyOut} className="gap-1.5">
+              <PencilLine className="w-3.5 h-3.5" />
+              Copy to clipboard
+            </Button>
+          ) : (
+            <Button size="sm" variant="gradient" loading={approving} onClick={() => approve()} className="gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              {editing ? "Approve with edits" : "Approve & send"}
+            </Button>
+          )}
+          <Button size="sm" variant="outline" onClick={() => setEditing(!editing)} className="gap-1.5">
+            <PencilLine className="w-3.5 h-3.5" />
+            {editing ? "Cancel edit" : "Edit"}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            loading={rejecting}
+            onClick={() => reject()}
+            className="text-red-400 hover:text-red-400 hover:bg-red-500/10 gap-1.5 ml-auto"
+          >
+            <XCircle className="w-3.5 h-3.5" />
+            Reject
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function Approvals() {
+  const qc = useQueryClient();
+  const { user } = useAuthStore();
+  const isManager = user?.role === "admin" || user?.role === "manager";
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["approvals"],
+    queryFn: approvalsApi.list,
+    refetchInterval: 30_000,
+  });
+
+  const { mutate: approveAll, isPending: bulkPending } = useMutation({
+    mutationFn: approvalsApi.approveAll,
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["approvals"] });
+      qc.invalidateQueries({ queryKey: ["autonomy"] });
+      toast.success(`Approved ${res.approved} email(s)`);
+    },
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Bulk approval failed")),
+  });
+
+  const draftMode = data?.mode === "draft";
+
+  return (
+    <div className="flex flex-col min-h-screen">
+      <Header
+        title="Approvals"
+        subtitle="Review what the agent wants to send before it goes out"
+      />
+      <div className="flex-1 p-8 space-y-6 max-w-4xl animate-fade-in">
+        <AutonomyDial />
+
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold">
+            Waiting for review {data ? `(${data.total})` : ""}
+          </h3>
+          {isManager && !draftMode && (data?.total ?? 0) > 0 && (
+            <Button size="sm" variant="outline" loading={bulkPending} onClick={() => approveAll()} className="gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Approve all
+            </Button>
+          )}
+        </div>
+
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground py-8 text-center">Loading…</p>
+        ) : (data?.emails.length ?? 0) === 0 ? (
+          <Card>
+            <CardContent className="py-12 text-center">
+              <InboxIcon className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
+              <p className="text-sm font-medium">Queue is clear</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {data?.mode === "auto"
+                  ? "Full-auto mode — emails send without review. Switch to \"Approve first\" to review drafts here."
+                  : "New drafts will appear here as the agent qualifies leads."}
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {data!.emails.map((email) => (
+              <EmailCard key={email.id} email={email} draftMode={draftMode} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

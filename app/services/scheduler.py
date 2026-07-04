@@ -20,6 +20,9 @@ needed for light scheduled work.
 # Scheduler, AWS EventBridge).
 """
 
+import functools
+import os
+import socket
 from datetime import timedelta
 
 import structlog
@@ -33,6 +36,36 @@ log = structlog.get_logger(__name__)
 
 # How old a pending lead must be before auto-requeue (avoids race with worker)
 _AUTO_PROCESS_DELAY_SECONDS: int = settings.AUTO_PROCESS_DELAY_SECONDS
+
+_INSTANCE_ID = f"{socket.gethostname()}:{os.getpid()}"
+
+
+def _locked(job_id: str, ttl_seconds: int):
+    """
+    Distributed lock so a job fires on exactly one replica per interval.
+
+    Without this, running two API containers doubles every scheduled job —
+    and for outreach that means duplicate emails. SET NX EX in Redis lets the
+    first replica win each tick; the lock expires just before the next tick.
+    Fails open when Redis is unreachable (single-instance / demo setups).
+    """
+    def wrap(fn):
+        @functools.wraps(fn)
+        async def inner() -> None:
+            try:
+                from app.services.queue_service import get_redis
+                acquired = get_redis().set(
+                    f"asdr:job_lock:{job_id}", _INSTANCE_ID,
+                    nx=True, ex=ttl_seconds,
+                )
+                if not acquired:
+                    log.debug("scheduler.lock_held_elsewhere", job=job_id)
+                    return
+            except Exception as e:
+                log.debug("scheduler.lock_unavailable", job=job_id, error=str(e))
+            await fn()
+        return inner
+    return wrap
 
 
 async def _send_scheduled_outreach() -> None:
@@ -189,7 +222,7 @@ def create_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
 
     scheduler.add_job(
-        _send_scheduled_outreach,
+        _locked("send_scheduled_outreach", 890)(_send_scheduled_outreach),
         trigger=IntervalTrigger(seconds=900),   # every 15 minutes
         id="send_scheduled_outreach",
         name="Send follow-up emails (step 2, 3…) when their scheduled_at arrives",
@@ -198,7 +231,7 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
-        _auto_enqueue_pending,
+        _locked("auto_enqueue_pending", 290)(_auto_enqueue_pending),
         trigger=IntervalTrigger(seconds=300),   # every 5 minutes
         id="auto_enqueue_pending",
         name="Auto-enqueue stale pending leads",
@@ -216,7 +249,7 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
-        _run_decay_check,
+        _locked("decay_check", 3590)(_run_decay_check),
         trigger=IntervalTrigger(seconds=3600),  # every hour
         id="decay_check",
         name="Decay scoring and re-engagement triggers",
@@ -225,7 +258,7 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
-        _run_trigger_check,
+        _locked("trigger_check", 21590)(_run_trigger_check),
         trigger=IntervalTrigger(seconds=21600),  # every 6 hours
         id="trigger_check",
         name="Real-time trigger monitor (funding/news/job postings)",
@@ -234,7 +267,7 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
-        _run_lookalike_scoring,
+        _locked("lookalike_scoring", 86390)(_run_lookalike_scoring),
         trigger=IntervalTrigger(seconds=86400),   # nightly
         id="lookalike_scoring",
         name="ICP lookalike score batch update",
@@ -243,7 +276,7 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
-        _run_job_change_check,
+        _locked("job_change_check", 172790)(_run_job_change_check),
         trigger=IntervalTrigger(seconds=172800),  # every 48 hours
         id="job_change_check",
         name="Job change detector (PDL re-check + web search)",
@@ -252,7 +285,7 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
-        _run_optimization_loop,
+        _locked("optimization_loop", 604790)(_run_optimization_loop),
         trigger=IntervalTrigger(seconds=604800),  # weekly
         id="optimization_loop",
         name="Self-optimization: update BANT weights from conversion outcomes",
@@ -261,7 +294,7 @@ def create_scheduler() -> AsyncIOScheduler:
     )
 
     scheduler.add_job(
-        _run_ml_retrain,
+        _locked("ml_retrain", 86390)(_run_ml_retrain),
         trigger=IntervalTrigger(seconds=86400),   # nightly
         id="ml_retrain",
         name="ML close-probability model retrain",

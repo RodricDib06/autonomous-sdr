@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     OUTREACH_FROM_EMAIL: str = ""
     OUTREACH_SENDER_NAME: str = "Sales Team"
 
+    # ── Privacy / data retention ───────────────────────────────────────────────
+    # Erase non-converted leads older than this many days (0 = keep forever).
+    # Converted/won leads are business records and are exempt.
+    DATA_RETENTION_DAYS: int = 0
+
     # ── Autonomy dial ──────────────────────────────────────────────────────────
     # Default outreach autonomy for orgs that haven't chosen one (Settings → Autonomy):
     #   draft   — agent writes emails, sends nothing (copy-out only)

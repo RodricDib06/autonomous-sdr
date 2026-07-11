@@ -100,6 +100,22 @@ async def _poll_mailbox_replies() -> None:
         db.close()
 
 
+async def _run_retention_purge() -> None:
+    """Erase non-converted leads older than DATA_RETENTION_DAYS (0 = off)."""
+    from app.database.connection import SessionLocal
+    from app.services.gdpr_service import purge_expired_leads
+
+    db = SessionLocal()
+    try:
+        summary = purge_expired_leads(db)
+        if summary.get("purged"):
+            log.info("scheduler.retention_purge", **summary)
+    except Exception as e:
+        log.error("scheduler.retention_purge.error", error=str(e))
+    finally:
+        db.close()
+
+
 async def _auto_enqueue_pending() -> None:
     """Re-queue any lead that has been sitting in 'pending' status too long."""
     from app.database.connection import SessionLocal
@@ -244,6 +260,15 @@ def create_scheduler() -> AsyncIOScheduler:
         name="Send follow-up emails (step 2, 3…) when their scheduled_at arrives",
         replace_existing=True,
         misfire_grace_time=120,
+    )
+
+    scheduler.add_job(
+        _locked("retention_purge", 86390)(_run_retention_purge),
+        trigger=IntervalTrigger(seconds=86400),  # daily
+        id="retention_purge",
+        name="GDPR retention purge (DATA_RETENTION_DAYS)",
+        replace_existing=True,
+        misfire_grace_time=3600,
     )
 
     scheduler.add_job(

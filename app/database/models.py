@@ -218,6 +218,22 @@ class SuppressionEntry(Base):
 
 
 # ---------------------------------------------------------------------------
+# GDPR erasure audit — proof of deletion without retaining the data
+# ---------------------------------------------------------------------------
+
+class GdprErasureLog(Base):
+    __tablename__ = "gdpr_erasures"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
+    email_hash: Mapped[str] = mapped_column(String(64), index=True)  # SHA-256 of the erased address
+    requested_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    reason: Mapped[str] = mapped_column(String(100), default="gdpr_request")
+    purged_counts: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+# ---------------------------------------------------------------------------
 # LLM call telemetry — tokens, dollars, latency per call
 # ---------------------------------------------------------------------------
 

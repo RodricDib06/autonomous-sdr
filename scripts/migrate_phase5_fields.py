@@ -14,6 +14,14 @@ import logging
 from sqlalchemy import text
 from app.database.connection import engine
 
+# ─── DEPRECATED ──────────────────────────────────────────────────────────────
+# This phase script predates the Alembic migration chain and is kept only for
+# legacy installs (make migrate-legacy). New/current installs should use:
+#     alembic upgrade head
+# ─────────────────────────────────────────────────────────────────────────────
+print("[DEPRECATED] Prefer 'alembic upgrade head' — this script is kept for legacy installs only.")
+
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 

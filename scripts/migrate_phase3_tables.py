@@ -19,6 +19,14 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# ─── DEPRECATED ──────────────────────────────────────────────────────────────
+# This phase script predates the Alembic migration chain and is kept only for
+# legacy installs (make migrate-legacy). New/current installs should use:
+#     alembic upgrade head
+# ─────────────────────────────────────────────────────────────────────────────
+print("[DEPRECATED] Prefer 'alembic upgrade head' — this script is kept for legacy installs only.")
+
+
 from app.database.connection import Base, engine
 from app.database.models import (  # noqa: F401 — import to register with metadata
     OutreachSequence, OutreachEmail, Conversation,

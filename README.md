@@ -1,6 +1,14 @@
 # AutonomousSDR
 
-A portfolio-grade, multi-agent AI sales development platform. Leads enter from six ingestion channels (including a universal webhook for Zapier / Make.com / Typeform), flow through a **10-node LangGraph state machine** with a live **ReAct research agent**, and exit as hot/warm/cold verdicts — with personalized outreach, meeting bookings, CRM sync, and a self-optimizing BANT scoring loop. Zero paid API keys required to run.
+**The self-hosted AI SDR you can run inside your own VPC.** Leads enter from six ingestion channels, flow through a **10-node LangGraph state machine** with a live **ReAct research agent**, and exit as hot/warm/cold verdicts — with personalized multi-step outreach, meeting bookings, CRM sync, and a self-optimizing BANT scoring loop. Zero paid API keys required to run; your data never leaves your infrastructure.
+
+Built for the way companies actually adopt outbound AI:
+
+- **Trust ramp (autonomy dial)** — start in *draft-only*, graduate to *approve-each-email*, switch to *full auto* when the output has earned it. Inline-edit any draft before it sends.
+- **Multi-tenant** — organizations isolate leads, sequences, suppression lists, ICP configs, and autonomy settings; existing single-tenant installs upgrade transparently.
+- **Deliverability-first sending** — rotate across per-rep mailboxes with warm-up ramps, recipient-local send windows (a lead in Berlin never gets a 3 a.m. email), rolling daily caps, and IMAP reply detection that stops the cadence the moment a human answers.
+- **Compliance built in** — RFC 8058 one-click unsubscribe, opt-out intent detection, org-scoped do-not-contact lists, GDPR right-to-erasure with a hashed audit trail, and configurable data retention.
+- **ROI you can defend** — every LLM call is metered (tokens, dollars, latency, per lead); the ROI panel computes cost-per-qualified-lead and cost-per-meeting against a human SDR from your own pipeline data.
 
 ```
 6 Ingestion channels            10-node LangGraph Pipeline              Actions
@@ -34,13 +42,22 @@ Universal Webhook               PostgreSQL + pgvector + Redis
 | **Semantic memory** | pgvector HNSW index + embeddings; keyword fallback |
 | **Email tracking** | 1×1 pixel open tracking + click redirect |
 | **Compliance & send safety** | Do-not-contact suppression list (email + domain), RFC 8058 one-click unsubscribe, opt-out intent detection on replies, auto-stop sequences on reply |
-| **Send guardrails** | Rolling 24h send cap, quiet-hours window, weekday-only sends — enforced before every scheduled batch |
+| **Send guardrails** | Rolling 24h send cap, recipient-local quiet hours (TLD-inferred timezone), weekday-only sends |
+| **Autonomy dial** | Per-org draft / approve / auto modes; approval queue with inline edits; bulk approve |
+| **Multi-tenancy** | Organizations with org-scoped leads, sequences, suppressions, ICP, autonomy settings |
+| **Mailbox rotation** | Per-rep sending identities, Fernet-encrypted credentials, warm-up ramps (10/day + 5/day), LRU rotation |
+| **Reply automation** | IMAP polling + webhook ingest through one shared pipeline; reply stops cadence; opt-out suppresses |
+| **Sequence authoring** | CRUD API + step editor UI; global templates clone-on-edit per org; soft delete keeps history |
+| **LLM cost telemetry** | Every generate() metered: tokens, dollars, latency, attributed to (lead, agent) |
+| **ROI analytics** | Cost per qualified lead / hot lead / meeting vs. human SDR; projected annual savings |
+| **GDPR** | Right-to-erasure endpoint, retention purge job, SHA-256 erasure audit, exportable activity log |
+| **Horizontal safety** | Redis SET NX EX locks on every scheduled job — replicas can't double-send |
 | **5 enrichment sources** | Synthetic · Hunter.io · People Data Labs · Crunchbase signals |
 | **Full auth** | JWT access + refresh tokens; RBAC (admin / manager / rep); API key auth |
 | **Prometheus metrics** | Queue depth, node duration histograms, LLM call counters, in-flight gauge |
 | **React dashboard** | Live pipeline SSE stream, A/B results, BANT weight chart, lead detail drawer |
 | **Production hardening** | Rate limiting (slowapi), security headers middleware, CORS from env var, Alembic migrations |
-| **261 backend + 430 frontend tests** | pytest + mocks; vitest + MSW. Ingest, auth, A/B, enrichment, graph routing, intent scoring, compliance, … |
+| **331 backend + 441 frontend tests** | pytest + mocks; vitest + MSW; plus a real-Postgres/Redis integration suite in CI. Ingest, auth, A/B, tenancy, approvals, compliance, GDPR, … |
 
 ---
 
@@ -254,7 +271,7 @@ Full interactive docs: `http://localhost:8000/docs`
 ## Testing
 
 ```bash
-make test           # 261 tests, all passing
+make test           # 331 tests, all passing
 make lint           # ruff check
 make fmt            # ruff format
 ```
@@ -352,7 +369,7 @@ frontend/src/pages/
 ├── Leads.tsx                    # Lead table with verdict/BANT filters
 └── Settings.tsx                 # Slack, SMTP, API key management
 
-tests/                           # 261 tests — pytest + unittest.mock
+tests/                           # 331 tests — pytest + unittest.mock
 ```
 
 ---

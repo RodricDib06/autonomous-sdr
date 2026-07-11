@@ -67,6 +67,9 @@ jobs:
           pytest tests/ -v --tb=short --no-header -q 2>&1 | tee test-output.txt
           exit ${PIPESTATUS[0]}
 
+      - name: Run integration tests (real Postgres + Redis)
+        run: pytest tests_integration/ -v --tb=short --no-header
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4

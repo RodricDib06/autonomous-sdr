@@ -380,6 +380,17 @@ export const handlers = [
     HttpResponse.json({ enabled: false })
   ),
 
+  // ── ROI ─────────────────────────────────────────────────────────────────────
+  http.get(`${API_BASE_URL}/analytics/roi`, () =>
+    HttpResponse.json({
+      window_days: 90,
+      assumptions: { acv_usd: 25000, sdr_annual_cost_usd: 75000, human_sdr_leads_per_year: 3000 },
+      activity: { leads_processed: 150, hot_leads: 45, emails_sent: 210, meetings_booked: 18, conversions: 9, llm_cost_usd: 4.2 },
+      unit_economics: { ai_cost_per_lead_usd: 0.028, human_cost_per_lead_usd: 25, cost_per_hot_lead_usd: 0.093, cost_per_meeting_usd: 0.23, savings_multiple: 892.9 },
+      projections: { annualized_lead_volume: 608, projected_annual_ai_cost_usd: 17.03, projected_annual_human_cost_usd: 15208, projected_annual_savings_usd: 15191, pipeline_value_usd: 225000 },
+    })
+  ),
+
   // ── Sequences — cadence authoring ──────────────────────────────────────────
   http.get(`${API_BASE_URL}/sequences`, () =>
     HttpResponse.json({

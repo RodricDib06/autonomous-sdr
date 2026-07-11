@@ -256,3 +256,16 @@ describe('Analytics page', () => {
     });
   });
 });
+
+describe('Analytics — ROI panel', () => {
+  it('shows unit economics computed from pipeline data', async () => {
+    renderWithProviders(<Analytics />);
+    await waitFor(() => {
+      expect(screen.getByText('ROI — AI vs human SDR')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Cost per qualified lead')).toBeInTheDocument();
+    expect(screen.getByText('$0.028')).toBeInTheDocument();
+    expect(screen.getByText('Projected annual savings')).toBeInTheDocument();
+    expect(screen.getByText('$15,191')).toBeInTheDocument();
+  });
+});

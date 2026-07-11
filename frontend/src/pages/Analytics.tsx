@@ -4,8 +4,8 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from "recharts";
-import { TrendingUp, Flame, Target, Award, Mail, Sparkles, BarChart2, Zap, Users } from "lucide-react";
-import { leadsApi, outreachApi, optimizationApi, marketApi, analyticsApi } from "../lib/api";
+import { TrendingUp, Flame, Target, Award, Mail, Sparkles, BarChart2, Zap, Users, DollarSign } from "lucide-react";
+import { leadsApi, outreachApi, optimizationApi, marketApi, analyticsApi, roiApi } from "../lib/api";
 import { Header } from "../components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { formatPercent, cn } from "../lib/utils";
@@ -50,6 +50,62 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
     </div>
   );
 };
+
+function ROIPanel() {
+  const { data: roi } = useQuery({ queryKey: ["roi"], queryFn: () => roiApi.get(), staleTime: 120_000 });
+
+  if (!roi) return null;
+  const { activity, unit_economics: ue, projections } = roi;
+  const fmtUsd = (v: number | null) =>
+    v == null ? "—" : v >= 100 ? `$${Math.round(v).toLocaleString()}` : `$${v.toFixed(v < 1 ? 3 : 2)}`;
+
+  return (
+    <Card className="border-emerald-500/20 bg-gradient-to-br from-emerald-500/5 to-transparent">
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-emerald-500/10">
+            <DollarSign className="w-5 h-5 text-emerald-400" />
+          </div>
+          <div>
+            <CardTitle className="text-sm">ROI — AI vs human SDR</CardTitle>
+            <CardDescription>
+              Computed from your last {roi.window_days} days of pipeline activity
+              (assumes ${roi.assumptions.sdr_annual_cost_usd.toLocaleString()}/yr fully-loaded SDR)
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div>
+            <p className="text-xs text-muted-foreground">Cost per qualified lead</p>
+            <p className="text-xl font-semibold text-emerald-400">{fmtUsd(ue.ai_cost_per_lead_usd)}</p>
+            <p className="text-[11px] text-muted-foreground">vs {fmtUsd(ue.human_cost_per_lead_usd)} human</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Cost per meeting booked</p>
+            <p className="text-xl font-semibold">{fmtUsd(ue.cost_per_meeting_usd)}</p>
+            <p className="text-[11px] text-muted-foreground">{activity.meetings_booked} meetings in window</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Projected annual savings</p>
+            <p className="text-xl font-semibold text-emerald-400">{fmtUsd(projections.projected_annual_savings_usd)}</p>
+            <p className="text-[11px] text-muted-foreground">
+              at {projections.annualized_lead_volume.toLocaleString()} leads/yr
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Closed pipeline value</p>
+            <p className="text-xl font-semibold">{fmtUsd(projections.pipeline_value_usd)}</p>
+            <p className="text-[11px] text-muted-foreground">
+              {activity.conversions} wins · LLM spend {fmtUsd(activity.llm_cost_usd)}
+            </p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function Analytics() {
   const { data: stats } = useQuery({ queryKey: ["stats"], queryFn: leadsApi.stats, refetchInterval: 30_000 });
@@ -167,6 +223,8 @@ export default function Analytics() {
       <Header title="Analytics" subtitle="Pipeline metrics and lead intelligence" />
 
       <div className="flex-1 p-8 space-y-6 animate-fade-in">
+        <ROIPanel />
+
         {/* Summary pills */}
         <div className="flex flex-wrap gap-3">
           {[

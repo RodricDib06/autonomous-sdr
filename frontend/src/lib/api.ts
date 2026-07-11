@@ -393,6 +393,39 @@ export const approvalsApi = {
     api.post<{ approved: number }>("/outreach/approvals/approve-all").then((r) => r.data),
 };
 
+// ── ROI + AI ops ──────────────────────────────────────────────────────────────
+export interface ROIData {
+  window_days: number;
+  assumptions: { acv_usd: number; sdr_annual_cost_usd: number; human_sdr_leads_per_year: number };
+  activity: {
+    leads_processed: number;
+    hot_leads: number;
+    emails_sent: number;
+    meetings_booked: number;
+    conversions: number;
+    llm_cost_usd: number;
+  };
+  unit_economics: {
+    ai_cost_per_lead_usd: number;
+    human_cost_per_lead_usd: number;
+    cost_per_hot_lead_usd: number | null;
+    cost_per_meeting_usd: number | null;
+    savings_multiple: number | null;
+  };
+  projections: {
+    annualized_lead_volume: number;
+    projected_annual_ai_cost_usd: number;
+    projected_annual_human_cost_usd: number;
+    projected_annual_savings_usd: number;
+    pipeline_value_usd: number;
+  };
+}
+
+export const roiApi = {
+  get: (params?: { days?: number; acv?: number; sdr_annual_cost?: number }) =>
+    api.get<ROIData>("/analytics/roi", { params }).then((r) => r.data),
+};
+
 // ── Sequences — cadence authoring ─────────────────────────────────────────────
 export interface SequenceStep {
   step: number;

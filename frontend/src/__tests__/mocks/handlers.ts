@@ -460,6 +460,39 @@ export const handlers = [
     HttpResponse.json({ approved: 1 })
   ),
 
+  // ── Sending mailboxes ───────────────────────────────────────────────────────
+  http.get(`${API_BASE_URL}/mailboxes`, () =>
+    HttpResponse.json({
+      total: 1,
+      mailboxes: [
+        {
+          id: 'mb-1', email: 'rep@corp.com', display_name: 'Rep Person', provider: 'smtp',
+          smtp_host: 'smtp.corp.com', imap_enabled: true, is_active: true,
+          daily_limit: 50, effective_daily_limit: 25, sent_last_24h: 8, warming_up: true,
+          last_used_at: '2026-07-03T09:00:00Z', last_imap_poll_at: '2026-07-03T09:30:00Z',
+          created_at: '2026-06-30T00:00:00Z',
+        },
+      ],
+    })
+  ),
+
+  http.post(`${API_BASE_URL}/mailboxes`, () =>
+    HttpResponse.json({
+      id: 'mb-2', email: 'new@corp.com', display_name: '', provider: 'smtp',
+      smtp_host: 'smtp.corp.com', imap_enabled: false, is_active: true,
+      daily_limit: 50, effective_daily_limit: 10, sent_last_24h: 0, warming_up: true,
+      last_used_at: null, last_imap_poll_at: null, created_at: null,
+    }, { status: 201 })
+  ),
+
+  http.post(`${API_BASE_URL}/mailboxes/:id/test`, () =>
+    HttpResponse.json({ ok: true, message: 'SMTP login OK' })
+  ),
+
+  http.delete(`${API_BASE_URL}/mailboxes/:id`, () =>
+    HttpResponse.json({ status: 'deactivated', id: 'mb-1' })
+  ),
+
   // ── Compliance — guardrails + suppression list ─────────────────────────────
   http.get(`${API_BASE_URL}/outreach/guardrails`, () =>
     HttpResponse.json({

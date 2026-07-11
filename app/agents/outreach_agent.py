@@ -447,6 +447,18 @@ class OutreachAgent(BaseAgent):
         #   )
         #   return "sent" if resp.ok else "failed"
         """
+        # Prefer the org's rotating mailbox pool (deliverability); fall back to
+        # the global SMTP settings, then demo mode.
+        from app.services.mailbox_service import pick_mailbox, send_via_mailbox
+        lead_org_id = email_record.lead.org_id if email_record.lead else None
+        mailbox = pick_mailbox(db, lead_org_id)
+        if mailbox is not None:
+            unsubscribe_url = (
+                f"{settings.APP_BASE_URL}/unsubscribe/{email_record.id}"
+                if settings.APP_BASE_URL else ""
+            )
+            return send_via_mailbox(db, mailbox, email_record, to_address, unsubscribe_url)
+
         # Demo mode: when SMTP is not configured, mark as "sent" so the
         # autonomy feed and outreach stats reflect real scheduled-sequence behaviour.
         if not settings.SMTP_HOST:

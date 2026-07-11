@@ -218,6 +218,45 @@ class SuppressionEntry(Base):
 
 
 # ---------------------------------------------------------------------------
+# Sending mailboxes — per-rep identities for deliverability
+# ---------------------------------------------------------------------------
+
+class SendingMailbox(Base):
+    """
+    A real mailbox the platform sends from (and polls for replies).
+
+    Rotating sends across several warmed mailboxes instead of one shared
+    address is what keeps cold outreach out of spam folders. Each mailbox
+    has its own daily limit with a warm-up ramp; credentials are encrypted
+    at rest with a key derived from SECRET_KEY.
+
+    provider: "smtp" today; "gmail_oauth" / "microsoft_oauth" reserved for
+    OAuth integrations (same table, tokens in the encrypted column).
+    """
+    __tablename__ = "sending_mailboxes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    display_name: Mapped[str] = mapped_column(String(255), default="")
+    provider: Mapped[str] = mapped_column(String(30), default="smtp")
+    smtp_host: Mapped[str] = mapped_column(String(255))
+    smtp_port: Mapped[int] = mapped_column(Integer, default=465)
+    smtp_username: Mapped[str] = mapped_column(String(255))
+    smtp_password_encrypted: Mapped[str] = mapped_column(Text)
+    imap_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    imap_port: Mapped[int] = mapped_column(Integer, default=993)
+    imap_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    daily_limit: Mapped[int] = mapped_column(Integer, default=50)
+    warmup_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_imap_poll_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Outreach
 # ---------------------------------------------------------------------------
 
@@ -250,6 +289,8 @@ class OutreachEmail(Base):
     # status: pending_approval | rejected | scheduled | sent | opened | clicked
     #         | replied | bounced | failed | cancelled
     status: Mapped[str] = mapped_column(String(50), default="scheduled")
+    # Which sending identity dispatched it (rotation accounting + reply threading)
+    mailbox_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("sending_mailboxes.id"), nullable=True)
     # Human-in-the-loop approval (autonomy modes "approve" and "draft")
     approved_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

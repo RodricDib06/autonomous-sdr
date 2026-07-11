@@ -165,6 +165,9 @@ app.include_router(approvals_router)
 from app.routers.sequences import router as sequences_router  # noqa: E402
 app.include_router(sequences_router)
 
+from app.routers.mailboxes import router as mailboxes_router  # noqa: E402
+app.include_router(mailboxes_router)
+
 # Global Slack notifier
 slack_notifier = SlackNotifier()
 # Store webhook URL in memory (in production, use database)
@@ -2530,7 +2533,6 @@ async def ingest_email_reply(
     The ConversationalAgent generates a contextual reply, persists the thread,
     and (if no SMTP is configured) marks the agent reply as "sent_demo".
     """
-    from app.agents.conversational_agent import ConversationalAgent
     from app.database.models import OutreachEmail as OutreachEmailModel
 
     reply_text = (payload.get("reply_text") or "").strip()
@@ -2558,69 +2560,24 @@ async def ingest_email_reply(
             detail="Could not resolve lead — provide lead_id, email_id, or from_email",
         )
 
-    # Mark originating email as replied
-    if email_id:
-        email_rec = db.query(OutreachEmailModel).filter(OutreachEmailModel.id == email_id).first()
-        if email_rec and email_rec.status not in ("replied",):
-            email_rec.status = "replied"
-            email_rec.replied_at = utcnow()
-            db.commit()
+    # Shared reply pipeline (same one the IMAP poller uses)
+    from app.services.reply_service import generate_agent_response, handle_reply
 
-    from app.services.compliance import (
-        cancel_scheduled_emails,
-        detect_unsubscribe_intent,
-        process_unsubscribe,
-    )
+    lead_obj = db.query(Lead).filter(Lead.id == lead_id).first()
+    if lead_obj is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
 
-    # Opt-out request ("unsubscribe", "remove me", …): suppress the address,
-    # kill the cadence, and do NOT let the agent argue with them.
-    if detect_unsubscribe_intent(reply_text):
-        lead_obj = db.query(Lead).filter(Lead.id == lead_id).first()
-        if lead_obj:
-            result = process_unsubscribe(
-                db, lead_obj, source="reply_keyword",
-                reason=f"Reply text: {reply_text[:200]}",
-            )
-            return {
-                "status": "unsubscribed",
-                "lead_id": lead_id,
-                "cancelled_emails": result["cancelled_emails"],
-                "message": "Opt-out detected — lead suppressed and sequence stopped",
-            }
+    result = handle_reply(db, lead_obj, reply_text, email_id=email_id or None, source="webhook")
 
-    # A human answered — stop the automated cadence for this lead
-    cancel_scheduled_emails(db, lead_id, "Lead replied — sequence stopped")
+    if result["status"] == "unsubscribed":
+        return {
+            "status": "unsubscribed",
+            "lead_id": lead_id,
+            "cancelled_emails": result["cancelled_emails"],
+            "message": "Opt-out detected — lead suppressed and sequence stopped",
+        }
 
-    # Bayesian update: reply is the strongest positive signal
-    from app.services.intent_scoring import apply_bayesian_update
-    apply_bayesian_update(db, lead_id, "replied")
-
-    def _handle_reply(lid: str, text: str) -> None:
-        from app.database.connection import SessionLocal
-        _db = SessionLocal()
-        try:
-            agent = ConversationalAgent()
-            result = agent.run(
-                _db,
-                lid,
-                {
-                    "channel": "email",
-                    "mode": "reply",
-                    "message": text,
-                },
-            )
-            log.info(
-                "[ingest/email-reply] Reply handled",
-                lead_id=lid[:8],
-                needs_human=result.get("needs_human"),
-                objection_type=result.get("objection_type"),
-            )
-        except Exception as exc:
-            log.error("[ingest/email-reply] Agent error", lead_id=lid[:8], error=str(exc))
-        finally:
-            _db.close()
-
-    background_tasks.add_task(_handle_reply, lead_id, reply_text)
+    background_tasks.add_task(generate_agent_response, lead_id, reply_text)
 
     return {
         "status": "accepted",

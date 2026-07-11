@@ -246,7 +246,7 @@ describe('Settings page', () => {
     await waitFor(() => {
       expect(screen.getByText('Connected')).toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: /test/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^test$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /disconnect/i })).toBeInTheDocument();
   });
 
@@ -258,9 +258,9 @@ describe('Settings page', () => {
     );
     const user = userEvent.setup();
     renderWithProviders(<Settings />);
-    await waitFor(() => expect(screen.getByRole('button', { name: /test/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: /^test$/i })).toBeInTheDocument());
 
-    await user.click(screen.getByRole('button', { name: /test/i }));
+    await user.click(screen.getByRole('button', { name: /^test$/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/test message sent/i)).toBeInTheDocument();
@@ -526,9 +526,9 @@ describe('Settings page', () => {
     );
     const user = userEvent.setup();
     renderWithProviders(<Settings />);
-    await waitFor(() => expect(screen.getByRole('button', { name: /test/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: /^test$/i })).toBeInTheDocument());
 
-    await user.click(screen.getByRole('button', { name: /test/i }));
+    await user.click(screen.getByRole('button', { name: /^test$/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/Webhook test failed/i)).toBeInTheDocument();

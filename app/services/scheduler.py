@@ -84,6 +84,22 @@ async def _send_scheduled_outreach() -> None:
         db.close()
 
 
+async def _poll_mailbox_replies() -> None:
+    """Fetch unseen IMAP messages from active mailboxes into the reply pipeline."""
+    from app.database.connection import SessionLocal
+    from app.services.mailbox_service import poll_mailbox_replies
+
+    db = SessionLocal()
+    try:
+        summary = poll_mailbox_replies(db)
+        if summary["matched"] or summary["errors"]:
+            log.info("scheduler.mailbox_poll", **summary)
+    except Exception as e:
+        log.error("scheduler.mailbox_poll.error", error=str(e))
+    finally:
+        db.close()
+
+
 async def _auto_enqueue_pending() -> None:
     """Re-queue any lead that has been sitting in 'pending' status too long."""
     from app.database.connection import SessionLocal
@@ -228,6 +244,15 @@ def create_scheduler() -> AsyncIOScheduler:
         name="Send follow-up emails (step 2, 3…) when their scheduled_at arrives",
         replace_existing=True,
         misfire_grace_time=120,
+    )
+
+    scheduler.add_job(
+        _locked("mailbox_poll", 110)(_poll_mailbox_replies),
+        trigger=IntervalTrigger(seconds=120),   # every 2 minutes
+        id="mailbox_poll",
+        name="Poll IMAP mailboxes for replies",
+        replace_existing=True,
+        misfire_grace_time=60,
     )
 
     scheduler.add_job(

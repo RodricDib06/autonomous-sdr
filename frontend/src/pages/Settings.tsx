@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { MessageSquare, Key, Lock, Eye, EyeOff, Plus, Trash2, Copy, CheckCircle2, Send, WifiOff, Shield, ShieldBan, Gauge } from "lucide-react";
+import { MessageSquare, Key, Lock, Eye, EyeOff, Plus, Trash2, Copy, CheckCircle2, Send, WifiOff, Shield, ShieldBan, Gauge, AtSign, Flame } from "lucide-react";
 import { toast } from "sonner";
-import { authApi, configApi, complianceApi } from "../lib/api";
+import { authApi, configApi, complianceApi, mailboxesApi, type MailboxCreatePayload } from "../lib/api";
 import type { APIKeyCreated } from "../types";
 import { Header } from "../components/layout/Header";
 import { Button } from "../components/ui/button";
@@ -316,6 +316,120 @@ function PasswordSection() {
   );
 }
 
+function MailboxSection() {
+  const qc = useQueryClient();
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState<MailboxCreatePayload>({
+    email: "", display_name: "", smtp_host: "", smtp_username: "", smtp_password: "",
+    imap_host: "", imap_enabled: true, daily_limit: 50, start_warmup: true,
+  });
+
+  const { data } = useQuery({ queryKey: ["mailboxes"], queryFn: mailboxesApi.list });
+
+  const { mutate: create, isPending: creating } = useMutation({
+    mutationFn: () => mailboxesApi.create({ ...form, imap_host: form.imap_host || undefined }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["mailboxes"] });
+      setShowForm(false);
+      setForm({ email: "", display_name: "", smtp_host: "", smtp_username: "", smtp_password: "", imap_host: "", imap_enabled: true, daily_limit: 50, start_warmup: true });
+      toast.success("Mailbox added — warm-up ramp starts at 10 sends/day");
+    },
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Failed to add mailbox")),
+  });
+
+  const { mutate: testBox } = useMutation({
+    mutationFn: mailboxesApi.test,
+    onSuccess: (res) => (res.ok ? toast.success(res.message) : toast.error(res.message)),
+  });
+
+  const { mutate: remove } = useMutation({
+    mutationFn: mailboxesApi.deactivate,
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["mailboxes"] }); toast.success("Mailbox deactivated"); },
+  });
+
+  const valid = form.email.includes("@") && form.smtp_host && form.smtp_username && form.smtp_password;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-sky-500/10">
+              <AtSign className="w-5 h-5 text-sky-400" />
+            </div>
+            <div>
+              <CardTitle className="text-sm">Sending Mailboxes</CardTitle>
+              <CardDescription>Rotate sends across warmed identities; replies are polled via IMAP</CardDescription>
+            </div>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => setShowForm(!showForm)} className="gap-1.5">
+            <Plus className="w-3.5 h-3.5" />
+            Add mailbox
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {showForm && (
+          <div className="p-3 rounded-lg border border-border grid grid-cols-2 gap-2">
+            <Input placeholder="Email (from address)" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            <Input placeholder="Display name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} />
+            <Input placeholder="SMTP host" value={form.smtp_host} onChange={(e) => setForm({ ...form, smtp_host: e.target.value })} />
+            <Input placeholder="SMTP username" value={form.smtp_username} onChange={(e) => setForm({ ...form, smtp_username: e.target.value })} />
+            <Input type="password" placeholder="SMTP password / app password" value={form.smtp_password} onChange={(e) => setForm({ ...form, smtp_password: e.target.value })} />
+            <Input placeholder="IMAP host (optional, for replies)" value={form.imap_host} onChange={(e) => setForm({ ...form, imap_host: e.target.value, imap_enabled: !!e.target.value })} />
+            <div className="col-span-2 flex items-center justify-between">
+              <p className="text-[11px] text-muted-foreground">
+                Credentials are encrypted at rest. New mailboxes warm up from 10 sends/day.
+              </p>
+              <Button size="sm" variant="gradient" disabled={!valid} loading={creating} onClick={() => create()}>
+                Save mailbox
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {(data?.mailboxes.length ?? 0) === 0 && !showForm ? (
+          <p className="text-sm text-muted-foreground py-4 text-center">
+            No mailboxes yet — outreach falls back to the global SMTP settings (or demo mode).
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {data?.mailboxes.map((m) => (
+              <div key={m.id} className="flex items-center gap-3 p-3 rounded-lg border border-border">
+                <AtSign className="w-4 h-4 text-muted-foreground shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium truncate">{m.email}</p>
+                    {m.warming_up && (
+                      <Badge variant="warning" className="text-[10px] gap-1"><Flame className="w-2.5 h-2.5" />warming up</Badge>
+                    )}
+                    {m.imap_enabled && <Badge variant="secondary" className="text-[10px]">IMAP</Badge>}
+                    {!m.is_active && <Badge variant="destructive" className="text-[10px]">inactive</Badge>}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {m.sent_last_24h}/{m.effective_daily_limit} today · cap {m.daily_limit}/day
+                  </p>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => testBox(m.id)} className="text-xs">Test login</Button>
+                {m.is_active && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-red-400 hover:bg-red-500/10 hover:text-red-400 shrink-0 h-7 w-7"
+                    onClick={() => { if (confirm(`Deactivate ${m.email}?`)) remove(m.id); }}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ComplianceSection() {
   const qc = useQueryClient();
   const [value, setValue] = useState("");
@@ -485,6 +599,7 @@ export default function Settings() {
           </CardContent>
         </Card>
 
+        <MailboxSection />
         <ComplianceSection />
         <SlackSection />
         <APIKeysSection />

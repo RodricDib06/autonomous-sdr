@@ -424,6 +424,44 @@ export const sequencesApi = {
     api.delete(`/sequences/${id}`).then((r) => r.data),
 };
 
+// ── Sending mailboxes ─────────────────────────────────────────────────────────
+export interface Mailbox {
+  id: string;
+  email: string;
+  display_name: string;
+  provider: string;
+  smtp_host: string;
+  imap_enabled: boolean;
+  is_active: boolean;
+  daily_limit: number;
+  effective_daily_limit: number;
+  sent_last_24h: number;
+  warming_up: boolean;
+  last_used_at: string | null;
+  last_imap_poll_at: string | null;
+  created_at: string | null;
+}
+
+export interface MailboxCreatePayload {
+  email: string;
+  display_name?: string;
+  smtp_host: string;
+  smtp_port?: number;
+  smtp_username: string;
+  smtp_password: string;
+  imap_host?: string;
+  imap_enabled?: boolean;
+  daily_limit?: number;
+  start_warmup?: boolean;
+}
+
+export const mailboxesApi = {
+  list: () => api.get<{ mailboxes: Mailbox[]; total: number }>("/mailboxes").then((r) => r.data),
+  create: (payload: MailboxCreatePayload) => api.post<Mailbox>("/mailboxes", payload).then((r) => r.data),
+  test: (id: string) => api.post<{ ok: boolean; message: string }>(`/mailboxes/${id}/test`).then((r) => r.data),
+  deactivate: (id: string) => api.delete(`/mailboxes/${id}`).then((r) => r.data),
+};
+
 // ── Compliance — suppression list + send guardrails ───────────────────────────
 export interface SuppressionEntry {
   id: string;

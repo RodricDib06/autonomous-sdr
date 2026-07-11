@@ -84,7 +84,10 @@ class BaseAgent(ABC):
         )
 
     def _timed_run(self, db: Session, lead_id: str, input_data: dict) -> dict:
+        from app.services.llm_tracker import reset_llm_context, set_llm_context
+
         start = time.time()
+        ctx = set_llm_context(lead_id, self.name)
         try:
             result = self.run(db, lead_id, input_data)
             duration_ms = int((time.time() - start) * 1000)
@@ -94,3 +97,5 @@ class BaseAgent(ABC):
             duration_ms = int((time.time() - start) * 1000)
             self._log(db, lead_id, input_data, None, duration_ms, success=False, error=str(e))
             raise
+        finally:
+            reset_llm_context(ctx)

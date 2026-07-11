@@ -9,14 +9,16 @@ def get_ai_client():
       groq    — free tier (6 000 req/h), requires GROQ_API_KEY
       claude  — production quality, requires ANTHROPIC_API_KEY
     """
+    from app.services.llm_tracker import TrackedAIClient
+
     if settings.AI_PROVIDER == "claude":
         from app.services.claude_client import ClaudeClient
-        return ClaudeClient()
+        return TrackedAIClient(ClaudeClient(), "claude")
     if settings.AI_PROVIDER == "groq":
         from app.services.groq_client import GroqClient
-        return GroqClient()
+        return TrackedAIClient(GroqClient(), "groq")
     from app.services.ollama_client import OllamaClient
-    return OllamaClient()
+    return TrackedAIClient(OllamaClient(), "ollama")
 
 
 def get_enrichment_provider():

@@ -218,6 +218,28 @@ class SuppressionEntry(Base):
 
 
 # ---------------------------------------------------------------------------
+# LLM call telemetry — tokens, dollars, latency per call
+# ---------------------------------------------------------------------------
+
+class LLMCall(Base):
+    """One LLM generate() call. Powers per-lead cost and the AI-ops panel."""
+    __tablename__ = "llm_calls"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    lead_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("leads.id"), nullable=True, index=True)
+    agent_name: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    provider: Mapped[str] = mapped_column(String(30))
+    model: Mapped[str] = mapped_column(String(100))
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    success: Mapped[bool] = mapped_column(Boolean, default=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+# ---------------------------------------------------------------------------
 # Sending mailboxes — per-rep identities for deliverability
 # ---------------------------------------------------------------------------
 

@@ -168,6 +168,9 @@ app.include_router(sequences_router)
 from app.routers.mailboxes import router as mailboxes_router  # noqa: E402
 app.include_router(mailboxes_router)
 
+from app.routers.ai_ops import router as ai_ops_router  # noqa: E402
+app.include_router(ai_ops_router)
+
 # Global Slack notifier
 slack_notifier = SlackNotifier()
 # Store webhook URL in memory (in production, use database)

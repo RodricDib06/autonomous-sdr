@@ -61,7 +61,12 @@ async def lifespan(app: FastAPI):
                 redis.ping()
                 log.info("startup.redis", status="ok")
             except Exception as e:
-                log.error("startup.redis", status="failed", error=str(e))
+                log.error(
+                    "startup.redis", status="failed", error=str(e),
+                    hint="REDIS_URL is unreachable. On Railway: add a Redis service "
+                         "and set REDIS_URL=${{Redis.REDIS_URL}} on this service. "
+                         "Locally: docker compose up -d redis.",
+                )
                 raise
 
         # Validate AI provider connection (optional — skipped in test mode)

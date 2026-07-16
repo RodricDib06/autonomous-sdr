@@ -13,4 +13,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Default: API server. Override `command` in docker-compose for the worker.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form so $PORT expands — PaaS platforms (Railway, Render, Heroku)
+# inject PORT and probe that port; local runs fall back to 8000.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

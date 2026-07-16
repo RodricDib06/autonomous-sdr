@@ -16,6 +16,7 @@ import Signals from "./pages/Signals";
 import Inbox from "./pages/Inbox";
 import Approvals from "./pages/Approvals";
 import Sequences from "./pages/Sequences";
+import Backtests from "./pages/Backtests";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 
 const queryClient = new QueryClient({
@@ -44,6 +45,7 @@ export default function App() {
               <Route element={<ProtectedRoute requireManager />}>
                 <Route path="import" element={<Import />} />
                 <Route path="analytics" element={<Analytics />} />
+                <Route path="backtests" element={<Backtests />} />
               </Route>
               <Route element={<ProtectedRoute requireAdmin />}>
                 <Route path="users" element={<Users />} />

@@ -1,7 +1,7 @@
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard, Users2, Upload, BarChart3,
-  Settings, Zap, ChevronRight, LogOut, GitBranch, FlaskConical, Target, Radio, MessageSquare, ShieldCheck, ListOrdered,
+  Settings, Zap, ChevronRight, LogOut, GitBranch, FlaskConical, Target, Radio, MessageSquare, ShieldCheck, ListOrdered, History,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
@@ -21,6 +21,7 @@ const navItems = [
   { to: "/ab-tests", icon: FlaskConical, label: "A/B Tests" },
   { to: "/import", icon: Upload, label: "Import" },
   { to: "/analytics", icon: BarChart3, label: "Analytics" },
+  { to: "/backtests", icon: History, label: "Backtests" },
 ];
 
 const adminItems = [

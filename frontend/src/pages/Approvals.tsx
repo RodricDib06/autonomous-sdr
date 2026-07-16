@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, XCircle, PencilLine, ShieldCheck, Bot, FileEdit, Inbox as InboxIcon } from "lucide-react";
+import {
+  CheckCircle2, XCircle, PencilLine, ShieldCheck, Bot, FileEdit, Inbox as InboxIcon,
+  BookCheck, AlertTriangle, ChevronDown, Globe, Database, User as UserIcon, FileText, Landmark, Target,
+} from "lucide-react";
 import { toast } from "sonner";
-import { approvalsApi, type AutonomyMode, type PendingEmail } from "../lib/api";
+import { approvalsApi, type AutonomyMode, type EmailClaim, type GroundingReport, type PendingEmail } from "../lib/api";
 import { Header } from "../components/layout/Header";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
@@ -75,6 +78,106 @@ function AutonomyDial() {
   );
 }
 
+// ── Provenance — every claim in the draft traced to its source ───────────────
+
+const SOURCE_KIND_META: Record<string, { label: string; icon: typeof Globe }> = {
+  web_search: { label: "Web search", icon: Globe },
+  funding_signal: { label: "Funding data", icon: Landmark },
+  enrichment: { label: "Enrichment", icon: Database },
+  lead_record: { label: "Lead record", icon: UserIcon },
+  icp_check: { label: "ICP check", icon: Target },
+  template: { label: "Our template", icon: FileText },
+};
+
+function ClaimRow({ claim }: { claim: EmailClaim }) {
+  const [showExcerpt, setShowExcerpt] = useState(false);
+  const verified = claim.status === "verified";
+  const kind = claim.source_kind ? SOURCE_KIND_META[claim.source_kind] : undefined;
+  const KindIcon = kind?.icon ?? Globe;
+
+  return (
+    <li className="py-2 first:pt-0 last:pb-0">
+      <div className="flex items-start gap-2.5">
+        {verified ? (
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" aria-label="Verified claim" />
+        ) : (
+          <AlertTriangle className="w-3.5 h-3.5 text-yellow-400 shrink-0 mt-0.5" aria-label="Unverified claim" />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-xs leading-relaxed">{claim.text}</p>
+          {verified ? (
+            <button
+              type="button"
+              onClick={() => setShowExcerpt(!showExcerpt)}
+              className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <KindIcon className="w-3 h-3 shrink-0" />
+              <span className="truncate max-w-[280px]">{kind?.label ?? claim.source_kind} · {claim.source_title}</span>
+              <ChevronDown className={cn("w-3 h-3 shrink-0 transition-transform", showExcerpt && "rotate-180")} />
+            </button>
+          ) : (
+            <p className="mt-1 text-[11px] text-yellow-400/80">
+              No supporting source found — verify or edit this line before sending
+            </p>
+          )}
+          {verified && showExcerpt && claim.source_excerpt && (
+            <blockquote className="mt-1.5 pl-2.5 border-l-2 border-emerald-500/40 text-[11px] text-muted-foreground leading-relaxed">
+              {claim.source_excerpt}
+            </blockquote>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function GroundingBadge({ report }: { report: GroundingReport }) {
+  if (report.claims.length === 0) return null;
+  return report.unverified > 0 ? (
+    <Badge variant="warning" className="text-[10px] shrink-0 gap-1">
+      <AlertTriangle className="w-2.5 h-2.5" />
+      {report.unverified} unverified claim{report.unverified > 1 ? "s" : ""}
+    </Badge>
+  ) : (
+    <Badge variant="success" className="text-[10px] shrink-0 gap-1">
+      <BookCheck className="w-2.5 h-2.5" />
+      all claims sourced
+    </Badge>
+  );
+}
+
+function ClaimsPanel({ report }: { report: GroundingReport }) {
+  // Unverified claims are the reason this panel exists — open by default
+  // when any need attention; tuck away when everything checks out.
+  const [open, setOpen] = useState(report.unverified > 0);
+  if (report.claims.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-border">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-secondary/30 transition-colors rounded-lg"
+      >
+        <BookCheck className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+        <span className="text-xs font-medium">Fact check</span>
+        <span className="text-[11px] text-muted-foreground">
+          {report.verified}/{report.claims.length} claims traced to a source
+        </span>
+        <ChevronDown className={cn("w-3.5 h-3.5 text-muted-foreground ml-auto shrink-0 transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <ul className="px-3 pb-3 pt-1 divide-y divide-border/60">
+          {report.claims.map((claim, i) => (
+            <ClaimRow key={i} claim={claim} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function EmailCard({ email, draftMode }: { email: PendingEmail; draftMode: boolean }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
@@ -127,6 +230,7 @@ function EmailCard({ email, draftMode }: { email: PendingEmail; draftMode: boole
                   quality {Math.round(email.quality_score * 100)}
                 </Badge>
               )}
+              {email.claims && <GroundingBadge report={email.claims} />}
             </div>
             <p className="text-xs text-muted-foreground truncate">{email.lead_email} · drafted {formatDate(email.created_at)}</p>
           </div>
@@ -153,6 +257,8 @@ function EmailCard({ email, draftMode }: { email: PendingEmail; draftMode: boole
             <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-sans leading-relaxed">{email.body}</pre>
           </div>
         )}
+
+        {!editing && email.claims && <ClaimsPanel report={email.claims} />}
 
         <div className="flex items-center gap-2">
           {draftMode ? (

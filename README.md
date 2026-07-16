@@ -41,6 +41,11 @@ Universal Webhook               PostgreSQL + pgvector + Redis
 | **Runtime config toggle** | `POST /config/enrichment-provider` switches synthetic/hunter/pdl without restart |
 | **Semantic memory** | pgvector HNSW index + embeddings; keyword fallback |
 | **Email tracking** | 1×1 pixel open tracking + click redirect |
+| **Provenance-grounded emails** | Every factual claim in a generated email is matched to the research snippet that supports it; unverified claims flagged in the approval queue |
+| **Backtest mode** | Upload last quarter's CRM export (won/lost) → deterministic re-qualification → calibration report: hot recall, precision, lift, score-decile calibration |
+| **Email verification** | Pre-send gate: syntax, disposable domains, role accounts, MX lookup (null-MX aware), optional SMTP RCPT probe; TTL-cached per lead |
+| **Bounce handling** | RFC 3464 DSN parsing on every inbound poll; hard bounces → suppression list + cadence cancel + undeliverable flag; soft bounces tracked |
+| **OAuth mailboxes** | Gmail API + Microsoft Graph sending/polling for tenants with app passwords disabled; signed-state OAuth flow, encrypted token storage, auto-refresh |
 | **Compliance & send safety** | Do-not-contact suppression list (email + domain), RFC 8058 one-click unsubscribe, opt-out intent detection on replies, auto-stop sequences on reply |
 | **Send guardrails** | Rolling 24h send cap, recipient-local quiet hours (TLD-inferred timezone), weekday-only sends |
 | **Autonomy dial** | Per-org draft / approve / auto modes; approval queue with inline edits; bulk approve |
@@ -57,7 +62,7 @@ Universal Webhook               PostgreSQL + pgvector + Redis
 | **Prometheus metrics** | Queue depth, node duration histograms, LLM call counters, in-flight gauge |
 | **React dashboard** | Live pipeline SSE stream, A/B results, BANT weight chart, lead detail drawer |
 | **Production hardening** | Rate limiting (slowapi), security headers middleware, CORS from env var, Alembic migrations |
-| **331 backend + 441 frontend tests** | pytest + mocks; vitest + MSW; plus a real-Postgres/Redis integration suite in CI. Ingest, auth, A/B, tenancy, approvals, compliance, GDPR, … |
+| **419 backend + 461 frontend tests** | pytest + mocks; vitest + MSW; plus a real-Postgres/Redis integration suite in CI. Ingest, auth, A/B, tenancy, approvals, compliance, GDPR, provenance, backtests, verification, OAuth, … |
 
 ---
 
@@ -258,6 +263,19 @@ GET  /metrics                                  — Prometheus scrape endpoint
 GET  /analytics/powerbi-export                 — flat JSON for Power BI
 GET  /analytics/powerbi-export.csv             — CSV download
 GET  /analytics/semantic-search?query=...      — pgvector similarity search
+
+# Backtests (replay historical CRM exports through the qualifier)
+POST /backtests                                — upload CSV (name,email,company,outcome,…)
+GET  /backtests                                — list runs
+GET  /backtests/{id}                           — calibration report (recall/precision/lift)
+GET  /backtests/{id}/records                   — per-row drill-down (?misses_only=true)
+
+# Deliverability
+POST /email-verification                       — on-demand check ({email} or {lead_id})
+
+# OAuth mailboxes
+GET  /mailboxes/oauth/{provider}/start         — consent URL (gmail | microsoft)
+GET  /mailboxes/oauth/{provider}/callback      — token exchange + mailbox creation
 
 # Tracking
 GET  /track/open/{email_id}                    — open pixel (1×1 GIF)

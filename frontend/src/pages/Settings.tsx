@@ -1,8 +1,14 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { MessageSquare, Key, Lock, Eye, EyeOff, Plus, Trash2, Copy, CheckCircle2, Send, WifiOff, Shield, ShieldBan, Gauge, AtSign, Flame } from "lucide-react";
+import {
+  MessageSquare, Key, Lock, Eye, EyeOff, Plus, Trash2, Copy, CheckCircle2, Send, WifiOff,
+  Shield, ShieldBan, Gauge, AtSign, Flame, Mail, MailCheck, XCircle, HelpCircle, AlertTriangle,
+} from "lucide-react";
 import { toast } from "sonner";
-import { authApi, configApi, complianceApi, mailboxesApi, type MailboxCreatePayload } from "../lib/api";
+import {
+  authApi, configApi, complianceApi, mailboxesApi, verificationApi,
+  type MailboxCreatePayload, type OAuthProvider, type EmailVerification,
+} from "../lib/api";
 import type { APIKeyCreated } from "../types";
 import { Header } from "../components/layout/Header";
 import { Button } from "../components/ui/button";
@@ -347,6 +353,16 @@ function MailboxSection() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["mailboxes"] }); toast.success("Mailbox deactivated"); },
   });
 
+  const { mutate: connectOAuth, isPending: oauthPending } = useMutation({
+    mutationFn: (provider: OAuthProvider) => mailboxesApi.oauthStart(provider),
+    onSuccess: (res) => {
+      // Hand the browser to the provider's consent screen; the callback
+      // creates the mailbox and this page shows it on return.
+      window.location.assign(res.authorize_url);
+    },
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "OAuth is not configured on the server")),
+  });
+
   const valid = form.email.includes("@") && form.smtp_host && form.smtp_username && form.smtp_password;
 
   return (
@@ -359,13 +375,29 @@ function MailboxSection() {
             </div>
             <div>
               <CardTitle className="text-sm">Sending Mailboxes</CardTitle>
-              <CardDescription>Rotate sends across warmed identities; replies are polled via IMAP</CardDescription>
+              <CardDescription>Rotate sends across warmed identities; replies are polled automatically</CardDescription>
             </div>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setShowForm(!showForm)} className="gap-1.5">
-            <Plus className="w-3.5 h-3.5" />
-            Add mailbox
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline" size="sm" disabled={oauthPending}
+              onClick={() => connectOAuth("gmail")} className="gap-1.5"
+            >
+              <Mail className="w-3.5 h-3.5" />
+              Connect Gmail
+            </Button>
+            <Button
+              variant="outline" size="sm" disabled={oauthPending}
+              onClick={() => connectOAuth("microsoft")} className="gap-1.5"
+            >
+              <Mail className="w-3.5 h-3.5" />
+              Connect Microsoft 365
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setShowForm(!showForm)} className="gap-1.5">
+              <Plus className="w-3.5 h-3.5" />
+              SMTP
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -390,7 +422,9 @@ function MailboxSection() {
 
         {(data?.mailboxes.length ?? 0) === 0 && !showForm ? (
           <p className="text-sm text-muted-foreground py-4 text-center">
-            No mailboxes yet — outreach falls back to the global SMTP settings (or demo mode).
+            No mailboxes yet — connect Gmail / Microsoft 365 with one click (works even when your
+            admin has disabled app passwords), or add any SMTP mailbox. Without one, outreach falls
+            back to the global SMTP settings (or demo mode).
           </p>
         ) : (
           <div className="space-y-2">
@@ -403,7 +437,9 @@ function MailboxSection() {
                     {m.warming_up && (
                       <Badge variant="warning" className="text-[10px] gap-1"><Flame className="w-2.5 h-2.5" />warming up</Badge>
                     )}
-                    {m.imap_enabled && <Badge variant="secondary" className="text-[10px]">IMAP</Badge>}
+                    {m.provider === "gmail_oauth" && <Badge variant="admin" className="text-[10px]">Gmail API</Badge>}
+                    {m.provider === "microsoft_oauth" && <Badge variant="manager" className="text-[10px]">Microsoft 365</Badge>}
+                    {m.provider === "smtp" && m.imap_enabled && <Badge variant="secondary" className="text-[10px]">IMAP</Badge>}
                     {!m.is_active && <Badge variant="destructive" className="text-[10px]">inactive</Badge>}
                   </div>
                   <p className="text-xs text-muted-foreground">
@@ -423,6 +459,103 @@ function MailboxSection() {
                 )}
               </div>
             ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+const VERIFICATION_META: Record<EmailVerification["status"], { variant: "success" | "warning" | "destructive" | "secondary"; label: string }> = {
+  valid: { variant: "success", label: "Deliverable" },
+  risky: { variant: "warning", label: "Risky" },
+  undeliverable: { variant: "destructive", label: "Undeliverable" },
+  unknown: { variant: "secondary", label: "Unknown" },
+};
+
+const CHECK_LABELS: Record<string, string> = {
+  syntax: "Address syntax",
+  disposable: "Not a disposable domain",
+  role_account: "Personal (not a role account)",
+  mx: "Domain accepts mail (MX)",
+  smtp_probe: "Mailbox exists (SMTP probe)",
+  bounce: "No hard bounce on record",
+};
+
+function CheckIcon({ ok }: { ok: boolean | null }) {
+  if (ok === true) return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" aria-label="Passed" />;
+  if (ok === false) return <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" aria-label="Failed" />;
+  return <HelpCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0" aria-label="Inconclusive" />;
+}
+
+function VerificationSection() {
+  const [email, setEmail] = useState("");
+  const [result, setResult] = useState<EmailVerification | null>(null);
+
+  const { mutate: check, isPending } = useMutation({
+    mutationFn: () => verificationApi.verify({ email: email.trim() }),
+    onSuccess: setResult,
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Verification failed")),
+  });
+
+  const meta = result ? VERIFICATION_META[result.status] : null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-teal-500/10">
+            <MailCheck className="w-5 h-5 text-teal-400" />
+          </div>
+          <div>
+            <CardTitle className="text-sm">Email Verification</CardTitle>
+            <CardDescription>
+              The same pre-send gate the agent runs before any outreach — syntax, disposable domains, role accounts, and MX records
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => { e.preventDefault(); if (email.includes("@")) check(); }}
+        >
+          <Input
+            type="email"
+            placeholder="jane@acme.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            aria-label="Email address to verify"
+            className="flex-1"
+          />
+          <Button type="submit" variant="outline" size="sm" loading={isPending} disabled={!email.includes("@")} className="gap-1.5 shrink-0">
+            <MailCheck className="w-3.5 h-3.5" />
+            Verify
+          </Button>
+        </form>
+
+        {result && meta && (
+          <div className="rounded-lg border border-border p-3 space-y-3 animate-fade-in">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs">{result.email}</span>
+              <Badge variant={meta.variant} className="text-[10px]">{meta.label}</Badge>
+              <span className="text-xs text-muted-foreground truncate">{result.reason}</span>
+            </div>
+            <ul className="space-y-1.5">
+              {Object.entries(result.checks).map(([name, check_]) => (
+                <li key={name} className="flex items-center gap-2 text-xs">
+                  <CheckIcon ok={check_.ok} />
+                  <span>{CHECK_LABELS[name] ?? name.replace(/_/g, " ")}</span>
+                  {check_.detail && <span className="text-muted-foreground truncate">· {check_.detail}</span>}
+                </li>
+              ))}
+            </ul>
+            {result.status === "undeliverable" && (
+              <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
+                <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5 text-yellow-400" />
+                The agent skips undeliverable addresses automatically — bounces are what burn a sending domain.
+              </p>
+            )}
           </div>
         )}
       </CardContent>
@@ -600,6 +733,7 @@ export default function Settings() {
         </Card>
 
         <MailboxSection />
+        <VerificationSection />
         <ComplianceSection />
         <SlackSection />
         <APIKeysSection />

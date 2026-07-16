@@ -126,6 +126,9 @@ def list_pending_approvals(
                 "subject": e.subject,
                 "body": e.body,
                 "quality_score": e.quality_score,
+                # Provenance: per-claim verification against research sources,
+                # so reviewers see exactly which sentences are unsupported
+                "claims": e.claims,
                 "scheduled_at": e.scheduled_at.isoformat() if e.scheduled_at else None,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
             }

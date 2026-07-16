@@ -31,6 +31,10 @@ log = logging.getLogger(__name__)
 WARMUP_START_SENDS = 10
 WARMUP_DAILY_INCREMENT = 5
 
+# Provider values whose credentials column holds an OAuth token blob rather
+# than an SMTP password (dispatch + polling go through oauth_mailbox.py)
+OAUTH_MAILBOX_PROVIDERS = ("gmail_oauth", "microsoft_oauth")
+
 
 # ---------------------------------------------------------------------------
 # Credential encryption
@@ -113,8 +117,6 @@ def send_via_mailbox(
         plain_body += f"\n\n—\nDon't want to hear from us? Unsubscribe: {unsubscribe_url}"
 
     try:
-        password = decrypt_secret(mailbox.smtp_password_encrypted)
-
         msg = MIMEMultipart("alternative")
         msg["Subject"] = email_record.subject
         from_header = f"{mailbox.display_name} <{mailbox.email}>" if mailbox.display_name else mailbox.email
@@ -135,9 +137,14 @@ def send_via_mailbox(
             )
             msg.attach(MIMEText(html_body, "html"))
 
-        with smtplib.SMTP_SSL(mailbox.smtp_host, mailbox.smtp_port) as server:
-            server.login(mailbox.smtp_username, password)
-            server.sendmail(mailbox.email, [to_address], msg.as_string())
+        if mailbox.provider in OAUTH_MAILBOX_PROVIDERS:
+            from app.services.oauth_mailbox import send_mime
+            send_mime(db, mailbox, msg.as_bytes())
+        else:
+            password = decrypt_secret(mailbox.smtp_password_encrypted)
+            with smtplib.SMTP_SSL(mailbox.smtp_host, mailbox.smtp_port) as server:
+                server.login(mailbox.smtp_username, password)
+                server.sendmail(mailbox.email, [to_address], msg.as_string())
 
         email_record.status = "sent"
         email_record.sent_at = utcnow()
@@ -154,8 +161,14 @@ def send_via_mailbox(
         return f"failed: {e}"
 
 
-def test_mailbox_connection(mailbox: SendingMailbox) -> tuple[bool, str]:
-    """SMTP login check without sending anything."""
+def test_mailbox_connection(mailbox: SendingMailbox, db: Session | None = None) -> tuple[bool, str]:
+    """Credential check without sending anything (SMTP login or OAuth refresh)."""
+    if mailbox.provider in OAUTH_MAILBOX_PROVIDERS:
+        if db is None:
+            return False, "OAuth connection test requires a database session"
+        from app.services.oauth_mailbox import test_connection
+        return test_connection(db, mailbox)
+
     try:
         password = decrypt_secret(mailbox.smtp_password_encrypted)
         with smtplib.SMTP_SSL(mailbox.smtp_host, mailbox.smtp_port, timeout=10) as server:
@@ -201,61 +214,122 @@ def _from_address(message) -> str:
     return raw.strip().lower()
 
 
-def poll_mailbox_replies(db: Session, imap_factory=None) -> dict:
+def _process_inbound(
+    db: Session,
+    mailbox: SendingMailbox,
+    sender: str,
+    subject: str,
+    body: str,
+    message=None,
+    source: str = "imap",
+) -> str:
     """
-    Fetch UNSEEN messages from every IMAP-enabled mailbox and run each one
-    through the shared reply pipeline. `imap_factory` is injectable for tests.
+    Shared classification for one inbound message, whatever transport it
+    arrived on. DSNs go to the bounce handler (never auto-respond to
+    mailer-daemon); real replies from known leads enter the reply pipeline.
+    Returns "bounce" | "reply" | "ignored".
     """
+    from app.services.bounce_service import handle_bounce, looks_like_bounce, parse_bounce
     from app.services.reply_service import handle_reply
 
+    content_type = message.get_content_type() if message is not None else ""
+    if looks_like_bounce(sender, subject, content_type):
+        bounce = parse_bounce(message, body)
+        if bounce:
+            handle_bounce(
+                db, bounce["recipient"], bounce["hard"],
+                bounce["diagnostic"], org_id=mailbox.org_id,
+            )
+            return "bounce"
+        return "ignored"
+
+    if not sender or not body:
+        return "ignored"
+
+    lead_q = db.query(Lead).filter(Lead.email.ilike(sender))
+    if mailbox.org_id is not None:
+        lead_q = lead_q.filter(Lead.org_id == mailbox.org_id)
+    lead = lead_q.first()
+    if lead is None:
+        return "ignored"
+
+    handle_reply(db, lead, body, source=f"{source}:{mailbox.email}")
+    return "reply"
+
+
+def poll_mailbox_replies(db: Session, imap_factory=None) -> dict:
+    """
+    Fetch unread messages from every reply-capable mailbox — UNSEEN over IMAP
+    for SMTP mailboxes, unread inbox messages via the Gmail/Graph APIs for
+    OAuth mailboxes — and run each through the shared classification
+    (bounce handling first, then the reply pipeline).
+    `imap_factory` is injectable for tests.
+    """
     imap_factory = imap_factory or (lambda host, port: imaplib.IMAP4_SSL(host, port))
 
     mailboxes = (
         db.query(SendingMailbox)
-        .filter(SendingMailbox.is_active.is_(True), SendingMailbox.imap_enabled.is_(True))
+        .filter(
+            SendingMailbox.is_active.is_(True),
+            (SendingMailbox.imap_enabled.is_(True))
+            | (SendingMailbox.provider.in_(OAUTH_MAILBOX_PROVIDERS)),
+        )
         .all()
     )
 
-    processed = matched = errors = 0
+    processed = matched = bounces = errors = 0
     for mailbox in mailboxes:
         try:
-            password = decrypt_secret(mailbox.smtp_password_encrypted)
-            conn = imap_factory(mailbox.imap_host or mailbox.smtp_host, mailbox.imap_port)
-            try:
-                conn.login(mailbox.smtp_username, password)
-                conn.select("INBOX")
-                _, data = conn.search(None, "UNSEEN")
-                for num in (data[0].split() if data and data[0] else []):
-                    _, msg_data = conn.fetch(num, "(RFC822)")
-                    if not msg_data or msg_data[0] is None:
-                        continue
-                    message = email_lib.message_from_bytes(msg_data[0][1])
+            if mailbox.provider in OAUTH_MAILBOX_PROVIDERS:
+                from app.services.oauth_mailbox import fetch_unread_messages, mark_message_read
+                for item in fetch_unread_messages(db, mailbox):
                     processed += 1
-
-                    sender = _from_address(message)
-                    body = _extract_text_body(message).strip()
-                    if not sender or not body:
-                        continue
-
-                    lead_q = db.query(Lead).filter(Lead.email.ilike(sender))
-                    if mailbox.org_id is not None:
-                        lead_q = lead_q.filter(Lead.org_id == mailbox.org_id)
-                    lead = lead_q.first()
-                    if lead is None:
-                        continue
-
-                    matched += 1
-                    handle_reply(db, lead, body, source=f"imap:{mailbox.email}")
-            finally:
+                    outcome = _process_inbound(
+                        db, mailbox, item["from"], item["subject"], item["body"],
+                        source="oauth",
+                    )
+                    if outcome == "reply":
+                        matched += 1
+                    elif outcome == "bounce":
+                        bounces += 1
+                    mark_message_read(db, mailbox, item["id"])
+            else:
+                password = decrypt_secret(mailbox.smtp_password_encrypted)
+                conn = imap_factory(mailbox.imap_host or mailbox.smtp_host, mailbox.imap_port)
                 try:
-                    conn.logout()
-                except Exception:
-                    pass
+                    conn.login(mailbox.smtp_username, password)
+                    conn.select("INBOX")
+                    _, data = conn.search(None, "UNSEEN")
+                    for num in (data[0].split() if data and data[0] else []):
+                        _, msg_data = conn.fetch(num, "(RFC822)")
+                        if not msg_data or msg_data[0] is None:
+                            continue
+                        message = email_lib.message_from_bytes(msg_data[0][1])
+                        processed += 1
+
+                        outcome = _process_inbound(
+                            db, mailbox,
+                            _from_address(message),
+                            _decode_header_value(message.get("Subject", "")),
+                            _extract_text_body(message).strip(),
+                            message=message,
+                            source="imap",
+                        )
+                        if outcome == "reply":
+                            matched += 1
+                        elif outcome == "bounce":
+                            bounces += 1
+                finally:
+                    try:
+                        conn.logout()
+                    except Exception:
+                        pass
 
             mailbox.last_imap_poll_at = utcnow()
             db.commit()
         except Exception as e:
             errors += 1
-            log.warning(f"[mailbox] IMAP poll failed for {mailbox.email}: {e}")
+            log.warning(f"[mailbox] Reply poll failed for {mailbox.email}: {e}")
 
-    return {"mailboxes": len(mailboxes), "processed": processed, "matched": matched, "errors": errors}
+    return {"mailboxes": len(mailboxes), "processed": processed, "matched": matched,
+            "bounces": bounces, "errors": errors}

@@ -177,6 +177,9 @@ app.include_router(gdpr_router)
 from app.routers.compliance import router as compliance_router  # noqa: E402
 app.include_router(compliance_router)
 
+from app.routers.backtests import router as backtests_router  # noqa: E402
+app.include_router(backtests_router)
+
 # Global Slack notifier
 slack_notifier = SlackNotifier()
 # Store webhook URL in memory (in production, use database)
@@ -804,6 +807,9 @@ def get_lead(
         verdict = lead.verdicts[0] if lead.verdicts else None
 
         detail = LeadDetail.model_validate(lead)
+        detail.email_verification_status = lead.email_verification_status
+        detail.email_verified_at = lead.email_verified_at
+        detail.email_verification_reason = (lead.email_verification_detail or {}).get("reason")
         if enrichment:
             detail.enrichment = {
                 "job_title": enrichment.job_title,

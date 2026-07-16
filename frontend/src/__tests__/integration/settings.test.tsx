@@ -644,3 +644,108 @@ describe('Settings — Compliance & Send Safety', () => {
     });
   });
 });
+
+describe('Settings — OAuth mailboxes', () => {
+  it('renders connect buttons for Gmail and Microsoft 365', async () => {
+    renderWithProviders(<Settings />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /connect gmail/i })).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /connect microsoft 365/i })).toBeInTheDocument();
+  });
+
+  it('redirects to the provider consent screen on connect', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign });
+
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />);
+    await waitFor(() => screen.getByRole('button', { name: /connect gmail/i }));
+
+    await user.click(screen.getByRole('button', { name: /connect gmail/i }));
+    await waitFor(() => {
+      expect(assign).toHaveBeenCalledWith('https://accounts.example.com/consent?provider=gmail');
+    });
+  });
+
+  it('surfaces the server error when OAuth is not configured', async () => {
+    server.use(
+      http.get('http://localhost:8000/mailboxes/oauth/gmail/start', () =>
+        HttpResponse.json(
+          { detail: 'gmail OAuth is not configured — set GOOGLE_CLIENT_ID/_CLIENT_SECRET' },
+          { status: 400 }
+        )
+      )
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />);
+    await waitFor(() => screen.getByRole('button', { name: /connect gmail/i }));
+
+    await user.click(screen.getByRole('button', { name: /connect gmail/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/gmail oauth is not configured/i)).toBeInTheDocument();
+    });
+  });
+
+  it('labels OAuth mailboxes with their provider', async () => {
+    server.use(
+      http.get('http://localhost:8000/mailboxes', () =>
+        HttpResponse.json({
+          total: 1,
+          mailboxes: [
+            {
+              id: 'mb-oauth', email: 'rep@company.com', display_name: '', provider: 'gmail_oauth',
+              smtp_host: '', imap_enabled: false, is_active: true, daily_limit: 50,
+              effective_daily_limit: 10, sent_last_24h: 2, warming_up: true,
+              last_used_at: null, last_imap_poll_at: null, created_at: '2026-07-14T09:00:00Z',
+            },
+          ],
+        })
+      )
+    );
+    renderWithProviders(<Settings />);
+    await waitFor(() => {
+      expect(screen.getByText('rep@company.com')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Gmail API')).toBeInTheDocument();
+  });
+});
+
+describe('Settings — email verification', () => {
+  it('verifies a deliverable address and lists the passing checks', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />);
+    await waitFor(() => screen.getByText('Email Verification'));
+
+    await user.type(screen.getByLabelText('Email address to verify'), 'jane@acme.com');
+    await user.click(screen.getByRole('button', { name: /^verify$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Deliverable')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Address syntax')).toBeInTheDocument();
+    expect(screen.getByText(/domain accepts mail \(mx\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 MX record\(s\)/i)).toBeInTheDocument();
+  });
+
+  it('marks undeliverable addresses and explains the auto-skip', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />);
+    await waitFor(() => screen.getByText('Email Verification'));
+
+    await user.type(screen.getByLabelText('Email address to verify'), 'gone@dead-domain.io');
+    await user.click(screen.getByRole('button', { name: /^verify$/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Undeliverable')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/domain does not exist/i)).toBeInTheDocument();
+    expect(screen.getByText(/the agent skips undeliverable addresses automatically/i)).toBeInTheDocument();
+  });
+
+  it('disables verify until the input looks like an email', async () => {
+    renderWithProviders(<Settings />);
+    await waitFor(() => screen.getByText('Email Verification'));
+    expect(screen.getByRole('button', { name: /^verify$/i })).toBeDisabled();
+  });
+});

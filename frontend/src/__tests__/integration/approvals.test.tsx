@@ -72,3 +72,95 @@ describe('Approvals page', () => {
     expect(screen.getByRole('button', { name: /approve all/i })).toBeInTheDocument();
   });
 });
+
+describe('Approvals — provenance fact check', () => {
+  it('flags drafts with unverified claims in the header badge', async () => {
+    renderWithProviders(<Approvals />);
+    await waitFor(() => screen.getByText('Alice Chen'));
+    expect(screen.getByText(/1 unverified claim/i)).toBeInTheDocument();
+  });
+
+  it('opens the fact-check panel by default when a claim is unsupported', async () => {
+    renderWithProviders(<Approvals />);
+    await waitFor(() => screen.getByText('Alice Chen'));
+
+    expect(screen.getByText('Fact check')).toBeInTheDocument();
+    expect(screen.getByText(/1\/2 claims traced to a source/i)).toBeInTheDocument();
+    // The invented metric is called out with remediation guidance
+    expect(screen.getByText(/grow revenue by 300% in 6 weeks/i)).toBeInTheDocument();
+    expect(screen.getByText(/no supporting source found/i)).toBeInTheDocument();
+  });
+
+  it('reveals the supporting source excerpt on click', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<Approvals />);
+    await waitFor(() => screen.getByText('Alice Chen'));
+
+    await user.click(screen.getByRole('button', { name: /web search .* raises \$12m series a/i }));
+    expect(
+      screen.getByText(/announced a \$12M Series A round led by Example Ventures/i)
+    ).toBeInTheDocument();
+  });
+
+  it('shows an all-sourced badge and a collapsed panel when every claim verifies', async () => {
+    server.use(
+      http.get('http://localhost:8000/outreach/approvals', () =>
+        HttpResponse.json({
+          total: 1,
+          mode: 'approve',
+          emails: [
+            {
+              id: 'em-2', lead_id: 'lead-1', lead_name: 'Alice Chen',
+              lead_email: 'alice@startup.io', company: 'Startup IO', step_number: 1,
+              subject: 's', body: 'b', quality_score: 0.9,
+              claims: {
+                claims: [
+                  {
+                    text: 'Startup IO is in the SaaS industry.', status: 'verified', score: 0.9,
+                    source_id: 'enrichment', source_kind: 'enrichment',
+                    source_title: 'Enrichment (domain_heuristics_v1)', source_excerpt: 'industry SaaS',
+                  },
+                ],
+                verified: 1, unverified: 0, grounding_score: 1.0,
+                sources: [{ id: 'enrichment', kind: 'enrichment', title: 'Enrichment' }],
+              },
+              scheduled_at: null, created_at: null,
+            },
+          ],
+        })
+      )
+    );
+    renderWithProviders(<Approvals />);
+    await waitFor(() => screen.getByText('Alice Chen'));
+
+    expect(screen.getByText(/all claims sourced/i)).toBeInTheDocument();
+    // Collapsed by default — the claim text is not rendered until expanded
+    expect(screen.queryByText('Startup IO is in the SaaS industry.')).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /fact check/i }));
+    expect(screen.getByText('Startup IO is in the SaaS industry.')).toBeInTheDocument();
+  });
+
+  it('renders no fact-check panel for emails without claims', async () => {
+    server.use(
+      http.get('http://localhost:8000/outreach/approvals', () =>
+        HttpResponse.json({
+          total: 1,
+          mode: 'approve',
+          emails: [
+            {
+              id: 'em-3', lead_id: 'lead-1', lead_name: 'Alice Chen',
+              lead_email: 'alice@startup.io', company: 'Startup IO', step_number: 1,
+              subject: 's', body: 'b', quality_score: 0.9, claims: null,
+              scheduled_at: null, created_at: null,
+            },
+          ],
+        })
+      )
+    );
+    renderWithProviders(<Approvals />);
+    await waitFor(() => screen.getByText('Alice Chen'));
+    expect(screen.queryByText('Fact check')).not.toBeInTheDocument();
+  });
+});

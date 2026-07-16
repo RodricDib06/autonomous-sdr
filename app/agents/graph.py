@@ -189,6 +189,17 @@ def node_research(state: LeadState) -> LeadState:
         result = agent.run(lead, enrichment)
         elapsed = time.time() - t0
         _inc_node_duration("research", elapsed)
+        # Persist the raw evidence so provenance grounding (and any later
+        # regeneration) can cite it after the in-memory state is gone.
+        try:
+            crud.append_lead_event(db, lead_id, "pipeline.research.complete", payload={
+                "research_notes": result.get("research_notes", []),
+                "research_summary": result.get("research_summary", ""),
+                "iterations": result.get("iterations", 0),
+                "duration_ms": int(elapsed * 1000),
+            }, agent_name="research")
+        except Exception:
+            pass
         log.info(
             "graph.node.complete",
             node="research",
@@ -392,7 +403,8 @@ def node_outreach(state: LeadState) -> LeadState:
     db = _db()
     try:
         agent = OutreachAgent()
-        result = agent._timed_run(db, lead_id, {})
+        # Research evidence flows into provenance grounding of each email
+        result = agent._timed_run(db, lead_id, {"research": state.get("research", {})})
         elapsed = time.time() - t0
         _inc_node_duration("outreach", elapsed)
         try:

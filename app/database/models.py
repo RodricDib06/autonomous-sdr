@@ -62,6 +62,10 @@ class Lead(Base):
     referred_by_lead_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("leads.id"), nullable=True)
     # IANA timezone inferred from email TLD; gates the recipient-local send window
     timezone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Deliverability: valid | risky | undeliverable | unknown (see email_verification.py)
+    email_verification_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    email_verification_detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     enrichments: Mapped[list["Enrichment"]] = relationship(back_populates="lead", cascade="all, delete-orphan")
     events: Mapped[list["LeadEvent"]] = relationship(back_populates="lead", cascade="all, delete-orphan", foreign_keys="LeadEvent.lead_id")
@@ -341,6 +345,9 @@ class OutreachEmail(Base):
     quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     quality_flags: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     quality_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Provenance grounding: {"claims": [{text, status, source_id, ...}],
+    # "verified": n, "unverified": n, "grounding_score": 0-1} (provenance.py)
+    claims: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     lead: Mapped["Lead"] = relationship(back_populates="outreach_emails", foreign_keys=[lead_id])
@@ -487,6 +494,53 @@ class LeadEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
     lead: Mapped["Lead"] = relationship(back_populates="events", foreign_keys=[lead_id])
+
+
+# Backtesting — replay historical CRM exports through the qualifier
+# ---------------------------------------------------------------------------
+
+class BacktestRun(Base):
+    """
+    One backtest: a historical CSV (leads + known won/lost outcomes) replayed
+    through the deterministic qualification scorer, so a buyer can see how the
+    agent's verdicts line up against what actually closed — on their own data.
+    """
+    __tablename__ = "backtest_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(20), default="complete")  # complete | failed
+    created_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    total_rows: Mapped[int] = mapped_column(Integer, default=0)
+    skipped_rows: Mapped[int] = mapped_column(Integer, default=0)
+    # Aggregates: verdict×outcome matrix, recall/precision/lift, calibration buckets
+    summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+    records: Mapped[list["BacktestRecord"]] = relationship(back_populates="run", cascade="all, delete-orphan")
+
+
+class BacktestRecord(Base):
+    """One scored row of a backtest — prediction next to the real outcome."""
+    __tablename__ = "backtest_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("backtest_runs.id"), index=True)
+    row_number: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str] = mapped_column(String(255))
+    company: Mapped[str] = mapped_column(String(255))
+    actual_outcome: Mapped[str] = mapped_column(String(10))  # won | lost
+    predicted_verdict: Mapped[str] = mapped_column(String(10))  # Hot | Warm | Cold
+    predicted_score: Mapped[float] = mapped_column(Float, default=0.0)
+    icp_match: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # BANT breakdown + which input fields were available vs defaulted
+    features: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    run: Mapped["BacktestRun"] = relationship(back_populates="records")
 
 
 # Self-optimization

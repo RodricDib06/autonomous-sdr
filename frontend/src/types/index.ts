@@ -90,6 +90,10 @@ export interface Verdict {
 export interface LeadDetail extends Lead {
   enrichment: Enrichment | null;
   verdict: Verdict | null;
+  // Deliverability gate result (null until the pre-send verifier has run)
+  email_verification_status: "valid" | "risky" | "undeliverable" | "unknown" | null;
+  email_verified_at: string | null;
+  email_verification_reason: string | null;
 }
 
 export interface LeadStats {

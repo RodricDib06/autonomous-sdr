@@ -364,6 +364,26 @@ export const autonomyApi = {
 // ── Approvals — human-in-the-loop autonomy dial ───────────────────────────────
 export type AutonomyMode = "draft" | "approve" | "auto";
 
+// Provenance: one factual claim from a generated email, matched (or not)
+// against the evidence the pipeline actually collected.
+export interface EmailClaim {
+  text: string;
+  status: "verified" | "unverified";
+  score: number;
+  source_id: string | null;
+  source_kind: string | null;
+  source_title: string | null;
+  source_excerpt: string | null;
+}
+
+export interface GroundingReport {
+  claims: EmailClaim[];
+  verified: number;
+  unverified: number;
+  grounding_score: number | null;
+  sources: { id: string; kind: string; title: string }[];
+}
+
 export interface PendingEmail {
   id: string;
   lead_id: string;
@@ -374,6 +394,7 @@ export interface PendingEmail {
   subject: string;
   body: string;
   quality_score: number | null;
+  claims: GroundingReport | null;
   scheduled_at: string | null;
   created_at: string | null;
 }
@@ -488,11 +509,16 @@ export interface MailboxCreatePayload {
   start_warmup?: boolean;
 }
 
+export type OAuthProvider = "gmail" | "microsoft";
+
 export const mailboxesApi = {
   list: () => api.get<{ mailboxes: Mailbox[]; total: number }>("/mailboxes").then((r) => r.data),
   create: (payload: MailboxCreatePayload) => api.post<Mailbox>("/mailboxes", payload).then((r) => r.data),
   test: (id: string) => api.post<{ ok: boolean; message: string }>(`/mailboxes/${id}/test`).then((r) => r.data),
   deactivate: (id: string) => api.delete(`/mailboxes/${id}`).then((r) => r.data),
+  // Begin the OAuth consent flow; caller redirects to the returned URL
+  oauthStart: (provider: OAuthProvider) =>
+    api.get<{ authorize_url: string; state: string }>(`/mailboxes/oauth/${provider}/start`).then((r) => r.data),
 };
 
 // ── Compliance — suppression list + send guardrails ───────────────────────────
@@ -526,6 +552,88 @@ export const complianceApi = {
     api.post<{ id: string; value: string; kind: string; cancelled_emails: number }>("/suppressions", { value, reason }).then((r) => r.data),
   removeSuppression: (id: string) =>
     api.delete(`/suppressions/${id}`).then((r) => r.data),
+};
+
+// ── Backtests — replay historical CRM exports through the qualifier ──────────
+export interface CalibrationBucket {
+  range: [number, number];
+  count: number;
+  mean_predicted_score: number | null;
+  actual_win_rate: number | null;
+}
+
+export interface BacktestSummary {
+  total: number;
+  won: number;
+  lost: number;
+  base_win_rate: number | null;
+  verdict_outcome_matrix: Record<"Hot" | "Warm" | "Cold", { won: number; lost: number }>;
+  hot_recall: number | null;
+  hot_or_warm_recall: number | null;
+  hot_precision: number | null;
+  hot_lift: number | null;
+  calibration: CalibrationBucket[];
+}
+
+export interface BacktestRun {
+  id: string;
+  filename: string;
+  status: string;
+  total_rows: number;
+  skipped_rows: number;
+  created_at: string | null;
+  summary?: BacktestSummary | null;
+  errors?: string | null;
+}
+
+export interface BacktestRecord {
+  row_number: number;
+  name: string;
+  email: string;
+  company: string;
+  actual_outcome: "won" | "lost";
+  predicted_verdict: "Hot" | "Warm" | "Cold";
+  predicted_score: number;
+  icp_match: boolean | null;
+  features: {
+    bant: Record<string, number>;
+    defaulted: string[];
+    guardrail_flag: string | null;
+    headcount: number | null;
+    seniority: string | null;
+  } | null;
+  reasoning: string | null;
+}
+
+export const backtestsApi = {
+  upload: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return api
+      .post<BacktestRun>("/backtests", fd, { headers: { "Content-Type": "multipart/form-data" } })
+      .then((r) => r.data);
+  },
+  list: () =>
+    api.get<{ total: number; runs: BacktestRun[] }>("/backtests").then((r) => r.data),
+  get: (id: string) => api.get<BacktestRun>(`/backtests/${id}`).then((r) => r.data),
+  records: (id: string, params?: { verdict?: string; outcome?: string; misses_only?: boolean; limit?: number; offset?: number }) =>
+    api.get<{ total: number; records: BacktestRecord[] }>(`/backtests/${id}/records`, { params }).then((r) => r.data),
+};
+
+// ── Email verification — pre-send deliverability gate ────────────────────────
+export type VerificationStatus = "valid" | "risky" | "undeliverable" | "unknown";
+
+export interface EmailVerification {
+  email: string;
+  status: VerificationStatus;
+  reason: string;
+  checks: Record<string, { ok: boolean | null; detail?: string }>;
+  verified_at: string;
+}
+
+export const verificationApi = {
+  verify: (payload: { email?: string; lead_id?: string }) =>
+    api.post<EmailVerification>("/email-verification", payload).then((r) => r.data),
 };
 
 export default api;

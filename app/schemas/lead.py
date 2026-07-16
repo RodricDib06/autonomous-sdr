@@ -60,6 +60,10 @@ class LeadResponse(BaseModel):
 class LeadDetail(LeadResponse):
     enrichment: dict | None = None
     verdict: dict | None = None
+    # Deliverability: valid | risky | undeliverable | unknown (email_verification.py)
+    email_verification_status: str | None = None
+    email_verified_at: datetime | None = None
+    email_verification_reason: str | None = None
 
 
 class BatchRequest(BaseModel):

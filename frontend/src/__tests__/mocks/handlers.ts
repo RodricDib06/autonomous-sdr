@@ -145,7 +145,14 @@ export const handlers = [
   http.get(`${API_BASE_URL}/leads/:id`, ({ params }) => {
     const lead = mockLeads.find((l) => l.id === params.id);
     if (!lead) return HttpResponse.json({ detail: 'Not found' }, { status: 404 });
-    return HttpResponse.json({ ...lead, enrichment: mockEnrichment, verdict: mockVerdict });
+    return HttpResponse.json({
+      ...lead,
+      enrichment: mockEnrichment,
+      verdict: mockVerdict,
+      email_verification_status: 'valid',
+      email_verified_at: '2026-07-14T09:00:00Z',
+      email_verification_reason: 'All checks passed',
+    });
   }),
 
   http.get(`${API_BASE_URL}/leads/:id/history`, () =>
@@ -452,6 +459,32 @@ export const handlers = [
           subject: 'Quick question about Startup IO',
           body: 'Hi Alice,\n\nSaw your team is scaling…',
           quality_score: 0.87,
+          claims: {
+            claims: [
+              {
+                text: 'Saw that Startup IO raised a $12M Series A.',
+                status: 'verified',
+                score: 0.82,
+                source_id: 'research-0-0',
+                source_kind: 'web_search',
+                source_title: 'Startup IO raises $12M Series A',
+                source_excerpt: 'Startup IO announced a $12M Series A round led by Example Ventures.',
+              },
+              {
+                text: 'We helped a similar company grow revenue by 300% in 6 weeks.',
+                status: 'unverified',
+                score: 0.1,
+                source_id: null,
+                source_kind: null,
+                source_title: null,
+                source_excerpt: null,
+              },
+            ],
+            verified: 1,
+            unverified: 1,
+            grounding_score: 0.5,
+            sources: [{ id: 'research-0-0', kind: 'web_search', title: 'Startup IO raises $12M Series A' }],
+          },
           scheduled_at: '2026-07-03T10:00:00Z',
           created_at: '2026-07-03T09:00:00Z',
         },
@@ -584,10 +617,135 @@ export const handlers = [
     HttpResponse.json({ status: 'seeding', message: 'Demo data loading in background' })
   ),
 
+  // ── Backtests ──────────────────────────────────────────────────────────────
+  http.get(`${API_BASE_URL}/backtests`, () =>
+    HttpResponse.json({
+      total: 1,
+      runs: [{ id: 'bt-1', filename: 'q1_deals.csv', status: 'complete', total_rows: 40, skipped_rows: 1, created_at: '2026-07-14T09:00:00Z' }],
+    })
+  ),
+
+  http.get(`${API_BASE_URL}/backtests/:id`, () => HttpResponse.json(mockBacktestRun)),
+
+  http.get(`${API_BASE_URL}/backtests/:id/records`, ({ request }) => {
+    const missesOnly = new URL(request.url).searchParams.get('misses_only') === 'true';
+    const records = missesOnly
+      ? mockBacktestRecords.filter(
+          (r) =>
+            (r.predicted_verdict === 'Hot' && r.actual_outcome === 'lost') ||
+            (r.predicted_verdict === 'Cold' && r.actual_outcome === 'won')
+        )
+      : mockBacktestRecords;
+    return HttpResponse.json({ total: records.length, records });
+  }),
+
+  http.post(`${API_BASE_URL}/backtests`, () =>
+    HttpResponse.json({ ...mockBacktestRun, id: 'bt-new', filename: 'upload.csv' }, { status: 201 })
+  ),
+
+  // ── Email verification ─────────────────────────────────────────────────────
+  http.post(`${API_BASE_URL}/email-verification`, async ({ request }) => {
+    const body = (await request.json()) as { email?: string };
+    const undeliverable = body.email?.includes('dead');
+    return HttpResponse.json({
+      email: body.email ?? 'lead@corp.com',
+      status: undeliverable ? 'undeliverable' : 'valid',
+      reason: undeliverable ? 'Domain does not exist (NXDOMAIN)' : 'All checks passed',
+      checks: {
+        syntax: { ok: true },
+        disposable: { ok: true },
+        role_account: { ok: true },
+        mx: { ok: !undeliverable, detail: undeliverable ? 'NXDOMAIN' : '2 MX record(s)' },
+      },
+      verified_at: '2026-07-14T09:00:00Z',
+    });
+  }),
+
+  // ── OAuth mailboxes ────────────────────────────────────────────────────────
+  http.get(`${API_BASE_URL}/mailboxes/oauth/:provider/start`, ({ params }) =>
+    HttpResponse.json({
+      authorize_url: `https://accounts.example.com/consent?provider=${params.provider}`,
+      state: 'signed-state',
+    })
+  ),
+
   // ── Health ─────────────────────────────────────────────────────────────────
   http.get(`${API_BASE_URL}/health`, () =>
     HttpResponse.json({ status: 'healthy', service: 'autonomous-sdr', version: '1.0.0', worker_active: true, worker_last_seen: new Date().toISOString() })
   ),
+];
+
+// ── Backtest mock data ───────────────────────────────────────────────────────
+
+export const mockBacktestRun = {
+  id: 'bt-1',
+  filename: 'q1_deals.csv',
+  status: 'complete',
+  total_rows: 40,
+  skipped_rows: 1,
+  created_at: '2026-07-14T09:00:00Z',
+  errors: 'Row 12: unrecognised outcome "maybe"',
+  summary: {
+    total: 40,
+    won: 10,
+    lost: 30,
+    base_win_rate: 0.25,
+    verdict_outcome_matrix: {
+      Hot: { won: 8, lost: 4 },
+      Warm: { won: 2, lost: 10 },
+      Cold: { won: 0, lost: 16 },
+    },
+    hot_recall: 0.8,
+    hot_or_warm_recall: 1.0,
+    hot_precision: 0.667,
+    hot_lift: 2.67,
+    calibration: [
+      { range: [0, 0.2], count: 6, mean_predicted_score: 0.15, actual_win_rate: 0 },
+      { range: [0.2, 0.4], count: 10, mean_predicted_score: 0.32, actual_win_rate: 0.1 },
+      { range: [0.4, 0.6], count: 12, mean_predicted_score: 0.51, actual_win_rate: 0.17 },
+      { range: [0.6, 0.8], count: 8, mean_predicted_score: 0.7, actual_win_rate: 0.5 },
+      { range: [0.8, 1.0], count: 4, mean_predicted_score: 0.86, actual_win_rate: 0.75 },
+    ],
+  },
+};
+
+export const mockBacktestRecords = [
+  {
+    row_number: 2,
+    name: 'Jane Doe',
+    email: 'jane@acme.io',
+    company: 'Acme',
+    actual_outcome: 'won',
+    predicted_verdict: 'Hot',
+    predicted_score: 0.85,
+    icp_match: true,
+    features: { bant: { budget: 0.75, authority: 0.85, need: 0.9, timeline: 0.65 }, defaulted: [], guardrail_flag: null, headcount: 350, seniority: 'VP' },
+    reasoning: 'BANT 0.85',
+  },
+  {
+    row_number: 3,
+    name: 'Bob Roe',
+    email: 'bob@shop.com',
+    company: 'Shopful',
+    actual_outcome: 'lost',
+    predicted_verdict: 'Hot',
+    predicted_score: 0.78,
+    icp_match: false,
+    features: { bant: { budget: 0.9, authority: 0.85, need: 0.5, timeline: 0.65 }, defaulted: ['need'], guardrail_flag: null, headcount: 900, seniority: 'C-Suite' },
+    reasoning: 'BANT 0.78; defaulted: need',
+  },
+  {
+    row_number: 4,
+    name: 'Ann Lee',
+    email: 'ann@beta.dev',
+    company: 'Beta Dev',
+    actual_outcome: 'lost',
+    predicted_verdict: 'Cold',
+    predicted_score: 0.3,
+    icp_match: false,
+    features: { bant: { budget: 0.4, authority: 0.15, need: 0.3, timeline: 0.8 }, defaulted: [], guardrail_flag: 'authority_and_need_both_low', headcount: 30, seniority: 'Junior' },
+    reasoning: 'BANT 0.30; guardrail: authority_and_need_both_low',
+  },
 ];
 
 // ── Shared mock data ───────────────────────────────────────────────────────

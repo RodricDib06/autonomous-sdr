@@ -1057,6 +1057,28 @@ function TraceTab({ leadId }: { leadId: string }) {
 
 // ── LeadDetailPanel ────────────────────────────────────────────────────────
 
+const VERIFICATION_BADGE: Record<string, { variant: "success" | "warning" | "destructive" | "secondary"; label: string }> = {
+  valid: { variant: "success", label: "deliverable" },
+  risky: { variant: "warning", label: "risky address" },
+  undeliverable: { variant: "destructive", label: "undeliverable" },
+  unknown: { variant: "secondary", label: "unverified" },
+};
+
+function EmailVerificationBadge({ lead }: { lead: LeadDetail }) {
+  if (!lead.email_verification_status) return null;
+  const meta = VERIFICATION_BADGE[lead.email_verification_status];
+  if (!meta) return null;
+  return (
+    <Badge
+      variant={meta.variant}
+      className="text-[10px] shrink-0"
+      title={lead.email_verification_reason ?? undefined}
+    >
+      {meta.label}
+    </Badge>
+  );
+}
+
 function LeadDetailPanel({ lead, onClose }: { lead: LeadDetail; onClose: () => void }) {
   const [activeTab, setActiveTab] = useState<TabId>("profile");
 
@@ -1069,7 +1091,10 @@ function LeadDetailPanel({ lead, onClose }: { lead: LeadDetail; onClose: () => v
           </div>
           <div>
             <h2 className="font-semibold leading-tight">{lead.name}</h2>
-            <p className="text-xs text-muted-foreground">{lead.email} · {lead.company}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-xs text-muted-foreground">{lead.email} · {lead.company}</p>
+              <EmailVerificationBadge lead={lead} />
+            </div>
           </div>
         </div>
         <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-secondary transition-colors">

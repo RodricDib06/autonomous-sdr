@@ -180,3 +180,12 @@ describe('Leads bulk actions', () => {
     });
   });
 });
+
+describe('Leads detail panel — email verification', () => {
+  it('shows the deliverability badge next to the email', async () => {
+    await setupDetailPanel();
+    const badge = screen.getByText('deliverable');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveAttribute('title', 'All checks passed');
+  });
+});

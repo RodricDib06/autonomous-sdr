@@ -183,6 +183,9 @@ Respond with ONLY valid JSON:
 }}"""
 
 
+_VALUE_PROP = "streamline their go-to-market motions with AI"
+
+
 class OutreachAgent(BaseAgent):
     """
     Selects the right A/B sequence variant, personalises each step with the LLM,
@@ -209,6 +212,15 @@ class OutreachAgent(BaseAgent):
                 f"({suppression.value}, source={suppression.source}) — skipping outreach"
             )
             return {"status": "skipped", "reason": "suppressed", "suppression_source": suppression.source}
+
+        # Deliverability gate: never schedule outreach to an address that
+        # fails verification — bounces are what burn the sending domain.
+        from app.services.email_verification import verify_lead_email
+        verification_status = verify_lead_email(db, lead)
+        if verification_status == "undeliverable":
+            log.info(f"[outreach] Lead {lead_id} email is undeliverable — skipping outreach")
+            return {"status": "skipped", "reason": "email_undeliverable",
+                    "verification_status": verification_status}
 
         # Skip if a verdict exists and it's Cold
         verdict = db.query(Verdict).filter(Verdict.lead_id == lead_id).first()
@@ -237,12 +249,29 @@ class OutreachAgent(BaseAgent):
         )
         initial_status = "scheduled" if autonomy_mode == "auto" else "pending_approval"
 
+        # Research evidence for provenance grounding — passed in by the graph,
+        # or recovered from the event log when the agent runs standalone.
+        research = input_data.get("research") or self._load_research(db, lead_id)
+
         # Personalise and schedule all steps
         scheduled_emails = []
         for step in sequence.steps:
             subject, body, quality = self._personalise_with_judge(lead, enrichment, step)
             delay_days = step.get("delay_days", 0)
             scheduled_at = utcnow() + timedelta(days=delay_days)
+
+            # Provenance: match every factual claim in the draft against the
+            # evidence we actually collected; unverified claims get flagged
+            # in the approval queue.
+            from app.services.provenance import ground_email
+            template_text = (
+                f"{step.get('subject_template', '')} {step.get('body_template', '')} {_VALUE_PROP}"
+            )
+            grounding = ground_email(
+                subject, body,
+                lead=lead, enrichment=enrichment, research=research,
+                template_text=template_text,
+            )
 
             email_record = OutreachEmail(
                 lead_id=lead_id,
@@ -255,6 +284,7 @@ class OutreachAgent(BaseAgent):
                 quality_score=quality.get("overall_score"),
                 quality_flags=quality.get("issues") or [],
                 quality_reasoning=quality.get("improvement_hint") or "",
+                claims=grounding,
             )
             db.add(email_record)
             scheduled_emails.append(email_record)
@@ -263,11 +293,13 @@ class OutreachAgent(BaseAgent):
         for e in scheduled_emails:
             db.refresh(e)
 
-        # Send step 1 immediately — full-auto mode only
+        # Send step 1 immediately — full-auto mode only. A sending identity is
+        # either the global SMTP relay or the org's mailbox pool (SMTP/OAuth).
+        from app.services.mailbox_service import pick_mailbox
         step1 = next((e for e in scheduled_emails if e.step_number == 1), None)
         if autonomy_mode != "auto":
             send_result = f"held_for_approval ({autonomy_mode} mode)"
-        elif step1 and settings.SMTP_HOST:
+        elif step1 and (settings.SMTP_HOST or pick_mailbox(db, lead.org_id) is not None):
             send_result = self._send_email(db, step1, lead.email)
         else:
             send_result = "smtp_not_configured"
@@ -281,6 +313,23 @@ class OutreachAgent(BaseAgent):
             "steps_scheduled": len(scheduled_emails),
             "step1_send": send_result,
         }
+
+    # ── Research recovery ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _load_research(db: Session, lead_id: str) -> dict:
+        """Latest persisted research evidence for this lead (may be empty)."""
+        from app.database.models import LeadEvent
+        event = (
+            db.query(LeadEvent)
+            .filter(
+                LeadEvent.lead_id == lead_id,
+                LeadEvent.event_type == "pipeline.research.complete",
+            )
+            .order_by(LeadEvent.created_at.desc())
+            .first()
+        )
+        return dict(event.payload or {}) if event else {}
 
     # ── Sequence selection ──────────────────────────────────────────────────
 
@@ -380,7 +429,7 @@ class OutreachAgent(BaseAgent):
             "job_title": enrichment.job_title if enrichment else "",
             "seniority": enrichment.seniority if enrichment else "",
             "company_size": enrichment.company_size if enrichment else "",
-            "value_prop": "streamline their go-to-market motions with AI",
+            "value_prop": _VALUE_PROP,
             "sender_name": settings.OUTREACH_SENDER_NAME,
         }
 
@@ -592,6 +641,12 @@ def send_pending_scheduled_emails(db: Session) -> dict:
         # Never email suppressed addresses; kill the rest of their cadence too
         if is_suppressed(db, lead.email, org_id=lead.org_id):
             cancelled += cancel_scheduled_emails(db, lead.id, "Address on suppression list")
+            continue
+
+        # Address went undeliverable since scheduling (hard bounce, GDPR purge)
+        # — stored status only, no DNS inside the send loop
+        if lead.email_verification_status == "undeliverable":
+            cancelled += cancel_scheduled_emails(db, lead.id, "Email address is undeliverable")
             continue
 
         # Recipient-local send window (falls back to global UTC window)

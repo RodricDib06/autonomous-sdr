@@ -85,6 +85,24 @@ class Settings(BaseSettings):
     # Example: https://sdr.mycompany.com,https://app.mycompany.com
     ALLOWED_ORIGINS: str = ""
 
+    # ── Email verification (pre-send deliverability gate) ─────────────────────
+    # Syntax + disposable-domain + role-account + MX checks before any send.
+    EMAIL_VERIFICATION_ENABLED: bool = True
+    # SMTP RCPT probe (connects to the recipient's MX on port 25). Off by
+    # default: many hosts block outbound 25 and some MXs greylist probes.
+    EMAIL_VERIFICATION_SMTP_PROBE: bool = False
+    # Re-verify a lead's address after this many days (0 = trust forever).
+    EMAIL_VERIFICATION_TTL_DAYS: int = 7
+
+    # ── OAuth mailboxes (Gmail API / Microsoft Graph) ──────────────────────────
+    # Google Cloud OAuth client (Gmail API enabled, scopes: gmail.send, gmail.modify)
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    # Entra ID app registration (delegated Mail.Send, Mail.ReadWrite, offline_access)
+    MICROSOFT_CLIENT_ID: str = ""
+    MICROSOFT_CLIENT_SECRET: str = ""
+    MICROSOFT_TENANT_ID: str = "common"
+
     # ── Outreach / SMTP ────────────────────────────────────────────────────────
     SMTP_HOST: str = ""
     SMTP_PORT: int = 465

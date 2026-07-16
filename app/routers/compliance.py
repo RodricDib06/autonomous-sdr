@@ -160,3 +160,36 @@ def get_outreach_guardrails(
     return guardrail_status(db)
 
 
+
+
+@router.post("/email-verification")
+def verify_email_address(
+    payload: dict,
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """
+    On-demand deliverability check. Body: {"email": "...", "lead_id": "..."?}.
+    With a lead_id, the result is also persisted on that lead (org-scoped).
+    Runs even when the automatic pre-send gate is disabled — an explicit
+    request always gets a fresh answer.
+    """
+    from app.services.email_verification import verify_email
+    from app.utils.time import utcnow
+
+    lead_id = payload.get("lead_id")
+    if lead_id:
+        lead = db.query(Lead).filter(Lead.id == lead_id).first()
+        if not lead or (current_user.org_id is not None and lead.org_id != current_user.org_id):
+            raise HTTPException(status_code=404, detail="Lead not found")
+        result = verify_email(lead.email)
+        lead.email_verification_status = result.status
+        lead.email_verified_at = utcnow()
+        lead.email_verification_detail = result.to_dict()
+        db.commit()
+        return lead.email_verification_detail
+
+    email = (payload.get("email") or "").strip()
+    if not email:
+        raise HTTPException(status_code=422, detail="Provide 'email' or 'lead_id'")
+    return verify_email(email).to_dict()

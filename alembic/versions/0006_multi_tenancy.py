@@ -52,8 +52,12 @@ def upgrade() -> None:
             .bindparams(id=DEFAULT_ORG_ID)
         )
 
-    # Two orgs may suppress the same address — uniqueness moves to (org, value)
-    op.drop_constraint("suppression_list_value_key", "suppression_list", type_="unique")
+    # Two orgs may suppress the same address — uniqueness moves to (org, value).
+    # 0005 created `value` with unique=True + index=True, which renders as a
+    # UNIQUE INDEX (ix_...), not a named unique constraint — drop and replace
+    # it with a plain lookup index plus the composite unique index.
+    op.drop_index("ix_suppression_list_value", table_name="suppression_list")
+    op.create_index("ix_suppression_list_value", "suppression_list", ["value"])
     op.create_index(
         "uq_suppression_org_value", "suppression_list", ["org_id", "value"], unique=True
     )
@@ -61,7 +65,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("uq_suppression_org_value", table_name="suppression_list")
-    op.create_unique_constraint("suppression_list_value_key", "suppression_list", ["value"])
+    op.drop_index("ix_suppression_list_value", table_name="suppression_list")
+    op.create_index("ix_suppression_list_value", "suppression_list", ["value"], unique=True)
     for table in reversed(_ORG_SCOPED_TABLES):
         op.drop_index(f"ix_{table}_org_id", table_name=table)
         op.drop_column(table, "org_id")

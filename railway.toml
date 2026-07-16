@@ -1,29 +1,37 @@
 # AutonomousSDR — Railway deployment config
-# Docs: https://docs.railway.app/reference/config-as-code
+# Docs: https://docs.railway.com/reference/config-as-code
 #
 # One-click deploy:
 #   1. Push this repo to GitHub
 #   2. railway login && railway link
 #   3. railway up
 #
-# Multi-service setup (Railway dashboard):
-#   Service "api"    → Root: . | Start: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-#   Service "worker" → Root: . | Start: python -m app.worker.lead_worker
+# IMPORTANT: no `startCommand` here. For Dockerfile-based deploys Railway
+# runs startCommand in exec form, so `$PORT` is NEVER expanded — uvicorn
+# receives the literal string "$PORT" and crashes ("service unavailable"
+# on every healthcheck). The Dockerfile CMD is shell-form and binds
+# ${PORT:-8000}, which is what we want on Railway and locally.
 #
-# Required env vars (set in Railway dashboard or .env):
-#   DATABASE_URL, REDIS_URL, SECRET_KEY, AI_PROVIDER, GROQ_API_KEY
+# Multi-service setup (Railway dashboard):
+#   Service "api"    → Root: . | no start command (Dockerfile CMD handles PORT)
+#   Service "worker" → Root: . | Custom start command: python -m app.worker.lead_worker
+#                      (no PORT needed — the worker serves no HTTP)
+#
+# Required variables on the api service (Settings → Variables):
+#   DATABASE_URL = ${{Postgres.DATABASE_URL}}     ← add a Postgres service first
+#   REDIS_URL    = ${{Redis.REDIS_URL}}           ← add a Redis service first
+#   SECRET_KEY   = <stable hex, python -c "import secrets; print(secrets.token_hex(32))">
+#   AI_PROVIDER  = groq       (ollama points at localhost — not available on Railway)
+#   GROQ_API_KEY = <key>
+#   INITIAL_ADMIN_EMAIL / INITIAL_ADMIN_PASSWORD = <real values — seeded on first boot>
+#   APP_BASE_URL = https://<your-domain>          ← after Railway assigns the domain
 
 [build]
 builder = "dockerfile"
 dockerfilePath = "./Dockerfile"
 
 [deploy]
-# Overridden per-service in Railway dashboard; default here is the API server
-startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
-
-# Railway injects $PORT automatically — do not hardcode it
-# Railway also provides $DATABASE_URL and $REDIS_URL if you add those plugins

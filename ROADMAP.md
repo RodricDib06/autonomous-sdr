@@ -32,7 +32,7 @@ work, not code).** Each phase is shippable alone; 7 and 8 both plug into 6.
 
 ---
 
-## Phase 6 — Campaign Manager Agent (goal-directed autonomy) 🚩 FLAGSHIP
+## Phase 6 — Campaign Manager Agent (goal-directed autonomy) 🚩 FLAGSHIP — ✅ SHIPPED `2e8cf27` (2026-07-16)
 
 **One sentence:** an agent that is handed a quota and constraints, continuously
 plans against them using the primitives that already exist, and explains itself —
@@ -44,94 +44,94 @@ and org settings are all already built — this phase composes them under a plan
 
 ### 6.1 Data model (new alembic migration 0013)
 
-- [ ] `Campaign` table: `id, org_id, name, goal_type` (`meetings` | `replies` | `qualified_leads`),
+- [x] `Campaign` table: `id, org_id, name, goal_type` (`meetings` | `replies` | `qualified_leads`),
       `goal_target` (int), `period_start`, `period_end`, `status` (`active|paused|completed`),
       `constraints` JSONB — `{max_bounce_rate, max_daily_sends, max_monthly_llm_usd, segments: [{industry?, seniority?, company_size_min/max?}]}`,
       `created_by_id`, `created_at`
-- [ ] `CampaignPlan` table: `id, campaign_id (FK, index), version (int), status`
+- [x] `CampaignPlan` table: `id, campaign_id (FK, index), version (int), status`
       (`pending_approval|approved|rejected|active|superseded`), `generated_at`,
       `diagnosis` (Text — the agent's read of the situation), `actions` JSONB (see 6.3),
       `metrics_snapshot` JSONB (inputs the plan was based on — auditability),
       `report_md` (Text, nullable — weekly report), `approved_by_id`, `approved_at`
-- [ ] `CampaignActionLog` table: `id, plan_id, action_type, payload JSONB, executed_at,
+- [x] `CampaignActionLog` table: `id, plan_id, action_type, payload JSONB, executed_at,
       success bool, error_message` — append-only record of what the agent actually did
-- [ ] Leads gain nothing — campaigns select leads via segment filters, not FK
+- [x] Leads gain nothing — campaigns select leads via segment filters, not FK
       (keeps ingest decoupled). A helper resolves segment → SQLAlchemy filter.
 
 ### 6.2 Metrics provider — `app/services/campaign_metrics.py` (pure SQL, no LLM)
 
-- [ ] `campaign_progress(db, campaign)` → meetings booked (BookingRequest confirmed),
+- [x] `campaign_progress(db, campaign)` → meetings booked (BookingRequest confirmed),
       replies, sends, bounce rate, spend (LLMCall costs), per segment and total,
       within the campaign period
-- [ ] `pace(db, campaign)` → `{expected_by_now, actual, pace_ratio, projected_end_total}`
+- [x] `pace(db, campaign)` → `{expected_by_now, actual, pace_ratio, projected_end_total}`
       (linear pace over the period; weekends excluded to match send guardrails)
-- [ ] `sequence_performance_by_segment(db, campaign)` → per (sequence, segment):
+- [x] `sequence_performance_by_segment(db, campaign)` → per (sequence, segment):
       sent/opened/replied/bounced/meetings — reuses OutreachEmail + ABTestResult
-- [ ] Unit tests: pace math edge cases (period not started, zero target, over-target),
+- [x] Unit tests: pace math edge cases (period not started, zero target, over-target),
       segment filter correctness, empty data
 
 ### 6.3 The planner — `app/agents/campaign_agent.py`
 
 The loop: **observe → diagnose → propose → (approve) → execute → report.**
 
-- [ ] Action vocabulary (pydantic-validated, the LLM can ONLY emit these):
+- [x] Action vocabulary (pydantic-validated, the LLM can ONLY emit these):
   - `pause_sequence {sequence_id, reason}`
   - `resume_sequence {sequence_id, reason}`
   - `create_variant {based_on_sequence_id, angle, draft_steps[]}` — agent drafts a
     new sequence via LLM and registers it in the bandit (is_active, org-scoped)
-  - `reallocate {sequence_id, bandit_prior_boost}` — seeds Thompson priors
+  - ~~`reallocate {sequence_id, bandit_prior_boost}`~~ — **dropped by design**: seeding the bandit with synthetic counts corrupts measured A/B stats; pause/create_variant are the allocation levers
   - `adjust_daily_target {value}` — within `constraints.max_daily_sends`, never above
   - `request_prospecting {segment, count}` — no-op stub until Phase 7, then live
   - `escalate {severity, message}` — Slack + dashboard notification, no side effects
-- [ ] `generate_plan(db, campaign)` — prompt = goal + constraints + metrics snapshot +
+- [x] `generate_plan(db, campaign)` — prompt = goal + constraints + metrics snapshot +
       last plan's outcome; returns diagnosis + action list. **Hard rules enforced in
       code, not prompt:** actions violating constraints are rejected at validation;
       malformed LLM output falls back to a deterministic conservative plan
       (`escalate` + no changes) — the agent must never fail open
-- [ ] `execute_plan(db, plan)` — deterministic executor; each action logged to
+- [x] `execute_plan(db, plan)` — deterministic executor; each action logged to
       `CampaignActionLog`; idempotent (re-running a plan skips executed actions)
-- [ ] Autonomy dial extension: org setting `campaign_autonomy` (`approve` | `auto`).
+- [x] Autonomy dial extension: org setting `campaign_autonomy` (`approve` | `auto`).
       `approve` = plans wait in a queue like emails do; `auto` = execute immediately.
       Default `approve` — strategy changes deserve a human until trusted
-- [ ] Scheduler job (daily, Redis-locked like the other 11 jobs): for each active
+- [x] Scheduler job (daily, Redis-locked like the other 11 jobs): for each active
       campaign, refresh metrics, generate plan **only if** pace_ratio drifted > 15%
       since last plan or 7 days elapsed — no plan spam
-- [ ] Weekly report: LLM writes `report_md` from the week's ActionLog + metrics —
+- [x] Weekly report: LLM writes `report_md` from the week's ActionLog + metrics —
       "what I did, what I learned, what I'm changing" — stored on the plan,
       pushed to Slack if configured
 
 ### 6.4 API — `app/routers/campaigns.py`
 
-- [ ] `POST /campaigns` (manager), `GET /campaigns`, `GET /campaigns/{id}`
+- [x] `POST /campaigns` (manager), `GET /campaigns`, `GET /campaigns/{id}`
       (progress + pace + active plan), `PUT /campaigns/{id}` (pause/edit),
       org-scoped like backtests
-- [ ] `GET /campaigns/{id}/plans` (history), `POST /campaigns/{id}/plans/{pid}/approve`,
+- [x] `GET /campaigns/{id}/plans` (history), `POST /campaigns/{id}/plans/{pid}/approve`,
       `.../reject {reason}` — mirrors the email approval endpoints
-- [ ] `POST /campaigns/{id}/replan` — manual "think again now" trigger
-- [ ] `GET /campaigns/{id}/report` — latest report_md
+- [x] `POST /campaigns/{id}/replan` — manual "think again now" trigger
+- [x] `GET /campaigns/{id}/report` — latest report_md
 
 ### 6.5 UI — new `Campaigns` page (sidebar: Target/Flag icon, after Approvals)
 
-- [ ] Campaign card: goal progress hero (actual vs pace line — recharts, one axis,
+- [x] Campaign card: goal progress hero (actual vs pace line — recharts, one axis,
       validate any new palette colors with the dataviz validator before use),
       days remaining, bounce-rate + budget meters
-- [ ] Plan review card: diagnosis text + action list rendered as human-readable
+- [x] Plan review card: diagnosis text + action list rendered as human-readable
       diffs ("Pause 'Value-led 3-Step' — 0.4% reply rate in fintech segment"),
       Approve / Reject buttons; approved plans show execution status per action
-- [ ] Weekly report rendered as markdown
-- [ ] Create-campaign dialog: goal, period, constraints, segment builder
+- [x] Weekly report rendered as markdown
+- [x] Create-campaign dialog: goal, period, constraints, segment builder
       (reuse ICP-style selectors)
-- [ ] MSW handlers + integration tests (creation, plan approval flow, pace hero,
+- [x] MSW handlers + integration tests (creation, plan approval flow, pace hero,
       constraint display)
 
 ### 6.6 Tests (backend)
 
-- [ ] Pace + metrics math (6.2)
-- [ ] Planner with mocked LLM: valid plan accepted; constraint-violating action
+- [x] Pace + metrics math (6.2)
+- [x] Planner with mocked LLM: valid plan accepted; constraint-violating action
       rejected; garbage LLM output → conservative fallback plan
-- [ ] Executor: each action type, idempotency, ActionLog written
-- [ ] Autonomy: `approve` mode never executes unapproved plans
-- [ ] RBAC + org scoping on all endpoints
+- [x] Executor: each action type, idempotency, ActionLog written
+- [x] Autonomy: `approve` mode never executes unapproved plans
+- [x] RBAC + org scoping on all endpoints
 
 **Definition of done:** create a campaign with a meetings goal → seed demo data →
 daily job produces a plan with a real diagnosis → approving it visibly pauses a
@@ -140,7 +140,7 @@ like something a manager would actually skim. Demo script: "I gave it a quota."
 
 ---
 
-## Phase 7 — Autonomous Prospecting (originate, don't react)
+## Phase 7 — Autonomous Prospecting (originate, don't react) — ✅ SHIPPED `52f01fe` (2026-07-16)
 
 **One sentence:** ICP + closed-won lookalikes → the agent builds its own lead lists
 from a real data provider, and the campaign agent tops up its own pipeline when
@@ -148,14 +148,14 @@ it's behind on goal.
 
 ### 7.1 Provider layer — `app/services/prospecting/`
 
-- [ ] `base.py` — `ProspectSource.search(criteria, limit) -> list[ProspectCandidate]`
+- [x] `base.py` — `ProspectSource.search(criteria, limit) -> list[ProspectCandidate]`
       (name, email, company, title, industry, size, source, cost_estimate)
-- [ ] `pdl.py` — People Data Labs **Person Search API** (the existing `enrichment/pdl.py`
+- [x] `pdl.py` — People Data Labs **Person Search API** (the existing `enrichment/pdl.py`
       client is enrich-by-email; search is a different endpoint). Config: reuse
       `PDL_API_KEY`; add `PROSPECTING_PROVIDER` (`synthetic` default | `pdl`)
-- [ ] `synthetic.py` — deterministic demo source (seeded from `data/company_domains.json`)
+- [x] `synthetic.py` — deterministic demo source (seeded from `data/company_domains.json`)
       so the whole flow demos with zero keys, consistent with the enrichment story
-- [ ] Optional (nice-to-have): waterfall enrichment for sourced leads — chain
+- [ ] STILL OPEN (nice-to-have): waterfall enrichment for sourced leads — chain
       synthetic → Hunter → PDL with per-field confidence, so sourced contacts get
       the best available data before scoring
 
@@ -163,37 +163,37 @@ it's behind on goal.
 
 Order matters — this is the quality gate that keeps prospecting from poisoning the DB:
 
-- [ ] 1. `search()` against provider with segment criteria (from ICP config or a
+- [x] 1. `search()` against provider with segment criteria (from ICP config or a
       campaign segment)
-- [ ] 2. **Suppression check** (`is_suppressed`) — never source someone who opted out
-- [ ] 3. **Dedup** (`DeduplicationService`) — skip existing leads
-- [ ] 4. **Email verification** (`verify_email`) — reject undeliverable before insert;
+- [x] 2. **Suppression check** (`is_suppressed`) — never source someone who opted out
+- [x] 3. **Dedup** (`DeduplicationService`) — skip existing leads
+- [x] 4. **Email verification** (`verify_email`) — reject undeliverable before insert;
       this is why Phase 6 of the previous era was built
-- [ ] 5. **Scoring** — ICP evaluation + lookalike score against closed-won; rank,
+- [x] 5. **Scoring** — ICP evaluation + lookalike score against closed-won; rank,
       keep top N
-- [ ] 6. Insert as leads with `source="prospecting:pdl"`, push to the normal pipeline
-- [ ] `ProspectingRun` model (migration 0013 or 0014): criteria, provider, found,
+- [x] 6. Insert as leads with `source="prospecting:pdl"`, push to the normal pipeline
+- [x] `ProspectingRun` model (migration 0013 or 0014): criteria, provider, found,
       rejected {suppressed, duplicate, undeliverable, low_score}, accepted, cost_usd,
       campaign_id nullable, created_by — full audit of where leads came from
-- [ ] Budget guardrails in config: `PROSPECTING_MAX_LEADS_PER_DAY`,
+- [x] Budget guardrails in config: `PROSPECTING_MAX_LEADS_PER_DAY`,
       `PROSPECTING_MAX_MONTHLY_COST_USD` — enforced in code, surfaced in UI
 
 ### 7.3 Triggers
 
-- [ ] Manual: `POST /prospecting/runs {criteria | campaign_id, limit, dry_run}` —
+- [x] Manual: `POST /prospecting/runs {criteria | campaign_id, limit, dry_run}` —
       `dry_run=true` returns candidates without inserting (preview-before-import)
-- [ ] Autonomous: implement the Phase 6 `request_prospecting` action — campaign agent
+- [x] Autonomous: implement the Phase 6 `request_prospecting` action — campaign agent
       calls it when projected pipeline coverage < configurable multiple of remaining goal
-- [ ] `GET /prospecting/runs` + run detail (accepted/rejected breakdown)
+- [x] `GET /prospecting/runs` + run detail (accepted/rejected breakdown)
 
 ### 7.4 UI
 
-- [ ] "Source leads" panel (on the Campaigns page, or ICP page for standalone use):
+- [x] "Source leads" panel (on the Campaigns page, or ICP page for standalone use):
       criteria form → dry-run preview table (with per-candidate ICP/lookalike score
       and verification status) → "Import N leads" confirm
-- [ ] Run history with rejection breakdown (shows the quality gate working — this is
+- [x] Run history with rejection breakdown (shows the quality gate working — this is
       a demo moment, not just plumbing)
-- [ ] Tests: mocked provider; gate order (suppressed candidate never inserted even if
+- [x] Tests: mocked provider; gate order (suppressed candidate never inserted even if
       verified); budget cap; dry-run inserts nothing
 
 **Definition of done:** an empty org with an ICP config can click one button (or let
@@ -202,7 +202,7 @@ pipeline — no CSV, no webhook. The "it reacts" criticism is dead.
 
 ---
 
-## Phase 8 — Reply Intelligence (the messaging learns)
+## Phase 8 — Reply Intelligence (the messaging learns) — ✅ SHIPPED `a9ff257` (2026-07-16)
 
 **One sentence:** every inbound reply becomes structured data — classified, acted on,
 aggregated — and the top objections per segment feed back into the campaign agent's
@@ -210,44 +210,44 @@ variant generation.
 
 ### 8.1 Classifier — `app/services/reply_classifier.py`
 
-- [ ] Categories: `interested | objection | referral | wrong_person | not_now | auto_reply(ooo) | unsubscribe`
+- [x] Categories: `interested | objection | referral | wrong_person | not_now | auto_reply(ooo) | unsubscribe`
       with objection subtypes: `price | competitor | no_need | timing | trust`
-- [ ] LLM classification with pydantic-validated output + **deterministic keyword
+- [x] LLM classification with pydantic-validated output + **deterministic keyword
       fallback** (same philosophy as unsubscribe detection — the pipeline must work
       LLM-down); confidence score stored
-- [ ] Storage: extend `Conversation` with `classification` JSONB
+- [x] Storage: extend `Conversation` with `classification` JSONB
       (`{category, subtype, confidence, extracted: {referral_name?, referral_email?, resume_at?}}`)
       — migration alongside whatever phase ships first
-- [ ] Wire into `reply_service.handle_reply` after the unsubscribe check (which stays
+- [x] Wire into `reply_service.handle_reply` after the unsubscribe check (which stays
       first and keyword-based — compliance never waits on an LLM)
 
 ### 8.2 Actions per category
 
-- [ ] `referral` → extract name/email → create new lead with `referred_by_lead_id`
+- [x] `referral` → extract name/email → create new lead with `referred_by_lead_id`
       (column exists) → normal pipeline; original lead tagged
-- [ ] `not_now` → schedule re-engagement at `resume_at` (or +90d default) — reuse the
+- [x] `not_now` → schedule re-engagement at `resume_at` (or +90d default) — reuse the
       decay/reengagement infra (`reengagement_count` exists); cancel current cadence
-- [ ] `wrong_person` → tag + trigger org-chart traversal (service exists, currently
+- [x] `wrong_person` → tag + trigger org-chart traversal (service exists, currently
       only fired on low-authority flags)
-- [ ] `objection` → record; **no auto-argue** — the conversational agent may answer
+- [x] `objection` → record; **no auto-argue** — the conversational agent may answer
       `interested` and simple questions, objections above a confidence threshold flag
       `needs_human` (field exists)
-- [ ] `auto_reply` → do NOT cancel the cadence (today any reply cancels it — an OOO
+- [x] `auto_reply` → do NOT cancel the cadence (today any reply cancels it — an OOO
       reply killing a sequence is a real bug this phase fixes)
 
 ### 8.3 Aggregation + feedback loop
 
-- [ ] `GET /analytics/objections` — counts by subtype × segment × sequence, trending
-- [ ] Feed top-3 objections per segment into the Phase 6 planner prompt so
+- [x] `GET /analytics/objections` — counts by subtype × segment × sequence, trending
+- [x] Feed top-3 objections per segment into the Phase 6 planner prompt so
       `create_variant` drafts copy that answers them — **this is the loop closing:**
       replies → objections → new messaging → bandit → results
-- [ ] UI: classification chips in the Inbox (colored by category), objections panel
+- [x] UI: classification chips in the Inbox (colored by category), objections panel
       on Analytics (bar chart — run the palette validator), referral chain already
       has UI via referred_by
 
 ### 8.4 Tests
 
-- [ ] Keyword fallback determinism per category; OOO does not cancel cadence;
+- [x] Keyword fallback determinism per category; OOO does not cancel cadence;
       referral creates linked lead; unsubscribe still wins over everything;
       aggregation math; needs_human flagging on objections
 
@@ -347,17 +347,17 @@ of likely demand:
 
 ## Suggested session breakdown (each ≈ one focused work session)
 
-1. **6.1 + 6.2** — migration 0013, Campaign/Plan/ActionLog models, metrics provider + tests
-2. **6.3** — planner + executor + autonomy dial + scheduler job + tests
-3. **6.4 + 6.5** — campaigns API + Campaigns page + frontend tests
-4. **7.1 + 7.2** — prospecting providers + gated sourcing pipeline + tests
-5. **7.3 + 7.4** — triggers (incl. wiring `request_prospecting`) + UI
-6. **8.1 + 8.2** — classifier + per-category actions (incl. the OOO-cancels-cadence fix)
-7. **8.3 + 8.4** — objection analytics + planner feedback + Inbox/Analytics UI
+1. ~~**6.1 + 6.2**~~ ✅ done (2e8cf27)
+2. ~~**6.3**~~ ✅ done (2e8cf27)
+3. ~~**6.4 + 6.5**~~ ✅ done (2e8cf27)
+4. ~~**7.1 + 7.2**~~ ✅ done (52f01fe)
+5. ~~**7.3 + 7.4**~~ ✅ done (52f01fe)
+6. ~~**8.1 + 8.2**~~ ✅ done (a9ff257)
+7. ~~**8.3 + 8.4**~~ ✅ done (a9ff257)
 8. **9.1** — HubSpot bidirectional
 9. **9.2** — go live (mostly ops)
 10. **9.3** — evidence engine (founder work; no Claude session needed except the video storyboard)
 
 ---
 
-*Last updated: 2026-07-16, baseline commit `9dc8de8`. Update this line when the plan changes.*
+*Last updated: 2026-07-16 (evening). Phases 6, 7, 8 shipped (`2e8cf27`, `52f01fe`, `a9ff257`) — 481 backend + 480 frontend tests, migration chain 0001→0014 verified on fresh Postgres. Next: Phase 9 (HubSpot bidirectional → go live → evidence engine). Update this line when the plan changes.*

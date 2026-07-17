@@ -41,6 +41,9 @@ Universal Webhook               PostgreSQL + pgvector + Redis
 | **Runtime config toggle** | `POST /config/enrichment-provider` switches synthetic/hunter/pdl without restart |
 | **Semantic memory** | pgvector HNSW index + embeddings; keyword fallback |
 | **Email tracking** | 1×1 pixel open tracking + click redirect |
+| **Campaign manager agent** | Goal-directed autonomy: quota + constraints in, daily observe→diagnose→propose→execute→report loop; pydantic-constrained action vocabulary; strategy-level approval dial |
+| **Autonomous prospecting** | Agent-built lead lists (synthetic demo / PDL Person Search) through suppression→dedup→verification→scoring gates with daily budget caps |
+| **Reply intelligence** | Deterministic-first reply classification; referrals become leads, OOO doesn't kill cadences, "not now" re-engages on schedule, objections feed variant drafting |
 | **Provenance-grounded emails** | Every factual claim in a generated email is matched to the research snippet that supports it; unverified claims flagged in the approval queue |
 | **Backtest mode** | Upload last quarter's CRM export (won/lost) → deterministic re-qualification → calibration report: hot recall, precision, lift, score-decile calibration |
 | **Email verification** | Pre-send gate: syntax, disposable domains, role accounts, MX lookup (null-MX aware), optional SMTP RCPT probe; TTL-cached per lead |
@@ -62,7 +65,7 @@ Universal Webhook               PostgreSQL + pgvector + Redis
 | **Prometheus metrics** | Queue depth, node duration histograms, LLM call counters, in-flight gauge |
 | **React dashboard** | Live pipeline SSE stream, A/B results, BANT weight chart, lead detail drawer |
 | **Production hardening** | Rate limiting (slowapi), security headers middleware, CORS from env var, Alembic migrations |
-| **419 backend + 461 frontend tests** | pytest + mocks; vitest + MSW; plus a real-Postgres/Redis integration suite in CI. Ingest, auth, A/B, tenancy, approvals, compliance, GDPR, provenance, backtests, verification, OAuth, … |
+| **481 backend + 480 frontend tests** | pytest + mocks; vitest + MSW; plus a real-Postgres/Redis integration suite in CI. Ingest, auth, A/B, tenancy, approvals, compliance, GDPR, provenance, backtests, verification, OAuth, … |
 
 ---
 

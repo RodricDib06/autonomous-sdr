@@ -197,6 +197,19 @@ def sent_in_last_24h(db: Session) -> int:
     )
 
 
+def sent_in_last_24h_for_org(db: Session, org_id: str | None) -> int:
+    """Org-scoped rolling send count — backs the campaign agent's daily target."""
+    cutoff = utcnow() - timedelta(hours=24)
+    q = (
+        db.query(OutreachEmail)
+        .join(Lead, OutreachEmail.lead_id == Lead.id)
+        .filter(OutreachEmail.sent_at.isnot(None), OutreachEmail.sent_at >= cutoff)
+    )
+    if org_id is not None:
+        q = q.filter(Lead.org_id == org_id)
+    return q.count()
+
+
 def can_send_now(db: Session, now: datetime | None = None) -> tuple[bool, str]:
     """
     Gate every outbound batch:

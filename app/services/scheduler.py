@@ -227,6 +227,22 @@ async def _run_decay_check() -> None:
         db.close()
 
 
+async def _run_campaign_reviews() -> None:
+    """Daily campaign heartbeat: close finished, replan drifting, auto-execute."""
+    from app.database.connection import SessionLocal
+    from app.agents.campaign_agent import run_campaign_reviews
+
+    db = SessionLocal()
+    try:
+        summary = run_campaign_reviews(db)
+        if summary["planned"] or summary["completed"]:
+            log.info("scheduler.campaign_reviews", **summary)
+    except Exception as e:
+        log.error("scheduler.campaign_reviews.error", error=str(e))
+    finally:
+        db.close()
+
+
 async def _refresh_metrics() -> None:
     """Update Prometheus gauges for queue depth and in-flight leads."""
     try:
@@ -287,6 +303,15 @@ def create_scheduler() -> AsyncIOScheduler:
         name="Auto-enqueue stale pending leads",
         replace_existing=True,
         misfire_grace_time=60,
+    )
+
+    scheduler.add_job(
+        _locked("campaign_reviews", 86390)(_run_campaign_reviews),
+        trigger=IntervalTrigger(seconds=86400),  # daily
+        id="campaign_reviews",
+        name="Campaign agent: review goals, replan, execute (autonomy permitting)",
+        replace_existing=True,
+        misfire_grace_time=3600,
     )
 
     scheduler.add_job(

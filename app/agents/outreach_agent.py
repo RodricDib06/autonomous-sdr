@@ -617,6 +617,8 @@ def send_pending_scheduled_emails(db: Session) -> dict:
 
     sent = failed = skipped = cancelled = 0
     _mode_cache: dict = {}
+    _target_cache: dict = {}
+    _org_sent: dict = {}
     agent = OutreachAgent()
 
     for email in pending:
@@ -660,9 +662,24 @@ def send_pending_scheduled_emails(db: Session) -> dict:
             skipped += 1
             continue
 
+        # Per-org daily target — set by the campaign agent's
+        # adjust_daily_target action, tighter than (never above) the global cap
+        if lead.org_id not in _target_cache:
+            _target_cache[lead.org_id] = _gos(db, lead.org_id, "daily_send_target", None)
+        target = _target_cache[lead.org_id]
+        if target is not None:
+            from app.services.compliance import sent_in_last_24h_for_org
+            if lead.org_id not in _org_sent:
+                _org_sent[lead.org_id] = sent_in_last_24h_for_org(db, lead.org_id)
+            if _org_sent[lead.org_id] >= int(target):
+                skipped += 1
+                continue
+
         result = agent._send_email(db, email, lead.email)
         if result.startswith("sent"):
             sent += 1
+            if lead.org_id in _org_sent:
+                _org_sent[lead.org_id] += 1
             log.info(
                 f"[outreach_scheduler] Sent step {email.step_number} to "
                 f"{lead.name} @ {lead.company} ({lead.email[:20]}…)"

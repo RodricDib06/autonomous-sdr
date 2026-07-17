@@ -185,6 +185,9 @@ app.include_router(compliance_router)
 from app.routers.backtests import router as backtests_router  # noqa: E402
 app.include_router(backtests_router)
 
+from app.routers.campaigns import router as campaigns_router  # noqa: E402
+app.include_router(campaigns_router)
+
 # Global Slack notifier
 slack_notifier = SlackNotifier()
 # Store webhook URL in memory (in production, use database)

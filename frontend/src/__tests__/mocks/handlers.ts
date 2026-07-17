@@ -669,11 +669,92 @@ export const handlers = [
     })
   ),
 
+  // ── Campaigns ──────────────────────────────────────────────────────────────
+  http.get(`${API_BASE_URL}/campaigns/autonomy`, () =>
+    HttpResponse.json({ mode: 'approve', modes: ['approve', 'auto'] })
+  ),
+
+  http.put(`${API_BASE_URL}/campaigns/autonomy`, async ({ request }) => {
+    const body = (await request.json()) as { mode: string };
+    return HttpResponse.json({ mode: body.mode });
+  }),
+
+  http.get(`${API_BASE_URL}/campaigns`, () =>
+    HttpResponse.json({ total: 1, campaigns: [mockCampaign] })
+  ),
+
+  http.get(`${API_BASE_URL}/campaigns/:id`, () => HttpResponse.json(mockCampaign)),
+
+  http.post(`${API_BASE_URL}/campaigns`, async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({ ...mockCampaign, id: 'camp-new', name: body.name }, { status: 201 });
+  }),
+
+  http.put(`${API_BASE_URL}/campaigns/:id`, () => HttpResponse.json(mockCampaign)),
+
+  http.post(`${API_BASE_URL}/campaigns/:id/replan`, () =>
+    HttpResponse.json(mockCampaignPlan)
+  ),
+
+  http.post(`${API_BASE_URL}/campaigns/:id/plans/:planId/approve`, () =>
+    HttpResponse.json({
+      execution: { succeeded: 2, failed: 0 },
+      plan: { ...mockCampaignPlan, status: 'active' },
+    })
+  ),
+
+  http.post(`${API_BASE_URL}/campaigns/:id/plans/:planId/reject`, () =>
+    HttpResponse.json({ ...mockCampaignPlan, status: 'rejected' })
+  ),
+
+  http.get(`${API_BASE_URL}/campaigns/:id/report`, () =>
+    HttpResponse.json({ report_md: '# Campaign report — Q3 push\n\n**Goal:** 12 meetings', generated: true })
+  ),
+
   // ── Health ─────────────────────────────────────────────────────────────────
   http.get(`${API_BASE_URL}/health`, () =>
     HttpResponse.json({ status: 'healthy', service: 'autonomous-sdr', version: '1.0.0', worker_active: true, worker_last_seen: new Date().toISOString() })
   ),
 ];
+
+// ── Campaign mock data ───────────────────────────────────────────────────────
+
+export const mockCampaignPlan = {
+  id: 'plan-1',
+  version: 2,
+  status: 'pending_approval',
+  generated_at: '2026-07-15T08:00:00Z',
+  diagnosis: 'Behind pace: reply rate in the SaaS segment dropped to 1.1% and variant A is dragging.',
+  actions: [
+    { type: 'pause_sequence', sequence_id: 'seq-a', reason: '0.4% reply rate over 60 sends' },
+    { type: 'create_variant', angle: 'lead with the displacement objection', draft_steps: [{ step: 1, delay_days: 0, subject_template: 's', body_template: 'b' }] },
+    { type: 'escalate', severity: 'warning', message: 'Pipeline coverage below 2x remaining goal' },
+  ],
+  approved_at: null,
+  rejection_reason: null,
+};
+
+export const mockCampaign = {
+  id: 'camp-1',
+  name: 'Q3 meetings push',
+  goal_type: 'meetings',
+  goal_target: 12,
+  period_start: '2026-07-06T00:00:00',
+  period_end: '2026-07-17T23:59:59',
+  status: 'active',
+  constraints: { max_daily_sends: 50, segments: [{ industry: 'SaaS' }] },
+  created_at: '2026-07-06T09:00:00Z',
+  pace: {
+    expected_by_now: 5.0, actual: 3, pace_ratio: 0.6,
+    projected_end_total: 6, elapsed_weekdays: 5, total_weekdays: 10,
+  },
+  progress: {
+    goal_actual: 3,
+    total: { leads: 40, sends: 120, replies: 6, bounces: 2, bounce_rate: 0.0167, meetings: 3, qualified: 14, spend_usd: 1.24 },
+    segments: [],
+  },
+  current_plan: mockCampaignPlan,
+};
 
 // ── Backtest mock data ───────────────────────────────────────────────────────
 

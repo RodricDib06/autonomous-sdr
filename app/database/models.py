@@ -543,6 +543,74 @@ class BacktestRecord(Base):
     run: Mapped["BacktestRun"] = relationship(back_populates="records")
 
 
+# Campaigns — goal-directed autonomy (the campaign manager agent)
+# ---------------------------------------------------------------------------
+
+class Campaign(Base):
+    """
+    A quota handed to the agent: "book N meetings in these segments by this
+    date, within these constraints." The campaign agent plans against it
+    continuously; humans approve or auto-apply the plans (campaign_autonomy
+    org setting), mirroring the email approval trust ramp at strategy level.
+    """
+    __tablename__ = "campaigns"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    goal_type: Mapped[str] = mapped_column(String(30), default="meetings")  # meetings | replies | qualified_leads
+    goal_target: Mapped[int] = mapped_column(Integer)
+    period_start: Mapped[datetime] = mapped_column(DateTime)
+    period_end: Mapped[datetime] = mapped_column(DateTime)
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | paused | completed
+    # {max_bounce_rate, max_daily_sends, max_monthly_llm_usd,
+    #  segments: [{industry?, seniority?, company_size_min?, company_size_max?}]}
+    constraints: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    plans: Mapped[list["CampaignPlan"]] = relationship(back_populates="campaign", cascade="all, delete-orphan")
+
+
+class CampaignPlan(Base):
+    """
+    One observe→diagnose→propose cycle. `metrics_snapshot` records exactly
+    what the agent saw when it planned (auditability); `actions` is the
+    pydantic-validated action list; `report_md` holds the periodic
+    agent-written report.
+    """
+    __tablename__ = "campaign_plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    campaign_id: Mapped[str] = mapped_column(String(36), ForeignKey("campaigns.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    # pending_approval | approved | rejected | active | superseded
+    status: Mapped[str] = mapped_column(String(20), default="pending_approval")
+    generated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    diagnosis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    actions: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    metrics_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    report_md: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approved_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    campaign: Mapped["Campaign"] = relationship(back_populates="plans")
+
+
+class CampaignActionLog(Base):
+    """Append-only record of what the agent actually did when a plan executed."""
+    __tablename__ = "campaign_action_log"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    plan_id: Mapped[str] = mapped_column(String(36), ForeignKey("campaign_plans.id"), index=True)
+    action_type: Mapped[str] = mapped_column(String(50))
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    executed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 # Self-optimization
 # ---------------------------------------------------------------------------
 

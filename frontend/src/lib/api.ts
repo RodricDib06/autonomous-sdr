@@ -636,4 +636,107 @@ export const verificationApi = {
     api.post<EmailVerification>("/email-verification", payload).then((r) => r.data),
 };
 
+// ── Campaigns — goal-directed autonomy (campaign manager agent) ──────────────
+export type CampaignAutonomyMode = "approve" | "auto";
+
+export interface CampaignPace {
+  expected_by_now: number | null;
+  actual: number;
+  pace_ratio: number | null;
+  projected_end_total: number | null;
+  elapsed_weekdays: number;
+  total_weekdays: number;
+}
+
+export interface CampaignAction {
+  type: string;
+  reason?: string;
+  message?: string;
+  severity?: string;
+  sequence_id?: string;
+  angle?: string;
+  value?: number;
+  count?: number;
+  segment?: Record<string, unknown>;
+  draft_steps?: { step: number; delay_days: number; subject_template: string; body_template: string }[];
+}
+
+export interface CampaignPlan {
+  id: string;
+  version: number;
+  status: "pending_approval" | "approved" | "rejected" | "active" | "superseded";
+  generated_at: string | null;
+  diagnosis: string | null;
+  actions: CampaignAction[];
+  approved_at: string | null;
+  rejection_reason: string | null;
+  execution_log?: {
+    action_type: string;
+    success: boolean;
+    error_message: string | null;
+    executed_at: string | null;
+    result: Record<string, unknown> | null;
+  }[];
+}
+
+export interface CampaignSegmentStats {
+  segment: Record<string, unknown>;
+  label: string;
+  leads: number;
+  sends: number;
+  replies: number;
+  bounces: number;
+  bounce_rate: number | null;
+  meetings: number;
+  qualified: number;
+}
+
+export interface CampaignProgress {
+  goal_actual: number;
+  total: {
+    leads: number; sends: number; replies: number; bounces: number;
+    bounce_rate: number | null; meetings: number; qualified: number; spend_usd: number;
+  };
+  segments: CampaignSegmentStats[];
+}
+
+export interface Campaign {
+  id: string;
+  name: string;
+  goal_type: "meetings" | "replies" | "qualified_leads";
+  goal_target: number;
+  period_start: string;
+  period_end: string;
+  status: "active" | "paused" | "completed";
+  constraints: { max_daily_sends?: number; max_bounce_rate?: number; segments?: Record<string, unknown>[] };
+  created_at: string | null;
+  pace: CampaignPace;
+  progress?: CampaignProgress;
+  current_plan?: CampaignPlan | null;
+}
+
+export const campaignsApi = {
+  list: () => api.get<{ total: number; campaigns: Campaign[] }>("/campaigns").then((r) => r.data),
+  get: (id: string) => api.get<Campaign>(`/campaigns/${id}`).then((r) => r.data),
+  create: (payload: {
+    name: string; goal_type: string; goal_target: number;
+    period_start: string; period_end: string; constraints?: Record<string, unknown>;
+  }) => api.post<Campaign>("/campaigns", payload).then((r) => r.data),
+  update: (id: string, payload: { name?: string; status?: string; goal_target?: number }) =>
+    api.put<Campaign>(`/campaigns/${id}`, payload).then((r) => r.data),
+  replan: (id: string) => api.post<CampaignPlan>(`/campaigns/${id}/replan`).then((r) => r.data),
+  plans: (id: string) => api.get<{ total: number; plans: CampaignPlan[] }>(`/campaigns/${id}/plans`).then((r) => r.data),
+  approvePlan: (id: string, planId: string) =>
+    api.post<{ execution: { succeeded: number; failed: number }; plan: CampaignPlan }>(
+      `/campaigns/${id}/plans/${planId}/approve`).then((r) => r.data),
+  rejectPlan: (id: string, planId: string, reason?: string) =>
+    api.post<CampaignPlan>(`/campaigns/${id}/plans/${planId}/reject`, { reason }).then((r) => r.data),
+  report: (id: string) =>
+    api.get<{ report_md: string; generated: boolean }>(`/campaigns/${id}/report`).then((r) => r.data),
+  getAutonomy: () =>
+    api.get<{ mode: CampaignAutonomyMode; modes: CampaignAutonomyMode[] }>("/campaigns/autonomy").then((r) => r.data),
+  setAutonomy: (mode: CampaignAutonomyMode) =>
+    api.put<{ mode: CampaignAutonomyMode }>("/campaigns/autonomy", { mode }).then((r) => r.data),
+};
+
 export default api;

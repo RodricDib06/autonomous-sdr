@@ -739,4 +739,41 @@ export const campaignsApi = {
     api.put<{ mode: CampaignAutonomyMode }>("/campaigns/autonomy", { mode }).then((r) => r.data),
 };
 
+// ── Prospecting — the agent sources its own leads ────────────────────────────
+export interface ProspectCandidatePreview {
+  name: string;
+  email: string;
+  company: string;
+  job_title: string;
+  industry: string;
+  company_size: string;
+  score: number;
+  verdict: "Hot" | "Warm" | "Cold";
+  icp_match: boolean | null;
+  verification_status: string;
+}
+
+export interface ProspectingRun {
+  id: string;
+  provider: string;
+  criteria: Record<string, unknown>;
+  campaign_id: string | null;
+  requested: number;
+  found: number;
+  accepted: number;
+  rejected: { suppressed?: number; duplicate?: number; undeliverable?: number; low_score?: number; budget?: number };
+  cost_usd: number | null;
+  dry_run: boolean;
+  created_at: string | null;
+  candidates?: ProspectCandidatePreview[];
+}
+
+export const prospectingApi = {
+  run: (payload: { criteria?: Record<string, unknown>; campaign_id?: string; limit?: number; dry_run?: boolean }) =>
+    api.post<ProspectingRun>("/prospecting/runs", payload).then((r) => r.data),
+  list: () =>
+    api.get<{ total: number; runs: ProspectingRun[]; budget: { max_per_day: number; accepted_today: number } }>(
+      "/prospecting/runs").then((r) => r.data),
+};
+
 export default api;

@@ -18,6 +18,7 @@ import { Badge } from "../components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "../components/ui/dialog";
 import { cn, formatDateShort, apiErrorMessage } from "../lib/utils";
 import { useAuthStore } from "../store/authStore";
+import { ProspectingPanel } from "../components/ProspectingPanel";
 
 const GOAL_LABEL: Record<Campaign["goal_type"], string> = {
   meetings: "meetings booked",
@@ -459,6 +460,7 @@ export default function Campaigns() {
       />
       <div className="flex-1 p-8 space-y-6 max-w-5xl animate-fade-in">
         <StrategyAutonomyDial />
+        <ProspectingPanel />
 
         {isLoading ? (
           <p className="text-sm text-muted-foreground py-8 text-center">Loading…</p>

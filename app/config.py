@@ -94,6 +94,16 @@ class Settings(BaseSettings):
     # Re-verify a lead's address after this many days (0 = trust forever).
     EMAIL_VERIFICATION_TTL_DAYS: int = 7
 
+    # ── Prospecting (the agent sources its own leads) ──────────────────────────
+    # "synthetic" (default, deterministic demo) | "pdl" (People Data Labs Person
+    # Search — reuses PDL_API_KEY)
+    PROSPECTING_PROVIDER: str = "synthetic"
+    # Hard budget guardrails, enforced in code before any insert
+    PROSPECTING_MAX_LEADS_PER_DAY: int = 100
+    # Candidates scoring below this (deterministic BANT, same as backtests)
+    # are rejected as low_score
+    PROSPECTING_MIN_SCORE: float = 0.3
+
     # ── OAuth mailboxes (Gmail API / Microsoft Graph) ──────────────────────────
     # Google Cloud OAuth client (Gmail API enabled, scopes: gmail.send, gmail.modify)
     GOOGLE_CLIENT_ID: str = ""

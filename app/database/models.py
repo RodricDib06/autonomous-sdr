@@ -378,6 +378,8 @@ class Conversation(Base):
     sentiment: Mapped[str | None] = mapped_column(String(50), nullable=True)   # positive|neutral|frustrated|angry|confused
     needs_human: Mapped[bool] = mapped_column(Boolean, default=False)
     human_flagged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Reply intelligence: {category, subtype?, confidence, method, extracted{...}}
+    classification: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     lead: Mapped["Lead"] = relationship(back_populates="conversations", foreign_keys=[lead_id])
 
@@ -609,6 +611,34 @@ class CampaignActionLog(Base):
     executed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     success: Mapped[bool] = mapped_column(Boolean, default=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+# Prospecting — the agent builds its own lead lists
+# ---------------------------------------------------------------------------
+
+class ProspectingRun(Base):
+    """
+    One sourcing run: criteria in, candidates through the quality gates
+    (suppression → dedup → verification → scoring), accepted leads out.
+    The rejection breakdown is the audit trail for where leads come from —
+    and the proof the gates work.
+    """
+    __tablename__ = "prospecting_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
+    campaign_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("campaigns.id"), nullable=True, index=True)
+    provider: Mapped[str] = mapped_column(String(30))
+    criteria: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    requested: Mapped[int] = mapped_column(Integer, default=0)
+    found: Mapped[int] = mapped_column(Integer, default=0)
+    accepted: Mapped[int] = mapped_column(Integer, default=0)
+    # {suppressed, duplicate, undeliverable, low_score, budget}
+    rejected: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
 # Self-optimization

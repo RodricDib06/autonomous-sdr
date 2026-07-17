@@ -711,6 +711,37 @@ export const handlers = [
     HttpResponse.json({ report_md: '# Campaign report — Q3 push\n\n**Goal:** 12 meetings', generated: true })
   ),
 
+  // ── Prospecting ────────────────────────────────────────────────────────────
+  http.get(`${API_BASE_URL}/prospecting/runs`, () =>
+    HttpResponse.json({
+      total: 1,
+      runs: [{
+        id: 'prun-1', provider: 'synthetic', criteria: { industry: 'SaaS' },
+        campaign_id: null, requested: 10, found: 12, accepted: 8,
+        rejected: { suppressed: 1, duplicate: 2, undeliverable: 1, low_score: 0, budget: 0 },
+        cost_usd: 0, dry_run: false, created_at: '2026-07-15T10:00:00Z',
+      }],
+      budget: { max_per_day: 100, accepted_today: 8 },
+    })
+  ),
+
+  http.post(`${API_BASE_URL}/prospecting/runs`, async ({ request }) => {
+    const body = (await request.json()) as { dry_run?: boolean; limit?: number };
+    return HttpResponse.json({
+      id: 'prun-new', provider: 'synthetic', criteria: { industry: 'SaaS' },
+      campaign_id: null, requested: body.limit ?? 10, found: 12,
+      accepted: body.dry_run ? 0 : 2,
+      rejected: { suppressed: 1, duplicate: 0, undeliverable: 1, low_score: 0, budget: 0 },
+      cost_usd: 0, dry_run: !!body.dry_run, created_at: '2026-07-16T10:00:00Z',
+      candidates: [
+        { name: 'Ava Keller', email: 'ava.keller@notion.so', company: 'Notion', job_title: 'VP of Product',
+          industry: 'SaaS', company_size: '200-500', score: 0.81, verdict: 'Hot', icp_match: true, verification_status: 'valid' },
+        { name: 'Hugo Berg', email: 'hugo.berg@linear.app', company: 'Linear', job_title: 'Engineering Manager',
+          industry: 'DevTools', company_size: '50-200', score: 0.62, verdict: 'Warm', icp_match: true, verification_status: 'unknown' },
+      ],
+    }, { status: 201 });
+  }),
+
   // ── Health ─────────────────────────────────────────────────────────────────
   http.get(`${API_BASE_URL}/health`, () =>
     HttpResponse.json({ status: 'healthy', service: 'autonomous-sdr', version: '1.0.0', worker_active: true, worker_last_seen: new Date().toISOString() })

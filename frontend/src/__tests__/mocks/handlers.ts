@@ -786,6 +786,41 @@ export const handlers = [
     })
   ),
 
+  // ── CRM sync ───────────────────────────────────────────────────────────────
+  http.get(`${API_BASE_URL}/crm/status`, () =>
+    HttpResponse.json({
+      hubspot: {
+        oauth_configured: true, connected: true, portal_id: '12345',
+        last_outbound_at: '2026-07-17T08:00:00Z', last_inbound_at: '2026-07-17T09:00:00Z',
+        legacy_api_key: false,
+      },
+    })
+  ),
+
+  http.get(`${API_BASE_URL}/crm/log`, () =>
+    HttpResponse.json({
+      entries: [
+        { direction: 'inbound', event_type: 'contact.lifecyclestage', lead_id: 'lead-1',
+          external_id: '901', payload: { value: 'customer', applied: true }, success: true,
+          error_message: null, created_at: '2026-07-17T09:00:00Z' },
+        { direction: 'outbound', event_type: 'contact.created', lead_id: 'lead-1',
+          external_id: '901', payload: { verdict: 'Hot' }, success: true,
+          error_message: null, created_at: '2026-07-17T08:00:00Z' },
+      ],
+    })
+  ),
+
+  http.get(`${API_BASE_URL}/crm/hubspot/start`, () =>
+    HttpResponse.json({
+      authorize_url: 'https://app.hubspot.com/oauth/authorize?client_id=x',
+      state: 'signed-state',
+    })
+  ),
+
+  http.delete(`${API_BASE_URL}/crm/hubspot`, () =>
+    HttpResponse.json({ status: 'disconnected' })
+  ),
+
   // ── Health ─────────────────────────────────────────────────────────────────
   http.get(`${API_BASE_URL}/health`, () =>
     HttpResponse.json({ status: 'healthy', service: 'autonomous-sdr', version: '1.0.0', worker_active: true, worker_last_seen: new Date().toISOString() })

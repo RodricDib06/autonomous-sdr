@@ -191,6 +191,9 @@ app.include_router(campaigns_router)
 from app.routers.prospecting import router as prospecting_router  # noqa: E402
 app.include_router(prospecting_router)
 
+from app.routers.crm import router as crm_router  # noqa: E402
+app.include_router(crm_router)
+
 # Global Slack notifier
 slack_notifier = SlackNotifier()
 # Store webhook URL in memory (in production, use database)

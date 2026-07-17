@@ -148,6 +148,13 @@ class Settings(BaseSettings):
     CAL_EVENT_TYPE_ID: str = ""
 
     # ── CRM integrations ──────────────────────────────────────────────────────
+    # HubSpot OAuth app (bidirectional sync): create at developers.hubspot.com,
+    # scopes crm.objects.contacts.read/write + crm.objects.deals.read, redirect
+    # {APP_BASE_URL}/crm/hubspot/callback. The client secret also validates
+    # webhook signatures (X-HubSpot-Signature-v3).
+    HUBSPOT_CLIENT_ID: str = ""
+    HUBSPOT_CLIENT_SECRET: str = ""
+    # Legacy private-app token — outbound-only fallback when OAuth isn't connected
     HUBSPOT_API_KEY: str = ""
     SALESFORCE_USERNAME: str = ""
     SALESFORCE_PASSWORD: str = ""
@@ -162,6 +169,15 @@ class Settings(BaseSettings):
 
     # ── App base URL ───────────────────────────────────────────────────────────
     APP_BASE_URL: str = ""
+
+    # ── Demo mode ──────────────────────────────────────────────────────────────
+    # Comma-separated emails whose sessions are read-only (GET/HEAD/OPTIONS
+    # only) — lets a public demo login be posted safely in the README.
+    DEMO_READONLY_EMAILS: str = ""
+
+    @property
+    def demo_readonly_emails(self) -> set[str]:
+        return {e.strip().lower() for e in self.DEMO_READONLY_EMAILS.split(",") if e.strip()}
 
     # ── Notifications ─────────────────────────────────────────────────────────
     SLACK_WEBHOOK_URL: str = ""

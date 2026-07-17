@@ -261,27 +261,28 @@ objection when proposing a variant.
 
 > Code is ~40% of this phase. The rest is founder work. No feature substitutes for it.
 
-### 9.1 Bidirectional HubSpot sync (build BEFORE first pilot call — it's asked in minute ten)
+### 9.1 Bidirectional HubSpot sync — ✅ SHIPPED (2026-07-17)
 
-- [ ] HubSpot OAuth app (scopes: contacts, deals) — replaces bare API key; token
+- [x] HubSpot OAuth app (scopes: contacts, deals) — replaces bare API key; token
       storage pattern already exists (`oauth_mailbox.py` encrypt/refresh — generalize
       or copy)
-- [ ] Inbound: webhook subscription (contact updated, deal stage changed) →
+- [x] Inbound: webhook subscription (contact updated, deal stage changed) →
       `POST /ingest/hubspot-webhook` → update `conversion_status` — **this feeds the
       ML scorer, the optimization loop, and backtests with real outcomes**, which is
       the actual point, not checkbox parity
-- [ ] `CrmSyncLog` table + conflict policy (CRM wins on ownership/stage fields;
+- [x] `CrmSyncLog` table + conflict policy (CRM wins on ownership/stage fields;
       platform wins on scores)
-- [ ] Settings UI: connect button (reuse OAuth connect pattern), sync status, log tail
-- [ ] Tests: webhook signature validation, mapping, conflict policy
+- [x] Settings UI: connect button (reuse OAuth connect pattern), sync status, log tail
+- [x] Tests: webhook signature validation, mapping, conflict policy
 
 ### 9.2 Go live (highest ROI item in the entire file — carried over twice already)
 
 - [ ] Deploy on Railway (`railway.toml` exists): Postgres + Redis add-ons, stable
       `SECRET_KEY`, `APP_BASE_URL`, `alembic upgrade head` on boot, `AI_PROVIDER=groq`
       (free tier) or claude, `ENRICHMENT_PROVIDER=synthetic`
-- [ ] Seeded demo org (`scripts/seed_demo_data.py`) + **read-only demo login** posted
-      in the README ("click here, no signup")
+- [~] Seeded demo org (`scripts/seed_demo_data.py`) + **read-only demo login** posted
+      in the README ("click here, no signup") — read-only guard shipped
+      (`DEMO_READONLY_EMAILS`); posting the login happens at deploy time
 - [ ] Deploy frontend (Vercel/Railway static) with `VITE_API_URL`
 - [ ] Uptime check + error alerting (Slack webhook exists)
 
@@ -289,7 +290,7 @@ objection when proposing a variant.
 
 - [ ] Dogfood: run AutonomousSDR on AutonomousSDR's own outbound. Target sentence:
       *"It booked N meetings for itself."* Track in a doc; screenshot the ROI panel
-- [ ] 3-minute demo video. Storyboard: lead lands → debate transcript → Fact Check
+- [~] 3-minute demo video — storyboard written (`docs/demo-video-storyboard.md`); recording is founder work. Original storyboard note: lead lands → debate transcript → Fact Check
       panel (unverified claim caught) → approve with edit → **backtest on a real CSV**
       → campaign agent's weekly report → ROI panel. That order tells the trust story
 - [ ] 3–5 design partners (free pilots), targeted: privacy-sensitive EU/B2B teams
@@ -360,4 +361,4 @@ of likely demand:
 
 ---
 
-*Last updated: 2026-07-16 (evening). Phases 6, 7, 8 shipped (`2e8cf27`, `52f01fe`, `a9ff257`) — 481 backend + 480 frontend tests, migration chain 0001→0014 verified on fresh Postgres. Next: Phase 9 (HubSpot bidirectional → go live → evidence engine). Update this line when the plan changes.*
+*Last updated: 2026-07-17. Phases 6-8 shipped; 9.1 HubSpot bidirectional shipped (OAuth + signed webhooks + conflict policy + Settings card), read-only demo guard + video storyboard done — 499 backend + 483 frontend tests, chain 0001→0015 verified. Remaining in Phase 9: deploy (9.2, ops) and the evidence engine (9.3, founder work). Then Phase 10 waits for a paying pilot. Update this line when the plan changes.*

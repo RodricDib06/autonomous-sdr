@@ -787,4 +787,35 @@ export const prospectingApi = {
       "/prospecting/runs").then((r) => r.data),
 };
 
+// ── CRM — bidirectional HubSpot sync ─────────────────────────────────────────
+export interface CrmStatus {
+  hubspot: {
+    oauth_configured: boolean;
+    connected: boolean;
+    portal_id: string | null;
+    last_outbound_at: string | null;
+    last_inbound_at: string | null;
+    legacy_api_key: boolean;
+  };
+}
+
+export interface CrmLogEntry {
+  direction: "outbound" | "inbound";
+  event_type: string;
+  lead_id: string | null;
+  external_id: string | null;
+  payload: Record<string, unknown> | null;
+  success: boolean;
+  error_message: string | null;
+  created_at: string | null;
+}
+
+export const crmApi2 = {
+  status: () => api.get<CrmStatus>("/crm/status").then((r) => r.data),
+  log: (limit = 10) => api.get<{ entries: CrmLogEntry[] }>("/crm/log", { params: { limit } }).then((r) => r.data),
+  hubspotStart: () =>
+    api.get<{ authorize_url: string; state: string }>("/crm/hubspot/start").then((r) => r.data),
+  disconnectHubspot: () => api.delete("/crm/hubspot").then((r) => r.data),
+};
+
 export default api;

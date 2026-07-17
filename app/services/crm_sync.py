@@ -90,8 +90,12 @@ def sync_lead_to_crm(db: Session, lead_id: str) -> dict:
 
     payload = _build_payload(lead, enrichment, verdict, first, last)
 
-    if settings.HUBSPOT_API_KEY:
-        return _sync_hubspot(payload)
+    # HubSpot: real bidirectional sync when an OAuth connection exists for
+    # the lead's org (or the legacy private-app token is set)
+    from app.services.hubspot_sync import get_connection
+    if get_connection(db, lead.org_id) is not None or settings.HUBSPOT_API_KEY:
+        from app.services.hubspot_sync import push_contact
+        return push_contact(db, lead, payload)
     elif settings.SALESFORCE_USERNAME:
         return _sync_salesforce(payload)
     elif settings.PIPEDRIVE_API_KEY:

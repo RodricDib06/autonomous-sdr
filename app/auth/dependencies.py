@@ -11,7 +11,7 @@ Usage:
 """
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, Security, status
+from fastapi import Depends, HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, APIKeyHeader
 from jose import JWTError
 from sqlalchemy.orm import Session
@@ -78,6 +78,7 @@ def _user_from_api_key(raw_key: str, db: Session) -> User | None:
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
     api_key: str | None = Security(_api_key_header),
     db: Session = Depends(get_db),
@@ -99,6 +100,18 @@ def get_current_user(
 
     if not user.is_active:
         raise _INACTIVE_ERROR
+
+    # Read-only demo accounts (DEMO_READONLY_EMAILS): browse everything,
+    # mutate nothing — safe to publish the login in the README
+    from app.config import settings
+    if (
+        user.email.lower() in settings.demo_readonly_emails
+        and request.method not in ("GET", "HEAD", "OPTIONS")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This is a read-only demo account — mutations are disabled.",
+        )
 
     return user
 

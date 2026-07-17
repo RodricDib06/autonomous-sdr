@@ -62,6 +62,9 @@ class Lead(Base):
     referred_by_lead_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("leads.id"), nullable=True)
     # IANA timezone inferred from email TLD; gates the recipient-local send window
     timezone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # HubSpot contact id captured on outbound push; lets inbound webhooks
+    # resolve events without an email lookup round-trip
+    hubspot_contact_id: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     # Deliverability: valid | risky | undeliverable | unknown (see email_verification.py)
     email_verification_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -638,6 +641,48 @@ class ProspectingRun(Base):
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+# CRM — bidirectional sync (HubSpot OAuth)
+# ---------------------------------------------------------------------------
+
+class CrmConnection(Base):
+    """
+    One OAuth-connected CRM portal per org. Tokens are encrypted with the
+    same Fernet key as mailbox credentials; access tokens are short-lived
+    (HubSpot: ~30 min) and refreshed on demand.
+    """
+    __tablename__ = "crm_connections"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
+    provider: Mapped[str] = mapped_column(String(30), default="hubspot")
+    portal_id: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    token_encrypted: Mapped[str] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    connected_by_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    last_outbound_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_inbound_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class CrmSyncLog(Base):
+    """Append-only record of every sync in either direction — the audit tail
+    the Settings page shows and the first place to look when 'the CRM says
+    otherwise'."""
+    __tablename__ = "crm_sync_log"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    org_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("organizations.id"), nullable=True, index=True)
+    provider: Mapped[str] = mapped_column(String(30), default="hubspot")
+    direction: Mapped[str] = mapped_column(String(10))  # outbound | inbound
+    lead_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("leads.id"), nullable=True, index=True)
+    external_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(60))
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 

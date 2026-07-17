@@ -3,10 +3,11 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   MessageSquare, Key, Lock, Eye, EyeOff, Plus, Trash2, Copy, CheckCircle2, Send, WifiOff,
   Shield, ShieldBan, Gauge, AtSign, Flame, Mail, MailCheck, XCircle, HelpCircle, AlertTriangle,
+  Link2, ArrowUpRight, ArrowDownLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  authApi, configApi, complianceApi, mailboxesApi, verificationApi,
+  authApi, configApi, complianceApi, mailboxesApi, verificationApi, crmApi2,
   type MailboxCreatePayload, type OAuthProvider, type EmailVerification,
 } from "../lib/api";
 import type { APIKeyCreated } from "../types";
@@ -466,6 +467,99 @@ function MailboxSection() {
   );
 }
 
+function CrmSection() {
+  const qc = useQueryClient();
+
+  const { data: status } = useQuery({ queryKey: ["crm-status"], queryFn: crmApi2.status });
+  const hubspot = status?.hubspot;
+  const { data: logData } = useQuery({
+    queryKey: ["crm-log"],
+    queryFn: () => crmApi2.log(8),
+    enabled: !!hubspot?.connected,
+  });
+
+  const { mutate: connect, isPending: connecting } = useMutation({
+    mutationFn: crmApi2.hubspotStart,
+    onSuccess: (res) => window.location.assign(res.authorize_url),
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "HubSpot OAuth is not configured on the server")),
+  });
+
+  const { mutate: disconnect } = useMutation({
+    mutationFn: crmApi2.disconnectHubspot,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["crm-status"] });
+      toast.success("HubSpot disconnected");
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-orange-500/10">
+            <Link2 className="w-5 h-5 text-orange-400" />
+          </div>
+          <div className="flex-1">
+            <CardTitle className="text-sm">CRM Sync — HubSpot</CardTitle>
+            <CardDescription>
+              Bidirectional: verdicts push out as contacts; lifecycle and deal changes flow
+              back into conversion status — which is what trains the scoring models
+            </CardDescription>
+          </div>
+          {hubspot?.connected ? (
+            <Badge variant="success">Portal {hubspot.portal_id}</Badge>
+          ) : hubspot?.legacy_api_key ? (
+            <Badge variant="warning">API key (outbound only)</Badge>
+          ) : (
+            <Badge variant="secondary">Not connected</Badge>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-2">
+          {hubspot?.connected ? (
+            <>
+              <p className="text-xs text-muted-foreground flex-1">
+                Last push {hubspot.last_outbound_at ? formatDate(hubspot.last_outbound_at) : "never"} ·
+                last inbound event {hubspot.last_inbound_at ? formatDate(hubspot.last_inbound_at) : "never"}
+              </p>
+              <Button variant="ghost" size="sm" onClick={() => { if (confirm("Disconnect HubSpot?")) disconnect(); }}
+                      className="text-red-400 hover:text-red-400 hover:bg-red-500/10 gap-1.5">
+                <WifiOff className="w-3.5 h-3.5" />
+                Disconnect HubSpot
+              </Button>
+            </>
+          ) : (
+            <Button variant="outline" size="sm" disabled={connecting} onClick={() => connect()} className="gap-1.5">
+              <Link2 className="w-3.5 h-3.5" />
+              Connect HubSpot
+            </Button>
+          )}
+        </div>
+
+        {(logData?.entries.length ?? 0) > 0 && (
+          <div className="space-y-1.5">
+            <Label>Recent sync activity</Label>
+            {logData!.entries.map((entry, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs py-1 border-b border-border/40 last:border-0">
+                {entry.direction === "outbound"
+                  ? <ArrowUpRight className="w-3 h-3 text-violet-400 shrink-0" aria-label="Outbound" />
+                  : <ArrowDownLeft className="w-3 h-3 text-emerald-400 shrink-0" aria-label="Inbound" />}
+                <span className="font-mono">{entry.event_type}</span>
+                {!entry.success && <Badge variant="destructive" className="text-[10px]">failed</Badge>}
+                <span className="text-muted-foreground truncate flex-1">
+                  {entry.error_message ?? (entry.payload ? JSON.stringify(entry.payload) : "")}
+                </span>
+                <span className="text-muted-foreground shrink-0">{formatDate(entry.created_at)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 const VERIFICATION_META: Record<EmailVerification["status"], { variant: "success" | "warning" | "destructive" | "secondary"; label: string }> = {
   valid: { variant: "success", label: "Deliverable" },
   risky: { variant: "warning", label: "Risky" },
@@ -733,6 +827,7 @@ export default function Settings() {
         </Card>
 
         <MailboxSection />
+        <CrmSection />
         <VerificationSection />
         <ComplianceSection />
         <SlackSection />

@@ -247,7 +247,7 @@ describe('Settings page', () => {
       expect(screen.getByText('Connected')).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: /^test$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /disconnect/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^disconnect$/i })).toBeInTheDocument();
   });
 
   it('clicking Test sends test webhook request', async () => {
@@ -278,9 +278,9 @@ describe('Settings page', () => {
     );
     const user = userEvent.setup();
     renderWithProviders(<Settings />);
-    await waitFor(() => expect(screen.getByRole('button', { name: /disconnect/i })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: /^disconnect$/i })).toBeInTheDocument());
 
-    await user.click(screen.getByRole('button', { name: /disconnect/i }));
+    await user.click(screen.getByRole('button', { name: /^disconnect$/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/slack notifications disabled/i)).toBeInTheDocument();
@@ -747,5 +747,61 @@ describe('Settings — email verification', () => {
     renderWithProviders(<Settings />);
     await waitFor(() => screen.getByText('Email Verification'));
     expect(screen.getByRole('button', { name: /^verify$/i })).toBeDisabled();
+  });
+});
+
+describe('Settings — CRM sync (HubSpot)', () => {
+  it('shows the connected portal with the sync log', async () => {
+    renderWithProviders(<Settings />);
+    await waitFor(() => {
+      expect(screen.getByText('Portal 12345')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.getByText('contact.lifecyclestage')).toBeInTheDocument();
+    });
+    expect(screen.getByText('contact.created')).toBeInTheDocument();
+    expect(screen.getByLabelText('Inbound')).toBeInTheDocument();
+    expect(screen.getByLabelText('Outbound')).toBeInTheDocument();
+  });
+
+  it('offers connect and redirects to the HubSpot consent screen when not connected', async () => {
+    server.use(
+      http.get('http://localhost:8000/crm/status', () =>
+        HttpResponse.json({
+          hubspot: {
+            oauth_configured: true, connected: false, portal_id: null,
+            last_outbound_at: null, last_inbound_at: null, legacy_api_key: false,
+          },
+        })
+      )
+    );
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign });
+
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />);
+    await waitFor(() => screen.getByRole('button', { name: /connect hubspot/i }));
+
+    await user.click(screen.getByRole('button', { name: /connect hubspot/i }));
+    await waitFor(() => {
+      expect(assign).toHaveBeenCalledWith('https://app.hubspot.com/oauth/authorize?client_id=x');
+    });
+  });
+
+  it('labels a legacy API key setup as outbound-only', async () => {
+    server.use(
+      http.get('http://localhost:8000/crm/status', () =>
+        HttpResponse.json({
+          hubspot: {
+            oauth_configured: false, connected: false, portal_id: null,
+            last_outbound_at: null, last_inbound_at: null, legacy_api_key: true,
+          },
+        })
+      )
+    );
+    renderWithProviders(<Settings />);
+    await waitFor(() => {
+      expect(screen.getByText(/api key \(outbound only\)/i)).toBeInTheDocument();
+    });
   });
 });

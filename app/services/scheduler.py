@@ -243,6 +243,22 @@ async def _run_campaign_reviews() -> None:
         db.close()
 
 
+async def _process_reengagements() -> None:
+    """Requeue leads whose 'circle back later' resume date has arrived."""
+    from app.database.connection import SessionLocal
+    from app.services.reply_service import process_due_reengagements
+
+    db = SessionLocal()
+    try:
+        summary = process_due_reengagements(db)
+        if summary["requeued"]:
+            log.info("scheduler.reengagements", **summary)
+    except Exception as e:
+        log.error("scheduler.reengagements.error", error=str(e))
+    finally:
+        db.close()
+
+
 async def _refresh_metrics() -> None:
     """Update Prometheus gauges for queue depth and in-flight leads."""
     try:
@@ -310,6 +326,15 @@ def create_scheduler() -> AsyncIOScheduler:
         trigger=IntervalTrigger(seconds=86400),  # daily
         id="campaign_reviews",
         name="Campaign agent: review goals, replan, execute (autonomy permitting)",
+        replace_existing=True,
+        misfire_grace_time=3600,
+    )
+
+    scheduler.add_job(
+        _locked("reengagements", 86390)(_process_reengagements),
+        trigger=IntervalTrigger(seconds=86400),  # daily
+        id="reengagements",
+        name="Re-engage leads whose not-now resume date has passed",
         replace_existing=True,
         misfire_grace_time=3600,
     )

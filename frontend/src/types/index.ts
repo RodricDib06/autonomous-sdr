@@ -495,6 +495,14 @@ export interface InboxConversation {
   message_count: number;
   summary: string | null;
   sentiment: string | null;
+  // Reply intelligence: why this reply matters, at a glance
+  classification: {
+    category: "interested" | "objection" | "referral" | "wrong_person" | "not_now" | "auto_reply" | "other";
+    subtype: "price" | "competitor" | "no_need" | "trust" | null;
+    confidence: number;
+    method: "keyword" | "llm";
+    extracted: Record<string, unknown>;
+  } | null;
   needs_human: boolean;
   human_flagged_at: string | null;
   updated_at: string | null;

@@ -241,7 +241,18 @@ export const analyticsApi = {
 
   verdictExplanation: (leadId: string) =>
     api.get<VerdictExplanation>(`/leads/${leadId}/verdict-explanation`).then((r) => r.data),
+
+  objections: () =>
+    api.get<ObjectionReport>("/analytics/objections").then((r) => r.data),
 };
+
+export interface ObjectionReport {
+  total_objections: number;
+  by_subtype: Record<string, number>;
+  by_industry: Record<string, Record<string, number>>;
+  top: { subtype: string; count: number }[];
+  examples: Record<string, { company: string; industry: string; text: string }[]>;
+}
 
 // ── ICP ───────────────────────────────────────────────────────────────────────
 export const icpApi = {

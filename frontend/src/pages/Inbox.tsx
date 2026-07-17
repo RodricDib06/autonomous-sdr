@@ -35,6 +35,32 @@ const OBJECTION_LABELS: Record<string, string> = {
   general_objection:    "General",
 };
 
+const CLASSIFICATION_META: Record<string, { label: string; class: string }> = {
+  interested:   { label: "Interested",    class: "text-emerald-400 bg-emerald-500/10 border-emerald-900/50" },
+  objection:    { label: "Objection",     class: "text-yellow-400 bg-yellow-500/10 border-yellow-900/50" },
+  referral:     { label: "Referral",      class: "text-violet-400 bg-violet-500/10 border-violet-900/50" },
+  wrong_person: { label: "Wrong person",  class: "text-orange-400 bg-orange-500/10 border-orange-900/50" },
+  not_now:      { label: "Not now",       class: "text-blue-400 bg-blue-500/10 border-blue-900/50" },
+  auto_reply:   { label: "Auto-reply",    class: "text-muted-foreground bg-secondary/40 border-border" },
+};
+
+function ClassificationBadge({ classification }: { classification: InboxConversation["classification"] }) {
+  if (!classification) return null;
+  const meta = CLASSIFICATION_META[classification.category];
+  if (!meta) return null;
+  const label = classification.category === "objection" && classification.subtype
+    ? `Objection: ${classification.subtype.replace("_", " ")}`
+    : meta.label;
+  return (
+    <span
+      title={`Classified by ${classification.method} (confidence ${Math.round(classification.confidence * 100)}%)`}
+      className={cn("inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold uppercase tracking-wide", meta.class)}
+    >
+      {label}
+    </span>
+  );
+}
+
 function SentimentBadge({ sentiment }: { sentiment: string | null }) {
   if (!sentiment) return null;
   const meta = SENTIMENT_META[sentiment] ?? { label: sentiment, class: "text-muted-foreground bg-secondary/40 border-border" };
@@ -132,6 +158,7 @@ function ConvItem({
         <p className="text-xs text-muted-foreground/70 mt-1 line-clamp-1">{conv.summary}</p>
       )}
       <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+        <ClassificationBadge classification={conv.classification} />
         {conv.sentiment && <SentimentBadge sentiment={conv.sentiment} />}
         <span className="text-[10px] text-muted-foreground">
           {conv.message_count} msg{conv.message_count !== 1 ? "s" : ""}

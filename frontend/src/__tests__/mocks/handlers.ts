@@ -742,6 +742,50 @@ export const handlers = [
     }, { status: 201 });
   }),
 
+  // ── Inbox + reply intelligence ─────────────────────────────────────────────
+  http.get(`${API_BASE_URL}/inbox`, () =>
+    HttpResponse.json({
+      conversations: [
+        {
+          id: 'conv-1', lead_id: 'lead-1', lead_name: 'Alice Chen', lead_email: 'alice@startup.io',
+          company: 'Startup IO', channel: 'email', message_count: 2, summary: null,
+          sentiment: null,
+          classification: { category: 'objection', subtype: 'competitor', confidence: 0.85, method: 'keyword', extracted: {} },
+          needs_human: true, human_flagged_at: '2026-07-16T09:00:00Z', updated_at: '2026-07-16T09:00:00Z',
+          messages: [{ role: 'lead', content: 'We already use Outreach and are happy with it.', timestamp: '2026-07-16T09:00:00Z' }],
+        },
+        {
+          id: 'conv-2', lead_id: 'lead-2', lead_name: 'Bob Roe', lead_email: 'bob@shop.com',
+          company: 'Shopful', channel: 'email', message_count: 1, summary: null,
+          sentiment: null,
+          classification: { category: 'auto_reply', subtype: null, confidence: 0.85, method: 'keyword', extracted: {} },
+          needs_human: false, human_flagged_at: null, updated_at: '2026-07-16T08:00:00Z',
+          messages: [{ role: 'lead', content: 'Out of office until Monday.', timestamp: '2026-07-16T08:00:00Z' }],
+        },
+      ],
+      count: 2,
+      needs_review: 1,
+    })
+  ),
+
+  http.get(`${API_BASE_URL}/analytics/objections`, () =>
+    HttpResponse.json({
+      total_objections: 5,
+      by_subtype: { competitor: 3, price: 2 },
+      by_industry: { SaaS: { competitor: 2 }, FinTech: { competitor: 1, price: 2 } },
+      top: [
+        { subtype: 'competitor', count: 3 },
+        { subtype: 'price', count: 2 },
+      ],
+      examples: {
+        competitor: [
+          { company: 'Startup IO', industry: 'SaaS', text: 'We already use Outreach and are happy with it.' },
+        ],
+        price: [],
+      },
+    })
+  ),
+
   // ── Health ─────────────────────────────────────────────────────────────────
   http.get(`${API_BASE_URL}/health`, () =>
     HttpResponse.json({ status: 'healthy', service: 'autonomous-sdr', version: '1.0.0', worker_active: true, worker_last_seen: new Date().toISOString() })

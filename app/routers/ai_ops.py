@@ -132,6 +132,21 @@ def lead_llm_cost(
     }
 
 
+@router.get("/analytics/objections")
+def get_objections(
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """
+    Objection intelligence: what prospects push back with, by subtype and
+    industry. This is the same aggregation the campaign agent reads before
+    drafting new sequence variants.
+    """
+    from app.services.reply_classifier import aggregate_objections
+
+    return aggregate_objections(db, org_id=current_user.org_id)
+
+
 @router.get("/analytics/roi")
 def roi(
     current_user: User = Depends(require_manager),

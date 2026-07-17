@@ -149,6 +149,8 @@ Guidance:
   not enough pipeline? bounces?) and act on the cause.
 - Pause a sequence only with meaningful volume behind the decision (>= 20 sends).
 - New variants must address a specific diagnosed weakness — name it in "angle".
+  When top_objections is non-empty, the strongest variant angle is usually the
+  one that answers the #1 objection head-on.
 - Templates may use placeholders: {{first_name}}, {{company}}, {{industry}}, {{sender_name}}.
 - If nothing needs changing, return an empty actions list and say why.
 - At most {max_actions} actions.

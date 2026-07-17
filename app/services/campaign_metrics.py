@@ -287,9 +287,19 @@ def sequence_performance(db: Session, campaign: Campaign) -> list[dict]:
 
 def build_snapshot(db: Session, campaign: Campaign, now: datetime | None = None) -> dict:
     """The full picture the planner sees — persisted on every plan."""
+    from app.services.reply_classifier import aggregate_objections
+
+    objections = aggregate_objections(db, org_id=campaign.org_id, limit_examples=2)
     return {
         "generated_at": (now or utcnow()).isoformat(),
         "progress": campaign_progress(db, campaign),
         "pace": pace(db, campaign, now=now),
         "sequences": sequence_performance(db, campaign),
+        # What prospects actually say — create_variant drafts should answer
+        # the top objections, closing the replies→messaging loop
+        "top_objections": objections["top"][:3],
+        "objection_examples": {
+            k: v for k, v in objections["examples"].items()
+            if any(t["subtype"] == k for t in objections["top"][:3])
+        },
     }

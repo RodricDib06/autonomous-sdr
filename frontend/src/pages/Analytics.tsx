@@ -4,7 +4,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
 } from "recharts";
-import { TrendingUp, Flame, Target, Award, Mail, Sparkles, BarChart2, Zap, Users, DollarSign } from "lucide-react";
+import { TrendingUp, Flame, Target, Award, Mail, Sparkles, BarChart2, Zap, Users, DollarSign, MessageSquareWarning } from "lucide-react";
 import { leadsApi, outreachApi, optimizationApi, marketApi, analyticsApi, roiApi } from "../lib/api";
 import { Header } from "../components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
@@ -50,6 +50,66 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
     </div>
   );
 };
+
+const OBJECTION_LABEL: Record<string, string> = {
+  price: "Price / budget",
+  competitor: "Existing vendor",
+  no_need: "No need",
+  trust: "Trust / spam",
+  other: "Other",
+};
+
+function ObjectionsPanel() {
+  const { data } = useQuery({ queryKey: ["objections"], queryFn: analyticsApi.objections });
+
+  if (!data || data.total_objections === 0) return null;
+  const max = Math.max(...data.top.map((t) => t.count), 1);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-yellow-500/10">
+            <MessageSquareWarning className="w-5 h-5 text-yellow-400" />
+          </div>
+          <div>
+            <CardTitle className="text-sm">What prospects push back with</CardTitle>
+            <CardDescription>
+              Classified from real replies — the campaign agent reads this before drafting new variants
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2">
+          {data.top.map(({ subtype, count }) => (
+            <div key={subtype} className="space-y-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-medium">{OBJECTION_LABEL[subtype] ?? subtype}</span>
+                <span className="text-muted-foreground">{count}</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+                <div className="h-full rounded-full bg-yellow-500" style={{ width: `${(count / max) * 100}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+        {data.top[0] && (data.examples[data.top[0].subtype]?.length ?? 0) > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+              In their words — {OBJECTION_LABEL[data.top[0].subtype] ?? data.top[0].subtype}
+            </p>
+            {data.examples[data.top[0].subtype].slice(0, 2).map((example, i) => (
+              <blockquote key={i} className="text-xs text-muted-foreground pl-2.5 border-l-2 border-yellow-500/40 leading-relaxed">
+                “{example.text}” <span className="text-muted-foreground/60">— {example.company}{example.industry !== "unknown" ? ` (${example.industry})` : ""}</span>
+              </blockquote>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 function ROIPanel() {
   const { data: roi } = useQuery({ queryKey: ["roi"], queryFn: () => roiApi.get(), staleTime: 120_000 });
@@ -224,6 +284,7 @@ export default function Analytics() {
 
       <div className="flex-1 p-8 space-y-6 animate-fade-in">
         <ROIPanel />
+        <ObjectionsPanel />
 
         {/* Summary pills */}
         <div className="flex flex-wrap gap-3">

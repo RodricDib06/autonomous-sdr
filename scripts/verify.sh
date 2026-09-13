@@ -86,9 +86,8 @@ check "Setup scripts"
 # Check documentation
 check "Documentation"
 [ -f "README.md" ] && pass "README.md exists" || fail "README.md not found"
-[ -f "QUICKSTART.md" ] && pass "QUICKSTART.md exists" || fail "QUICKSTART.md not found"
-[ -f "RUNNING.md" ] && pass "RUNNING.md exists" || fail "RUNNING.md not found"
-[ -f "AUDIT_REPORT.md" ] && pass "AUDIT_REPORT.md exists" || fail "AUDIT_REPORT.md not found"
+[ -f "ROADMAP.md" ] && pass "ROADMAP.md exists" || fail "ROADMAP.md not found"
+[ -f "LICENSE" ] && pass "LICENSE exists" || fail "LICENSE not found"
 
 # Check configuration files
 check "Configuration files"
@@ -171,7 +170,7 @@ if [ $FAILED -eq 0 ]; then
     echo -e "${GREEN}✓ All checks passed! System is ready to run.${NC}"
     echo ""
     echo "Next steps:"
-    echo "1. Read RUNNING.md for detailed instructions"
+    echo "1. Read README.md for detailed instructions"
     echo "2. Or use: bash scripts/setup_and_run.sh"
     echo ""
     exit 0

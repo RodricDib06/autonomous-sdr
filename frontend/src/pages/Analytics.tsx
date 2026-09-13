@@ -215,10 +215,10 @@ export default function Analytics() {
 
   const qualityData = quality?.quality_distribution
     ? [
-        { name: "Excellent (80-100)", value: quality.quality_distribution.excellent, fill: COLORS.emerald },
-        { name: "Good (60-80)", value: quality.quality_distribution.good, fill: "#a3e635" },
-        { name: "Fair (40-60)", value: quality.quality_distribution.fair, fill: COLORS.yellow },
-        { name: "Poor (<40)", value: quality.quality_distribution.poor, fill: COLORS.hot },
+        { name: "Excellent (80-100)", value: quality.quality_distribution.excellent_80_100, fill: COLORS.emerald },
+        { name: "Good (60-80)", value: quality.quality_distribution.good_60_80, fill: "#a3e635" },
+        { name: "Fair (40-60)", value: quality.quality_distribution.fair_40_60, fill: COLORS.yellow },
+        { name: "Poor (<40)", value: quality.quality_distribution.poor_0_40, fill: COLORS.hot },
       ]
     : [];
 
@@ -291,8 +291,8 @@ export default function Analytics() {
           {[
             { label: "Success Rate", value: stats ? formatPercent(stats.success_rate) : "—", icon: Award, color: "text-emerald-400" },
             { label: "Hot Rate", value: stats && stats.completed ? formatPercent(stats.verdict_breakdown.hot / stats.completed) : "—", icon: Flame, color: "text-red-400" },
-            { label: "Avg Quality", value: quality ? `${Math.round((quality.avg_quality_score ?? 0) * 100)}` : "—", icon: Target, color: "text-violet-400" },
-            { label: "Avg Completeness", value: quality ? `${Math.round((quality.avg_completeness_score ?? 0) * 100)}` : "—", icon: TrendingUp, color: "text-indigo-400" },
+            { label: "Avg Quality", value: quality ? `${Math.round(quality.average_quality_score ?? 0)}` : "—", icon: Target, color: "text-violet-400" },
+            { label: "Avg Completeness", value: quality ? `${Math.round(quality.average_completeness_score ?? 0)}` : "—", icon: TrendingUp, color: "text-indigo-400" },
           ].map(({ label, value, icon: Icon, color }) => (
             <div key={label} className="flex items-center gap-3 px-4 py-2.5 rounded-xl border border-border bg-card">
               <Icon className={`w-4 h-4 ${color}`} />

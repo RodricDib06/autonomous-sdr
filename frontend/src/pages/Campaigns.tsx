@@ -341,7 +341,12 @@ function CampaignCard({ summary }: { summary: Campaign }) {
   const { data: campaign } = useQuery({
     queryKey: ["campaign", summary.id],
     queryFn: () => campaignsApi.get(summary.id),
+    // The list payload seeds the card, but it carries no plan or totals —
+    // only GET /campaigns/{id} does. Without marking the seed as already
+    // stale, the global staleTime keeps it "fresh" and the detail fetch
+    // never runs, so the agent's pending plan never appears.
     initialData: summary,
+    initialDataUpdatedAt: 0,
   });
 
   const { data: report } = useQuery({

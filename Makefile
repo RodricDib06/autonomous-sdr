@@ -163,6 +163,13 @@ build-docker:
 
 seed-docker:
 	docker compose run --rm migrate python scripts/seed_demo_data.py
+	docker compose run --rm migrate python scripts/seed_demo_flagship.py
+
+# Full demo dataset: base leads/outreach, then campaigns, the approval queue
+# with provenance, a scored backtest, and prospecting runs.
+demo-seed:
+	$(PYTHON) scripts/seed_demo_data.py
+	$(PYTHON) scripts/seed_demo_flagship.py
 
 # ---------------------------------------------------------------------------
 # Railway deployment

@@ -97,10 +97,20 @@ export const handlers = [
 
   http.get(`${API_BASE_URL}/leads/quality-report`, () =>
     HttpResponse.json({
+      // Mirrors GET /leads/quality-report exactly — scores are 0-100, and the
+      // distribution keys carry their range. An earlier mock invented a 0-1
+      // shape, which hid a real field-name mismatch in the dashboard.
       total_leads: 150,
-      avg_quality_score: 0.72,
-      avg_completeness_score: 0.85,
-      quality_distribution: { excellent: 20, good: 60, fair: 50, poor: 20 },
+      scored_leads: 150,
+      unscored_leads: 0,
+      average_quality_score: 72.0,
+      average_completeness_score: 85.0,
+      quality_distribution: {
+        excellent_80_100: 20,
+        good_60_80: 60,
+        fair_40_60: 50,
+        poor_0_40: 20,
+      },
     })
   ),
 

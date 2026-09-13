@@ -43,7 +43,13 @@ function formatPipelineValue(v: number): string {
 }
 
 const VERDICT_COLORS = { hot: "#f87171", warm: "#fb923c", cold: "#60a5fa" };
-const QUALITY_COLORS = { excellent: "#34d399", good: "#a3e635", fair: "#fbbf24", poor: "#f87171" };
+// Keyed by the API's bucket names, which carry their score range in the key.
+const QUALITY_BUCKETS = {
+  excellent_80_100: { label: "Excellent", fill: "#34d399" },
+  good_60_80: { label: "Good", fill: "#a3e635" },
+  fair_40_60: { label: "Fair", fill: "#fbbf24" },
+  poor_0_40: { label: "Poor", fill: "#f87171" },
+} as const;
 
 export default function Dashboard() {
   const qc = useQueryClient();
@@ -134,11 +140,14 @@ export default function Dashboard() {
     : [];
 
   const qualityData = quality?.quality_distribution
-    ? Object.entries(quality.quality_distribution).map(([k, v]) => ({
-        name: k.charAt(0).toUpperCase() + k.slice(1),
-        value: v,
-        fill: QUALITY_COLORS[k as keyof typeof QUALITY_COLORS],
-      }))
+    ? Object.entries(quality.quality_distribution).map(([k, v]) => {
+        const bucket = QUALITY_BUCKETS[k as keyof typeof QUALITY_BUCKETS];
+        return {
+          name: bucket?.label ?? k,
+          value: v,
+          fill: bucket?.fill ?? "#94a3b8",
+        };
+      })
     : [];
 
   return (
@@ -395,7 +404,7 @@ export default function Dashboard() {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm">Data Quality</CardTitle>
               <CardDescription>
-                Avg score: {quality ? Math.round((quality.avg_quality_score ?? 0) * 100) : "—"}
+                Avg score: {quality ? Math.round(quality.average_quality_score ?? 0) : "—"}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">

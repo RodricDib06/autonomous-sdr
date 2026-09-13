@@ -24,6 +24,46 @@ Universal Webhook               PostgreSQL + pgvector + Redis
 
 ---
 
+## What it looks like
+
+**Every claim traced to its source.** Before a draft can send, each factual sentence
+is matched to the research snippet that supports it. Anything the model invented is
+flagged, so the reviewer fixes it instead of the prospect finding it.
+
+![Approval queue with the Fact Check panel — two claims verified against a web-search source, one flagged as unsupported](docs/screenshots/approvals-fact-check.png)
+
+**Hand the agent a quota; it plans and explains itself.** The campaign agent reads its
+own metrics, diagnoses why it is behind pace, and proposes strategy changes from a
+fixed, validated action vocabulary — waiting for approval when the strategy dial says so.
+
+![Campaigns page showing pace against quota, sourcing runs with quality-gate rejections, and a pending agent plan with its diagnosis](docs/screenshots/campaign-agent.png)
+
+**Argue with your own data.** Upload last quarter's closed-won/lost export and the
+qualifier re-scores every row, reporting recall, precision, lift, and per-decile
+calibration against what actually closed.
+
+![Backtest calibration report — hot recall, precision, lift over base win rate, verdict-vs-reality matrix, and a calibration chart](docs/screenshots/backtest-calibration.png)
+
+**Ten agents, and the receipts for each.** Per-lead execution traces with per-node
+status and timing, streamed live over SSE while a lead is processed.
+
+![Pipeline page showing the 10-node LangGraph state machine and a per-lead agent execution log with timings](docs/screenshots/pipeline.png)
+
+<details>
+<summary>More screens — dashboard, leads, analytics, reply inbox</summary>
+
+![Dashboard with lead KPIs, estimated pipeline value, outreach rates, and the revenue funnel by conversion stage](docs/screenshots/dashboard.png)
+![Lead table with verdict and BANT filters](docs/screenshots/leads.png)
+![Analytics with the outreach funnel, BANT weights, and ROI panel](docs/screenshots/analytics.png)
+![Inbox of classified inbound replies with suggested actions](docs/screenshots/inbox.png)
+
+</details>
+
+> Screens are captured from the seeded demo org — `make demo-seed`, then
+> `cd frontend && npm run screenshots`.
+
+---
+
 ## What this demonstrates
 
 | Concept | Implementation |
@@ -154,7 +194,15 @@ python -m app.worker.lead_worker
 cd frontend && npm install && npm run dev
 ```
 
-Open `http://localhost:5173` — login with `admin@autonomoussdr.com` / `changeme123`.
+Open `http://localhost:3000` — login with `admin@autonomoussdr.com` / `changeme123`.
+(The Vite dev server runs on 3000 and proxies the API; port 5173 is the
+nginx-served container from Docker Compose.)
+
+### 4. Seed the demo dataset (optional)
+
+```bash
+make demo-seed     # leads + outreach, then campaigns, approvals, backtest, prospecting
+```
 
 ---
 
@@ -293,19 +341,26 @@ Full interactive docs: `http://localhost:8000/docs`
 ## Testing
 
 ```bash
-make test           # 331 tests, all passing
+make test           # 499 backend tests, all passing
 make lint           # ruff check
 make fmt            # ruff format
+
+cd frontend && npm test -- --run    # 483 frontend tests (vitest + MSW)
 ```
 
-Test coverage:
-- Auth (register, login, refresh, RBAC, API keys)
+Backend coverage (499 tests):
+- Auth (register, login, refresh, RBAC, API keys) and multi-tenancy isolation
 - Ingest (webhook secret, all 5 channels, universal webhook field detection, job status)
-- Enrichment (synthetic, hunter, deduplication)
+- Enrichment (synthetic, hunter, deduplication) and email verification
 - A/B testing (chi-square approximation, event recording, winner promotion)
-- Intent scoring (all signal rules, edge cases)
-- Graph routing (all conditional edges)
-- Export, batch, CSV import, data quality, Slack notifier, outreach agent
+- Intent scoring (all signal rules, edge cases); graph routing (all conditional edges)
+- Campaigns, autonomous prospecting, reply intelligence, bidirectional CRM sync
+- Provenance matching, backtest calibration, OAuth mailboxes, approvals, compliance, GDPR
+- Export, batch, CSV import, data quality, Slack notifier, outreach agent, ROI, LLM telemetry
+
+Frontend coverage (483 tests): component and page tests with mocked API boundaries
+(MSW), store logic, and utility units. A separate integration suite
+(`tests_integration/`) runs against real Postgres and Redis in CI.
 
 ---
 
@@ -348,50 +403,68 @@ GROQ_API_KEY   (optional — free at console.groq.com)
 app/
 ├── agents/
 │   ├── graph.py                 # LangGraph state machine (10 nodes)
+│   ├── campaign_agent.py        # Goal-directed planner — constrained action vocabulary
 │   ├── research_agent.py        # ReAct loop — Tavily + DuckDuckGo tools
 │   ├── orchestrator_agent.py    # Deduplication, completeness, priority
 │   ├── enrichment_agent.py      # Enrichment dispatch + Crunchbase signals
 │   ├── analysis_agent.py        # LLM BANT qualification
 │   ├── validator_agent.py       # LLM-as-judge consistency check
+│   ├── debate_agent.py          # Adversarial for/against/arbiter qualification
+│   ├── email_judge_agent.py     # Pre-send draft critique
+│   ├── objection_handler.py     # Objection → counter-angle drafting
+│   ├── pre_call_brief_agent.py  # Meeting prep brief generation
 │   ├── outreach_agent.py        # A/B sequences + SMTP delivery
 │   ├── booking_agent.py         # Cal.com booking link + Slack alert
 │   └── conversational_agent.py  # Multi-turn replies (SMS / LinkedIn / email)
-├── services/
-│   ├── scheduler.py             # APScheduler — auto-requeue + metrics refresh
-│   ├── rate_limiter.py          # slowapi limiter instance
+├── services/                    # ~50 modules — the ones worth knowing:
+│   ├── provenance.py            # Claim → source-snippet matching for generated emails
+│   ├── backtest.py              # Historical CRM replay + calibration report
+│   ├── reply_classifier.py      # Deterministic-first inbound reply classification
+│   ├── campaign_metrics.py      # Pure-SQL pace/progress/segment performance
+│   ├── email_verification.py    # Syntax, disposable, role, MX, SMTP RCPT gate
+│   ├── bounce_service.py        # RFC 3464 DSN parsing → suppression
+│   ├── oauth_mailbox.py         # Gmail API + MS Graph tokens (encrypted, auto-refresh)
+│   ├── hubspot_sync.py          # Bidirectional CRM: push verdicts, ingest outcomes
+│   ├── scheduler.py             # APScheduler — auto-requeue, Redis SET NX EX locks
 │   ├── intent_scoring.py        # Buyer intent heuristics (10+ rules)
 │   ├── ab_testing.py            # Chi-square A/B significance test
+│   ├── bandit.py                # Thompson sampling over sequence variants
 │   ├── optimization_loop.py     # BANT weight self-optimization
 │   ├── embedding_service.py     # pgvector embeddings + semantic search
-│   ├── crm_sync.py              # HubSpot / Salesforce / Pipedrive adapters
-│   ├── memory_service.py        # Conversation history + LLM summarization
-│   └── enrichment/
-│       ├── synthetic.py         # Heuristic enrichment (zero API, default)
-│       ├── hunter.py            # Hunter.io domain lookup
-│       ├── pdl.py               # People Data Labs person API
-│       └── crunchbase.py        # Crunchbase funding signals
-├── routers/
-│   └── ingest.py                # 5 channel webhooks + universal + job status
+│   ├── llm_tracker.py           # Per-call token/cost/latency metering
+│   ├── compliance.py            # Suppression, unsubscribe, opt-out detection
+│   ├── tenancy.py               # Org scoping + per-org settings
+│   ├── enrichment/              # synthetic · hunter · pdl · crunchbase
+│   └── prospecting/             # synthetic · pdl person search + sourcing pipeline
+├── routers/                     # ingest, auth, approvals, campaigns, prospecting,
+│                                # sequences, mailboxes, backtests, crm, compliance,
+│                                # gdpr, ai_ops
 ├── worker/
 │   └── lead_worker.py           # LangGraph worker (concurrency + watchdog)
 ├── logging_config.py            # structlog — JSON prod / coloured dev
 ├── metrics.py                   # Prometheus counters + histograms
-└── main.py                      # FastAPI app, middleware, all REST endpoints
+└── main.py                      # FastAPI app, middleware, legacy REST endpoints
 
-alembic/
-├── env.py                       # Alembic environment — reads DATABASE_URL from settings
-└── versions/
-    └── 0001_initial_schema.py   # Baseline migration (replaces all old migration scripts)
+alembic/versions/                # 15 migrations, 0001 → 0015
 
 frontend/src/pages/
 ├── Dashboard.tsx                # KPI cards, pipeline funnel, hot leads feed
 ├── Pipeline.tsx                 # Graph topology + live SSE stream per lead
+├── Campaigns.tsx                # Goal, pace, agent diagnosis + plan approval
+├── Approvals.tsx                # Draft queue with Fact Check provenance panel
+├── Backtests.tsx                # Upload CRM export → calibration report
+├── Inbox.tsx                    # Classified replies + suggested actions
+├── Signals.tsx                  # Buyer intent + trigger feed
+├── Sequences.tsx                # Step editor, variants, A/B state
+├── ICP.tsx                      # ICP builder + lookalike scoring
 ├── ABTests.tsx                  # A/B variant comparison + BANT optimization
-├── Analytics.tsx                # Outreach funnel, BANT weights, industry breakdown
-├── Leads.tsx                    # Lead table with verdict/BANT filters
-└── Settings.tsx                 # Slack, SMTP, API key management
+├── Analytics.tsx                # Outreach funnel, BANT weights, ROI panel
+├── Leads.tsx                    # Lead table + 5-tab detail drawer
+├── Import.tsx · Users.tsx · Settings.tsx · Login.tsx
 
-tests/                           # 331 tests — pytest + unittest.mock
+tests/                           # 499 backend tests — pytest + unittest.mock
+tests_integration/               # real Postgres + Redis suite (CI)
+frontend/src/__tests__/          # 483 frontend tests — vitest + MSW
 ```
 
 ---

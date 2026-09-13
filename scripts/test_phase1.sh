@@ -138,5 +138,5 @@ fi
 echo ""
 echo -e "${GREEN}✅ Phase 1 Feature Tests Complete!${NC}"
 echo ""
-echo "📚 Documentation: See PHASE1_FEATURES.md for detailed feature descriptions"
+echo "📚 Documentation: See README.md for detailed feature descriptions"
 echo "📝 Sample CSV: See sample_leads.csv for import testing"

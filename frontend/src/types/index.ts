@@ -143,13 +143,16 @@ export interface ImportResult {
 
 export interface QualityReport {
   total_leads: number;
-  avg_quality_score: number;
-  avg_completeness_score: number;
+  scored_leads: number;
+  unscored_leads: number;
+  // Already on a 0-100 scale — do not rescale for display.
+  average_quality_score: number;
+  average_completeness_score: number;
   quality_distribution: {
-    excellent: number;
-    good: number;
-    fair: number;
-    poor: number;
+    excellent_80_100: number;
+    good_60_80: number;
+    fair_40_60: number;
+    poor_0_40: number;
   };
 }
 

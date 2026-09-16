@@ -832,8 +832,26 @@ export const handlers = [
   ),
 
   // ── Health ─────────────────────────────────────────────────────────────────
+  http.get(`${API_BASE_URL}/analytics/funnel`, () =>
+    HttpResponse.json({
+      acv: 25000,
+      lost: 10,
+      total_active: 155,
+      win_rate: 0.5,
+      stages: [
+        { name: 'unqualified', label: 'Unqualified', count: 62, estimated_value: 77500, multiplier: 0.05, conversion_from_prev: null },
+        { name: 'qualified', label: 'Qualified', count: 45, estimated_value: 225000, multiplier: 0.2, conversion_from_prev: 0.73 },
+        { name: 'contacted', label: 'Contacted', count: 31, estimated_value: 271250, multiplier: 0.35, conversion_from_prev: 0.69 },
+        { name: 'scheduled', label: 'Scheduled', count: 17, estimated_value: 276250, multiplier: 0.65, conversion_from_prev: 0.55 },
+        { name: 'won', label: 'Won', count: 10, estimated_value: 250000, multiplier: 1.0, conversion_from_prev: 0.59 },
+      ],
+    })
+  ),
+
   http.get(`${API_BASE_URL}/health`, () =>
-    HttpResponse.json({ status: 'healthy', service: 'autonomous-sdr', version: '1.0.0', redis: 'ok', worker_active: true, worker_last_seen: new Date().toISOString() })
+    HttpResponse.json({ status: 'healthy', service: 'autonomous-sdr', version: '1.0.0',
+      ai_provider: 'groq', enrichment_provider: 'synthetic', redis: 'ok',
+      worker_active: true, worker_last_seen: new Date().toISOString() })
   ),
 ];
 
@@ -1071,6 +1089,7 @@ const mockImportHistory = [
 ];
 
 export const mockICP = {
+  configured: true,
   industries: ['SaaS', 'FinTech'],
   seniority_levels: ['VP', 'C-Level'],
   excluded_industries: ['Government'],

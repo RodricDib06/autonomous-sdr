@@ -1,0 +1,272 @@
+{
+  "GET /ab-tests/results": {
+    "p_value": "float",
+    "sample_size": "int",
+    "significant": "bool",
+    "variants": [
+      {
+        "conversion_rate": "float",
+        "conversions": "int",
+        "emails_sent": "int",
+        "open_rate": "float",
+        "opens": "int",
+        "replies": "int",
+        "reply_rate": "float",
+        "sequence_id": "str",
+        "sequence_name": "str",
+        "variant": "str"
+      }
+    ],
+    "winner": "NoneType"
+  },
+  "GET /analytics/funnel": {
+    "acv": "float",
+    "lost": "int",
+    "stages": [
+      {
+        "conversion_from_prev": "NoneType",
+        "count": "int",
+        "estimated_value": "int",
+        "label": "str",
+        "multiplier": "float",
+        "name": "str"
+      }
+    ],
+    "total_active": "int",
+    "win_rate": "float"
+  },
+  "GET /analytics/roi": {
+    "activity": {
+      "conversions": "int",
+      "emails_sent": "int",
+      "hot_leads": "int",
+      "leads_processed": "int",
+      "llm_cost_usd": "float",
+      "meetings_booked": "int"
+    },
+    "assumptions": {
+      "acv_usd": "float",
+      "human_sdr_leads_per_year": "int",
+      "sdr_annual_cost_usd": "float"
+    },
+    "projections": {
+      "annualized_lead_volume": "int",
+      "pipeline_value_usd": "float",
+      "projected_annual_ai_cost_usd": "float",
+      "projected_annual_human_cost_usd": "float",
+      "projected_annual_savings_usd": "float"
+    },
+    "unit_economics": {
+      "ai_cost_per_lead_usd": "float",
+      "cost_per_hot_lead_usd": "float",
+      "cost_per_meeting_usd": "float",
+      "human_cost_per_lead_usd": "float",
+      "savings_multiple": "float"
+    },
+    "window_days": "int"
+  },
+  "GET /backtests": {
+    "runs": [
+      {
+        "created_at": "str",
+        "filename": "str",
+        "id": "str",
+        "skipped_rows": "int",
+        "status": "str",
+        "total_rows": "int"
+      }
+    ],
+    "total": "int"
+  },
+  "GET /campaigns": {
+    "campaigns": [
+      {
+        "constraints": {
+          "max_bounce_rate": "...",
+          "max_daily_sends": "...",
+          "max_monthly_llm_usd": "...",
+          "segments": "..."
+        },
+        "created_at": "str",
+        "goal_target": "int",
+        "goal_type": "str",
+        "id": "str",
+        "name": "str",
+        "pace": {
+          "actual": "...",
+          "elapsed_weekdays": "...",
+          "expected_by_now": "...",
+          "pace_ratio": "...",
+          "projected_end_total": "...",
+          "total_weekdays": "..."
+        },
+        "period_end": "str",
+        "period_start": "str",
+        "status": "str"
+      }
+    ],
+    "total": "int"
+  },
+  "GET /health": {
+    "ai_provider": "str",
+    "enrichment_provider": "str",
+    "redis": "str",
+    "service": "str",
+    "status": "str",
+    "version": "str",
+    "worker_active": "bool",
+    "worker_last_seen": "str"
+  },
+  "GET /icp": {
+    "configured": "bool",
+    "excluded_industries": [],
+    "industries": [],
+    "max_employees": "NoneType",
+    "min_employees": "NoneType",
+    "seniority_levels": [],
+    "updated_at": "NoneType",
+    "updated_by_id": "NoneType"
+  },
+  "GET /leads/hot": {
+    "count": "int",
+    "hot_leads": [
+      {
+        "company": "str",
+        "confidence": "float",
+        "email": "str",
+        "id": "str",
+        "industry": "str",
+        "job_title": "str",
+        "name": "str",
+        "reasoning": "str",
+        "seniority": "str"
+      }
+    ]
+  },
+  "GET /leads/import-history": {
+    "count": "int",
+    "imports": []
+  },
+  "GET /leads/quality-report": {
+    "average_completeness_score": "float",
+    "average_quality_score": "float",
+    "quality_distribution": {
+      "excellent_80_100": "int",
+      "fair_40_60": "int",
+      "good_60_80": "int",
+      "poor_0_40": "int"
+    },
+    "scored_leads": "int",
+    "total_leads": "int",
+    "unscored_leads": "int"
+  },
+  "GET /leads/stats": {
+    "completed": "int",
+    "failed": "int",
+    "processing": "int",
+    "success_rate": "float",
+    "total_leads": "int",
+    "verdict_breakdown": {
+      "cold": "int",
+      "hot": "int",
+      "warm": "int"
+    }
+  },
+  "GET /leads/trend": {
+    "data": [
+      {
+        "cold": "int",
+        "day": "str",
+        "hot": "int",
+        "total": "int",
+        "warm": "int"
+      }
+    ],
+    "days": "int"
+  },
+  "GET /optimization/weights": {
+    "authority": "float",
+    "budget": "float",
+    "need": "float",
+    "timeline": "float"
+  },
+  "GET /outreach/approvals": {
+    "emails": [
+      {
+        "body": "str",
+        "claims": {
+          "claims": "...",
+          "grounding_score": "...",
+          "sources": "...",
+          "unverified": "...",
+          "verified": "..."
+        },
+        "company": "str",
+        "created_at": "str",
+        "id": "str",
+        "lead_email": "str",
+        "lead_id": "str",
+        "lead_name": "str",
+        "quality_score": "NoneType",
+        "scheduled_at": "str",
+        "step_number": "int",
+        "subject": "str"
+      }
+    ],
+    "mode": "str",
+    "total": "int"
+  },
+  "GET /outreach/autonomy": {
+    "mode": "str",
+    "modes": [
+      "str"
+    ],
+    "pending_count": "int"
+  },
+  "GET /outreach/stats": {
+    "emails_by_status": {
+      "failed": "int",
+      "opened": "int",
+      "replied": "int",
+      "scheduled": "int",
+      "sent": "int"
+    },
+    "open_rate": "float",
+    "reply_rate": "float",
+    "total_opened": "int",
+    "total_replied": "int",
+    "total_sent": "int"
+  },
+  "GET /prospecting/runs": {
+    "budget": {
+      "accepted_today": "int",
+      "max_per_day": "int"
+    },
+    "runs": [
+      {
+        "accepted": "int",
+        "campaign_id": "str",
+        "cost_usd": "float",
+        "created_at": "str",
+        "criteria": {
+          "company_size_max": "...",
+          "company_size_min": "...",
+          "industry": "..."
+        },
+        "dry_run": "bool",
+        "found": "int",
+        "id": "str",
+        "provider": "str",
+        "rejected": {
+          "budget": "...",
+          "duplicate": "...",
+          "low_score": "...",
+          "suppressed": "...",
+          "undeliverable": "..."
+        },
+        "requested": "int"
+      }
+    ],
+    "total": "int"
+  }
+}

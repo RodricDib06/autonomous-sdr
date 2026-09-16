@@ -1,12 +1,22 @@
 import '@testing-library/jest-dom';
-import { afterEach, afterAll, beforeAll, vi } from 'vitest';
+import { afterEach, afterAll, beforeAll, beforeEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
 import { server } from './mocks/server';
+import { installNavigationGuard, resetNavigationGuard } from './navigation-guard';
+
+// Record full-page navigations so tests can assert on them, instead of
+// letting jsdom's warning be filtered out as noise.
+installNavigationGuard();
 
 // Start MSW server
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 
 // Reset handlers after each test
+// Each test starts with a clean record of attempted navigations.
+beforeEach(() => {
+  resetNavigationGuard();
+});
+
 afterEach(() => {
   cleanup();
   server.resetHandlers();
@@ -75,15 +85,14 @@ globalThis.EventSource = class MockEventSource {
   dispatchEvent() { return true; }
 } as unknown as typeof EventSource;
 
-// Suppress console errors in tests (optional)
+// Keep the legacy ReactDOM.render filter, but never again silence navigation:
+// "Not implemented: navigation" was a real bug reporting itself on every run,
+// and suppressing it is what let a broken sign-in ship. installNavigationGuard
+// now turns those attempts into failures instead.
 const originalError = console.error;
 beforeAll(() => {
   console.error = (...args: unknown[]) => {
-    if (
-      typeof args[0] === 'string' &&
-      (args[0].includes('Not implemented: navigation') ||
-        args[0].includes('Warning: ReactDOM.render'))
-    ) {
+    if (typeof args[0] === 'string' && args[0].includes('Warning: ReactDOM.render')) {
       return;
     }
     originalError.call(console, ...args);

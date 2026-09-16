@@ -7,6 +7,7 @@ import Settings from '../../pages/Settings';
 import { useAuthStore } from '../../store/authStore';
 import { mockUser } from '../mocks/handlers';
 import { server } from '../mocks/server';
+import { getNavigationAttempts } from '../navigation-guard';
 
 beforeEach(() => {
   useAuthStore.setState({ user: mockUser, accessToken: 'tok', refreshToken: 'ref' });
@@ -655,16 +656,16 @@ describe('Settings — OAuth mailboxes', () => {
   });
 
   it('redirects to the provider consent screen on connect', async () => {
-    const assign = vi.fn();
-    vi.stubGlobal('location', { ...window.location, assign });
-
+    // Leaving for an OAuth consent screen is a real full-page navigation.
+    // Assert it through the shared recorder rather than stubbing
+    // window.location locally, which would hide it from everything else.
     const user = userEvent.setup();
     renderWithProviders(<Settings />);
     await waitFor(() => screen.getByRole('button', { name: /connect gmail/i }));
 
     await user.click(screen.getByRole('button', { name: /connect gmail/i }));
     await waitFor(() => {
-      expect(assign).toHaveBeenCalledWith('https://accounts.example.com/consent?provider=gmail');
+      expect(getNavigationAttempts()).toContain('https://accounts.example.com/consent?provider=gmail');
     });
   });
 
@@ -775,16 +776,13 @@ describe('Settings — CRM sync (HubSpot)', () => {
         })
       )
     );
-    const assign = vi.fn();
-    vi.stubGlobal('location', { ...window.location, assign });
-
     const user = userEvent.setup();
     renderWithProviders(<Settings />);
     await waitFor(() => screen.getByRole('button', { name: /connect hubspot/i }));
 
     await user.click(screen.getByRole('button', { name: /connect hubspot/i }));
     await waitFor(() => {
-      expect(assign).toHaveBeenCalledWith('https://app.hubspot.com/oauth/authorize?client_id=x');
+      expect(getNavigationAttempts()).toContain('https://app.hubspot.com/oauth/authorize?client_id=x');
     });
   });
 

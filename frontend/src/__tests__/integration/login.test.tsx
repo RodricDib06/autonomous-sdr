@@ -6,6 +6,7 @@ import { renderWithProviders } from '../utils';
 import Login from '../../pages/Login';
 import App from '../../App';
 import { authApi } from '../../lib/api';
+import { getNavigationAttempts } from '../navigation-guard';
 import { server } from '../mocks/server';
 
 afterEach(() => {
@@ -163,22 +164,11 @@ describe('401 handling on the sign-in request', () => {
       )
     );
 
-    const realLocation = window.location;
-    const assigned: string[] = [];
-    Object.defineProperty(window, 'location', {
-      configurable: true,
-      value: Object.defineProperty({ ...realLocation }, 'href', {
-        get: () => realLocation.href,
-        set: (v: string) => { assigned.push(v); },
-      }),
-    });
+    localStorage.removeItem('refresh_token');
+    await expect(authApi.login('admin@autonomoussdr.com', 'wrong')).rejects.toBeDefined();
 
-    try {
-      localStorage.removeItem('refresh_token');
-      await expect(authApi.login('admin@autonomoussdr.com', 'wrong')).rejects.toBeDefined();
-      expect(assigned).toEqual([]);
-    } finally {
-      Object.defineProperty(window, 'location', { configurable: true, value: realLocation });
-    }
+    // The shared guard records any attempted full-page navigation; a rejected
+    // sign-in must not trigger the session-expiry reload.
+    expect(getNavigationAttempts()).toEqual([]);
   });
 });

@@ -431,6 +431,22 @@ service there (`python -m app.worker.lead_worker`) and leave
    — or one, with `RUN_WORKER_IN_PROCESS=true`
 4. `alembic upgrade head` before first start
 
+### Troubleshooting a failed deploy
+
+Nearly every failed deploy of this app is a missing data service, not a broken
+build. Check the platform's **deploy** log (not the build log) and match the
+first error:
+
+| Log line | Cause | Fix |
+|---|---|---|
+| `RuntimeError: DATABASE_URL is not set` | No Postgres attached. The app raises on import, so the container exits before serving anything. | Provision Postgres and wire `DATABASE_URL` into the API service |
+| `startup.redis status=degraded` | Redis unreachable | Provision Redis/Key Value and wire `REDIS_URL`. The app now boots anyway and reports `"status": "degraded"` on `/health` |
+| `connection refused` / healthcheck timeout | Bound to the wrong port | Don't override the Docker `CMD` with an exec-form start command — `$PORT` won't expand. The image already binds `${PORT:-8000}` |
+| `alembic upgrade head` fails in pre-deploy | Database reachable but migration failed | Read the alembic error; a fresh database should replay 0001→0015 cleanly |
+
+`curl https://<your-api>/health` is the fastest triage once anything is
+serving: it returns 200 even when degraded, and names the failing dependency.
+
 ---
 
 ## Project structure

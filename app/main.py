@@ -55,20 +55,30 @@ async def lifespan(app: FastAPI):
         if not _testing:
             create_all_tables()
 
-        # Validate Redis connection (skipped in test mode)
+        # Validate Redis connection (skipped in test mode).
+        #
+        # Degraded, not fatal. Redis backs the job queue, SSE pub/sub, and
+        # caching, but auth, the dashboard, and every read path run off
+        # Postgres alone. Exiting here used to take the whole container down
+        # before it could answer /health, which on a health-checked PaaS
+        # turns one unset variable into "deploy failed" with no HTTP response
+        # to diagnose from. Boot, serve, and report it on /health instead.
+        app.state.redis_ok = False
         if not _testing:
             try:
                 redis = get_redis()
                 redis.ping()
+                app.state.redis_ok = True
                 log.info("startup.redis", status="ok")
             except Exception as e:
                 log.error(
-                    "startup.redis", status="failed", error=str(e),
-                    hint="REDIS_URL is unreachable. On Railway: add a Redis service "
-                         "and set REDIS_URL=${{Redis.REDIS_URL}} on this service. "
+                    "startup.redis", status="degraded", error=str(e),
+                    hint="REDIS_URL is unreachable — ingestion and live pipeline "
+                         "streaming will fail until it is set. On Render: the "
+                         "blueprint wires it from the keyvalue service. On Railway: "
+                         "add a Redis service and set REDIS_URL=${{Redis.REDIS_URL}}. "
                          "Locally: docker compose up -d redis.",
                 )
-                raise
 
         # Validate AI provider connection (optional — skipped in test mode)
         if not _testing:
@@ -229,14 +239,32 @@ slack_webhook_url = None
 
 @app.get("/health")
 def health_check():
+    """
+    Liveness plus dependency state.
+
+    Always 200 so a PaaS health check can distinguish "running but
+    misconfigured" from "not running at all" — `status` carries the
+    difference, and `redis` names the dependency when it is the problem.
+    """
     from app.services.queue_service import get_worker_status
     worker = get_worker_status()
+
+    redis_ok = getattr(app.state, "redis_ok", False)
+    # Re-check on read: Redis may have come up after boot (or gone away).
+    try:
+        get_redis().ping()
+        redis_ok = True
+    except Exception:
+        redis_ok = False
+    app.state.redis_ok = redis_ok
+
     return {
-        "status": "healthy",
+        "status": "healthy" if redis_ok else "degraded",
         "service": "AutonomousSDR",
         "version": "1.0.0",
         "ai_provider": settings.AI_PROVIDER,
         "enrichment_provider": settings.ENRICHMENT_PROVIDER,
+        "redis": "ok" if redis_ok else "unavailable",
         "worker_active": worker["worker_active"],
         "worker_last_seen": worker["worker_last_seen"],
     }

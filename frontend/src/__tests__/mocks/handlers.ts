@@ -833,7 +833,7 @@ export const handlers = [
 
   // ── Health ─────────────────────────────────────────────────────────────────
   http.get(`${API_BASE_URL}/health`, () =>
-    HttpResponse.json({ status: 'healthy', service: 'autonomous-sdr', version: '1.0.0', worker_active: true, worker_last_seen: new Date().toISOString() })
+    HttpResponse.json({ status: 'healthy', service: 'autonomous-sdr', version: '1.0.0', redis: 'ok', worker_active: true, worker_last_seen: new Date().toISOString() })
   ),
 ];
 

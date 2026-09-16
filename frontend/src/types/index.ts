@@ -157,9 +157,14 @@ export interface QualityReport {
 }
 
 export interface HealthStatus {
+  // "healthy" when every dependency is reachable, "degraded" when the API is
+  // serving but something it needs (currently Redis) is not.
   status: string;
   service: string;
   version: string;
+  ai_provider?: string;
+  enrichment_provider?: string;
+  redis?: "ok" | "unavailable";
   worker_active: boolean;
   worker_last_seen: string | null;
 }

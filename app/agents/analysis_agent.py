@@ -4,7 +4,7 @@ import time
 from sqlalchemy.orm import Session
 from app.agents.base import BaseAgent
 from app.database import crud
-from app.services.ollama_client import OllamaClient  # swap for ClaudeClient via app/services/providers.py
+from app.services.providers import get_ai_client
 from app.schemas.verdict import AnalysisOutput, BANTScores
 from app.config import settings
 
@@ -104,7 +104,13 @@ class AnalysisAgent(BaseAgent):
     name = "analysis"
 
     def __init__(self):
-        self._ollama = OllamaClient()  # production: replace with get_ai_client() from app.services.providers
+        # Resolve through the provider factory so AI_PROVIDER is honoured.
+        # Hardcoding OllamaClient here meant every deployment tried
+        # localhost:11434 regardless of configuration: in production the
+        # validator failed outright and leads finished with no verdict.
+        # The factory also wraps the client in TrackedAIClient, which is
+        # what records tokens, cost, and latency per call.
+        self._llm = get_ai_client()
         self.logger = logging.getLogger(__name__)
 
     def run(self, db: Session, lead_id: str, input_data: dict) -> dict:
@@ -172,7 +178,7 @@ class AnalysisAgent(BaseAgent):
         last_error = None
         for attempt in range(max_attempts):
             try:
-                return self._ollama.generate(prompt)
+                return self._llm.generate(prompt)
             except Exception as e:
                 last_error = e
                 if attempt < max_attempts - 1:

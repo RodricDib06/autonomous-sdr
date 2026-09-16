@@ -1,9 +1,10 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent, render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { renderWithProviders } from '../utils';
 import Login from '../../pages/Login';
+import App from '../../App';
 import { server } from '../mocks/server';
 
 afterEach(() => {
@@ -121,5 +122,30 @@ describe('Login page', () => {
     await waitFor(() => {
       expect(screen.getByText(/Invalid credentials/i)).toBeInTheDocument();
     }, { timeout: 3000 });
+  });
+});
+
+describe('Login feedback in the real App tree', () => {
+  // The shared test wrapper mounts its own <Toaster />, so every other test
+  // here sees toasts that production did not have: the Toaster used to live
+  // in Layout, which wraps only authenticated routes. A failed sign-in on
+  // /login therefore rendered nothing at all. Render App itself so the
+  // assertion depends on where the Toaster is actually mounted.
+  it('shows an error when credentials are rejected', async () => {
+    server.use(
+      http.post('http://localhost:8000/auth/login', () =>
+        HttpResponse.json({ detail: 'Invalid credentials' }, { status: 401 })
+      )
+    );
+
+    window.history.pushState({}, '', '/login');
+    render(<App />);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('Email'), 'admin@autonomoussdr.com');
+    await user.type(screen.getByLabelText('Password'), 'wrong-password');
+    await user.click(screen.getByRole('button', { name: /sign in/i }));
+
+    expect(await screen.findByText(/invalid credentials/i, {}, { timeout: 5000 })).toBeInTheDocument();
   });
 });

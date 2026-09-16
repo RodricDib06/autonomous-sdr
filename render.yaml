@@ -19,15 +19,34 @@
 # ── Free-tier caveats worth knowing before you demo ────────────────────────
 #   • Free web services sleep after 15 min idle; the next request takes ~1 min
 #     to wake. Fine for a portfolio link, not for a live demo you're watching.
-#   • Free Postgres is deleted 30 days after creation. Re-seed or upgrade.
+#   • Render's free Postgres is DELETED 30 days after creation. For a link
+#     meant to outlive that, use Neon's free tier instead — see the databases
+#     block below. Neon never expires and supports pgvector.
 #   • Free Key Value is in-memory only — queued leads are lost on restart.
 #     The scheduler re-queues stale pending leads every 5 min, so the pipeline
 #     recovers on its own, but in-flight work is not durable.
+#   • Do NOT swap Key Value for a per-command metered Redis (Upstash free is
+#     500k commands/month): the worker polls continuously and issues ~71
+#     commands/minute while completely idle — roughly 3M/month, which exhausts
+#     that allowance in about five days. Render's Key Value is not metered
+#     per command, so the polling loop is free.
 
+# Render-managed Postgres: zero setup, but the free plan is deleted 30 days
+# after creation. Comment this block out and use Neon (below) for anything
+# that needs to outlast a month.
 databases:
   - name: autonomoussdr-db
-    plan: free              # 1 GB, expires 30 days after creation
+    plan: free              # 1 GB, DELETED 30 days after creation
     postgresMajorVersion: "16"
+
+# ── Neon instead of Render Postgres (recommended for a lasting demo) ───────
+# Neon's free tier is 0.5 GB, never expires, and supports pgvector.
+#   1. Create a project at neon.tech, copy the connection string
+#   2. Comment out the `databases:` block above
+#   3. In the API service below, replace the `fromDatabase` DATABASE_URL entry
+#      with:
+#        - key: DATABASE_URL
+#          sync: false        # paste the Neon connection string when prompted
 
 services:
   # ── Redis-compatible queue + cache ──────────────────────────────────────

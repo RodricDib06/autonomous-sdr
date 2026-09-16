@@ -396,8 +396,19 @@ Free-tier caveats worth knowing before you share the link:
 | Limit | Effect |
 |---|---|
 | Web services sleep after 15 min idle | First request takes ~1 min to wake |
-| Free Postgres deleted 30 days after creation | Re-seed, or upgrade the plan |
+| Render's free Postgres is **deleted 30 days** after creation | Use Neon instead (below) for a link meant to last |
 | Free Key Value is in-memory only | Queued leads lost on restart — the scheduler re-queues stale pending leads every 5 min, so the pipeline self-heals |
+
+**Use Neon for Postgres if the demo needs to outlive a month.** Neon's free
+tier is 0.5 GB, never expires, and supports pgvector. Comment out the
+`databases:` block in `render.yaml`, swap the API's `DATABASE_URL` entry to
+`sync: false`, and paste the Neon connection string when prompted.
+
+**Don't swap Key Value for a per-command metered Redis.** The worker polls
+continuously and issues **~71 commands/minute while completely idle** —
+about 3M/month (measured, not estimated). Upstash's free tier allows 500k
+commands/month, so it would be exhausted in roughly five days. Render's Key
+Value is not metered per command, so the polling loop costs nothing.
 
 `APP_BASE_URL` needs no configuration on Render: it falls back to
 `RENDER_EXTERNAL_URL`, so unsubscribe links, tracking pixels, and OAuth

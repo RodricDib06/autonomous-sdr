@@ -8,9 +8,11 @@ def _database_url() -> str:
     if not url:
         raise RuntimeError(
             "DATABASE_URL is not set. Point it at a Postgres instance, e.g. "
-            "postgresql://user:pass@host:5432/sdr_db. On Railway: add a "
-            "Postgres service and set DATABASE_URL=${{Postgres.DATABASE_URL}} "
-            "on this service. Locally: copy .env.example to .env."
+            "postgresql://user:pass@host:5432/sdr_db. On Render: the blueprint "
+            "wires it from the managed database, or paste a Neon connection "
+            "string. On Railway: add a Postgres service and set "
+            "DATABASE_URL=${{Postgres.DATABASE_URL}}. Locally: copy "
+            ".env.example to .env."
         )
     # Heroku/Railway-style URLs may use the deprecated postgres:// scheme,
     # which SQLAlchemy 2.x no longer accepts

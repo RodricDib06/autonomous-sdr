@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { Zap, Mail, Lock, ArrowRight, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { authApi } from "../lib/api";
+import { authApi, healthApi } from "../lib/api";
 import { useAuthStore } from "../store/authStore";
 import { apiErrorMessage } from "../lib/utils";
 
@@ -16,18 +17,43 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Free hosting tiers idle the API out; the first sign-in of the day pays a
+  // cold start of up to a minute. Without a word from the UI that reads as a
+  // dead button, so say what is happening once it is clearly slow.
+  const [waking, setWaking] = useState(false);
+
+  // Pre-warm the API. The static site is always up, so the moment someone
+  // lands on the login page we can start the backend's cold start in the
+  // background — by the time they've typed credentials it is usually awake.
+  // Fire-and-forget: a failure here means nothing on its own.
+  useEffect(() => {
+    const ac = new AbortController();
+    healthApi.check(ac.signal).catch(() => {});
+    return () => ac.abort();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    const wakeHint = setTimeout(() => setWaking(true), 4000);
     try {
       const data = await authApi.login(email, password);
       setAuth(data.user, data.access_token, data.refresh_token);
       toast.success(`Welcome back, ${data.user.email}`);
       navigate("/");
     } catch (err) {
-      toast.error(apiErrorMessage(err, "Invalid credentials"));
+      // A cold start that never completes is a network error, not a bad
+      // password — don't accuse the user of the wrong thing.
+      const offline =
+        axios.isAxiosError(err) && !err.response;
+      toast.error(
+        offline
+          ? "Couldn't reach the server. On free hosting it may still be waking up — try again in a moment."
+          : apiErrorMessage(err, "Invalid credentials")
+      );
     } finally {
+      clearTimeout(wakeHint);
+      setWaking(false);
       setLoading(false);
     }
   };
@@ -95,6 +121,12 @@ export default function Login() {
               Sign in
               <ArrowRight className="w-4 h-4" />
             </Button>
+
+            {waking && (
+              <p className="text-center text-xs text-muted-foreground animate-pulse">
+                Waking the server — free hosting sleeps when idle, this can take up to a minute.
+              </p>
+            )}
           </form>
 
           <p className="mt-6 text-center text-xs text-muted-foreground">

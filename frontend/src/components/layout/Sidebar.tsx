@@ -33,7 +33,8 @@ const adminItems = [
 function WorkerStatus() {
   const { data } = useQuery({
     queryKey: ["health"],
-    queryFn: healthApi.check,
+    // Hand React Query's signal through so the poll is cancelled on unmount.
+    queryFn: ({ signal }) => healthApi.check(signal),
     refetchInterval: 15_000,
     retry: false,
   });

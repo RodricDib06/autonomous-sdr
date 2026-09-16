@@ -274,7 +274,11 @@ export const decayApi = {
 
 // ── Health ─────────────────────────────────────────────────────────────────────
 export const healthApi = {
-  check: () => axios.get<HealthStatus>(`${BASE_URL}/health`).then((r) => r.data),
+  // `signal` lets a caller drop an in-flight probe on unmount — without it a
+  // fire-and-forget ping can settle after its component (or a test's
+  // environment) is gone, surfacing as a stray unhandled error.
+  check: (signal?: AbortSignal) =>
+    axios.get<HealthStatus>(`${BASE_URL}/health`, { signal }).then((r) => r.data),
 };
 
 // ── CRM push ──────────────────────────────────────────────────────────────────

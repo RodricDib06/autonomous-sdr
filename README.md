@@ -2,6 +2,9 @@
 
 **The self-hosted AI SDR you can run inside your own VPC.** Leads enter from six ingestion channels, flow through a **10-node LangGraph state machine** with a live **ReAct research agent**, and exit as hot/warm/cold verdicts — with personalized multi-step outreach, meeting bookings, CRM sync, and a self-optimizing BANT scoring loop. Zero paid API keys required to run; your data never leaves your infrastructure.
 
+**[Live demo](https://autonomoussdr-web.onrender.com)** — `admin@autonomoussdr.com` / `AutonomousDemo2026!`
+(free tier: the API sleeps after 15 min idle, so the first load can take ~60s)
+
 Built for the way companies actually adopt outbound AI:
 
 - **Trust ramp (autonomy dial)** — start in *draft-only*, graduate to *approve-each-email*, switch to *full auto* when the output has earned it. Inline-edit any draft before it sends.

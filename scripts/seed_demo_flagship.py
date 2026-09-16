@@ -321,6 +321,27 @@ def seed_approval_queue(db, limit: int = 12) -> None:
     )
 
 
+def _attach_orphan_leads_to_org(db, org_id: str | None) -> int:
+    """
+    Give leads an org when they have none, so campaign metrics can see them.
+
+    Campaigns are org-scoped: `segment_lead_ids` filters on `Lead.org_id`, and
+    every progress number (meetings, sends, replies, spend) is derived from the
+    lead ids that filter returns. `seed_demo_data.py` predates multi-tenancy and
+    writes leads with a NULL org, so on a *fresh* database the campaign card
+    renders 0/20 while the database plainly contains confirmed bookings — the
+    feature looks broken when it is only mis-scoped. Databases that already
+    went through the tenancy backfill never showed this.
+    """
+    if org_id is None:
+        return 0
+    orphans = db.query(Lead).filter(Lead.org_id.is_(None)).all()
+    for lead in orphans:
+        lead.org_id = org_id
+    db.commit()
+    return len(orphans)
+
+
 def _seed_llm_telemetry(db, campaign: Campaign) -> None:
     """
     Meter the LLM work the pipeline would have done inside the campaign window.
@@ -727,6 +748,9 @@ def main() -> None:
         user_id = user.id if user else None
 
         print("Seeding flagship demo data (campaigns, approvals, backtests, prospecting)...")
+        adopted = _attach_orphan_leads_to_org(db, org_id)
+        if adopted:
+            print(f"  tenancy: attached {adopted} orphaned leads to the default org")
         seed_backtest(db, org_id, user_id)
         seed_approval_queue(db)
         campaign = seed_campaign(db, org_id, user_id)

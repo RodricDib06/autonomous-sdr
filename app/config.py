@@ -1,5 +1,6 @@
+import os
 import secrets
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -58,6 +59,15 @@ class Settings(BaseSettings):
     # ── Performance ────────────────────────────────────────────────────────────
     MAX_CONCURRENT_LEADS: int = 3
     WORKER_BATCH_SIZE: int = 3
+
+    # Run the LangGraph worker inside the API process, on its own thread,
+    # instead of as a separate `python -m app.worker.lead_worker` process.
+    # Intended for single-instance hosts that charge for (or don't offer) a
+    # second always-on process — Render's free tier has no background worker.
+    # Leave false wherever the worker can be its own service: separate
+    # processes scale and fail independently, which is what you want in
+    # production.
+    RUN_WORKER_IN_PROCESS: bool = False
 
     # ── Auth — JWT ─────────────────────────────────────────────────────────────
     # Generate a stable key in production:
@@ -181,6 +191,26 @@ class Settings(BaseSettings):
 
     # ── Notifications ─────────────────────────────────────────────────────────
     SLACK_WEBHOOK_URL: str = ""
+
+    @model_validator(mode="after")
+    def _default_app_base_url(self):
+        """
+        Fall back to the host's own public URL when APP_BASE_URL is unset.
+
+        Unsubscribe links, tracking pixels, and OAuth callbacks are all built
+        from APP_BASE_URL; left empty they silently degrade (a sequence sends
+        without the RFC 8058 unsubscribe header). Render injects its public
+        URL into the environment, so on Render the value is inferable and
+        nobody has to paste a domain back into config after the first deploy.
+        """
+        if not self.APP_BASE_URL:
+            external = os.getenv("RENDER_EXTERNAL_URL")
+            if not external:
+                hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+                external = f"https://{hostname}" if hostname else ""
+            if external:
+                self.APP_BASE_URL = external.rstrip("/")
+        return self
 
 
 settings = Settings()

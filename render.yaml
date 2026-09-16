@@ -1,0 +1,140 @@
+# AutonomousSDR — Render Blueprint
+# Docs: https://render.com/docs/blueprint-spec
+#
+# Deploy:
+#   1. Push this repo to GitHub
+#   2. Render Dashboard → New → Blueprint → pick this repo
+#   3. Fill the prompted secrets (marked `sync: false` below)
+#
+# ── How this differs from the Railway setup ────────────────────────────────
+# Render has no free background-worker instance type, so this blueprint runs
+# the LangGraph worker *inside* the API process on its own thread
+# (RUN_WORKER_IN_PROCESS=true). One free web service does both jobs.
+#
+# On a paid plan, prefer a real worker service: uncomment the `worker` block
+# at the bottom and set RUN_WORKER_IN_PROCESS=false on the API. Separate
+# processes restart and scale independently, which is what you want once
+# anything depends on this.
+#
+# ── Free-tier caveats worth knowing before you demo ────────────────────────
+#   • Free web services sleep after 15 min idle; the next request takes ~1 min
+#     to wake. Fine for a portfolio link, not for a live demo you're watching.
+#   • Free Postgres is deleted 30 days after creation. Re-seed or upgrade.
+#   • Free Key Value is in-memory only — queued leads are lost on restart.
+#     The scheduler re-queues stale pending leads every 5 min, so the pipeline
+#     recovers on its own, but in-flight work is not durable.
+
+databases:
+  - name: autonomoussdr-db
+    plan: free              # 1 GB, expires 30 days after creation
+    postgresMajorVersion: "16"
+
+services:
+  # ── Redis-compatible queue + cache ──────────────────────────────────────
+  - type: keyvalue
+    name: autonomoussdr-redis
+    plan: free              # 25 MB, in-memory only
+    region: oregon
+    ipAllowList: []         # internal connections only
+    # A job queue must never silently drop jobs to reclaim memory.
+    maxmemoryPolicy: noeviction
+
+  # ── API (+ in-process LangGraph worker) ─────────────────────────────────
+  - type: web
+    name: autonomoussdr-api
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    # Runs before traffic shifts to the new deploy; a failure aborts it.
+    preDeployCommand: python scripts/render_predeploy.py
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: autonomoussdr-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: autonomoussdr-redis
+          type: keyvalue
+          property: connectionString
+
+      # Co-host the worker. Set to false if you add the worker service below.
+      - key: RUN_WORKER_IN_PROCESS
+        value: "true"
+
+      - key: APP_ENV
+        value: production
+      # Stable across deploys — tokens survive restarts.
+      - key: SECRET_KEY
+        generateValue: true
+
+      # Ollama is local-only; Groq's free tier is the sensible cloud default.
+      - key: AI_PROVIDER
+        value: groq
+      - key: ENRICHMENT_PROVIDER
+        value: synthetic
+      - key: GROQ_API_KEY
+        sync: false         # prompted once, at Blueprint creation
+
+      # First-boot admin. Change these from the defaults before going public.
+      - key: INITIAL_ADMIN_EMAIL
+        sync: false
+      - key: INITIAL_ADMIN_PASSWORD
+        sync: false
+
+      # Browser origin(s) allowed to call this API — your static site URL.
+      # Render can't expose another service's full https URL to a blueprint,
+      # so this is filled in after the first deploy assigns the domains.
+      - key: ALLOWED_ORIGINS
+        sync: false
+
+      # APP_BASE_URL is intentionally absent: app/config.py falls back to
+      # Render's own RENDER_EXTERNAL_URL, so unsubscribe links, tracking
+      # pixels, and OAuth callbacks resolve without pasting a domain back in.
+
+  # ── Frontend (static) ───────────────────────────────────────────────────
+  - type: web
+    name: autonomoussdr-web
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      # Baked in at build time; same reason as ALLOWED_ORIGINS above — paste
+      # the API's https URL when prompted (e.g. https://autonomoussdr-api.onrender.com)
+      - key: VITE_API_URL
+        sync: false
+    routes:
+      # SPA fallback: client-side routes must serve index.html, not 404.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+  # ── Dedicated worker (paid plans) ───────────────────────────────────────
+  # Uncomment, and set RUN_WORKER_IN_PROCESS=false on the API above.
+  #
+  # - type: worker
+  #   name: autonomoussdr-worker
+  #   runtime: docker
+  #   plan: starter           # no free instance type for workers
+  #   region: oregon
+  #   dockerfilePath: ./Dockerfile
+  #   dockerContext: .
+  #   dockerCommand: python -m app.worker.lead_worker
+  #   envVars:
+  #     - key: DATABASE_URL
+  #       fromDatabase:
+  #         name: autonomoussdr-db
+  #         property: connectionString
+  #     - key: REDIS_URL
+  #       fromService:
+  #         name: autonomoussdr-redis
+  #         type: keyvalue
+  #         property: connectionString
+  #     - key: AI_PROVIDER
+  #       value: groq
+  #     - key: GROQ_API_KEY
+  #       sync: false

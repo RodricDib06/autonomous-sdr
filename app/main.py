@@ -1,6 +1,7 @@
 import json
 import re
 import asyncio
+import threading
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -118,12 +119,38 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 log.warning("startup.scheduler", status="failed", error=str(e))
 
+        # Optionally co-host the LangGraph worker (RUN_WORKER_IN_PROCESS).
+        # It runs on its own thread with its own event loop: the queue pop is
+        # a synchronous, blocking Redis call, so sharing the API's loop would
+        # stall request handling for up to a second per idle poll.
+        worker_thread = None
+        worker_stop = threading.Event()
+        if not _testing and settings.RUN_WORKER_IN_PROCESS:
+            try:
+                from app.worker.lead_worker import run_worker
+
+                worker_thread = threading.Thread(
+                    target=run_worker,
+                    args=(worker_stop.is_set,),
+                    name="lead-worker",
+                    daemon=True,
+                )
+                worker_thread.start()
+                log.info("startup.worker", mode="in_process", status="ok")
+            except Exception as e:
+                log.warning("startup.worker", mode="in_process", status="failed", error=str(e))
+
         log.info("startup.ready", ai_provider=settings.AI_PROVIDER, enrichment_provider=settings.ENRICHMENT_PROVIDER)
         yield
 
         if scheduler and scheduler.running:
             scheduler.shutdown(wait=False)
             log.info("shutdown.scheduler")
+        if worker_thread:
+            worker_stop.set()
+            # One queue poll blocks for at most a second; give it a little room.
+            worker_thread.join(timeout=10)
+            log.info("shutdown.worker", stopped=not worker_thread.is_alive())
         log.info("shutdown")
     except Exception as e:
         log.critical("startup.failed", error=str(e))

@@ -16,6 +16,7 @@ the heartbeat, and stale-job recovery. All business logic lives in the graph.
 """
 
 import asyncio
+from collections.abc import Callable
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
@@ -137,7 +138,14 @@ def recover_stale_leads() -> int:
 # Main loop
 # ---------------------------------------------------------------------------
 
-async def run_worker_async() -> None:
+async def run_worker_async(should_stop: Callable[[], bool] | None = None) -> None:
+    """
+    Drain the lead queue until `should_stop()` returns True.
+
+    `should_stop` is None for the standalone process, which runs until it is
+    killed. The in-process mode (RUN_WORKER_IN_PROCESS) passes a predicate so
+    the loop can exit when the API shuts down instead of stranding a thread.
+    """
     create_all_tables()
     log.info(
         f"LangGraph worker started — "
@@ -149,7 +157,7 @@ async def run_worker_async() -> None:
     cycles_since_watchdog = 0
     cycles_since_heartbeat = 0
 
-    while True:
+    while not (should_stop and should_stop()):
         try:
             cycles_since_heartbeat += 1
             if cycles_since_heartbeat >= 5:
@@ -190,8 +198,8 @@ async def _run_with_semaphore(lead_id: str, semaphore: asyncio.Semaphore) -> Non
         await process_lead_async(lead_id)
 
 
-def run_worker() -> None:
-    asyncio.run(run_worker_async())
+def run_worker(should_stop: Callable[[], bool] | None = None) -> None:
+    asyncio.run(run_worker_async(should_stop))
 
 
 if __name__ == "__main__":

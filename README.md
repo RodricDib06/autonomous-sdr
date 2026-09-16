@@ -128,7 +128,7 @@ status and timing, streamed live over SSE while a lead is processed.
 | Metrics | prometheus-client — `/metrics` endpoint for Grafana scraping |
 | Frontend | React 18 + TypeScript + Vite + Tailwind + Recharts + TanStack Query |
 | Auth | JWT HS256 + bcrypt; API key (SHA-256 prefix auth) |
-| Deploy | Docker Compose · Railway (`railway.toml`) · `Makefile` for all commands |
+| Deploy | Docker Compose · Render (`render.yaml`) · Railway (`railway.toml`) · `Makefile` for all commands |
 
 ---
 
@@ -372,6 +372,37 @@ Frontend coverage (483 tests): component and page tests with mocked API boundari
 docker compose up --build
 ```
 
+### Render (Blueprint — Postgres, Key Value, API, and frontend in one file)
+
+[`render.yaml`](render.yaml) declares the whole stack. Render Dashboard →
+**New → Blueprint** → pick this repo, then fill the prompted secrets
+(`GROQ_API_KEY`, `INITIAL_ADMIN_*`, `ALLOWED_ORIGINS`, `VITE_API_URL`).
+
+Render has **no free background-worker instance type**, so the blueprint runs
+the LangGraph worker inside the API process on its own thread
+(`RUN_WORKER_IN_PROCESS=true`) — one free web service does both jobs. The
+queue pop is a blocking Redis call, so the worker gets a dedicated thread
+rather than sharing the API's event loop, and it stops with the app.
+
+On a paid plan, uncomment the `worker` service in `render.yaml` and set
+`RUN_WORKER_IN_PROCESS=false`; separate processes restart and scale
+independently.
+
+Migrations run as a pre-deploy step ([`scripts/render_predeploy.py`](scripts/render_predeploy.py)),
+which also enables `pgvector`. A failed migration aborts the deploy.
+
+Free-tier caveats worth knowing before you share the link:
+
+| Limit | Effect |
+|---|---|
+| Web services sleep after 15 min idle | First request takes ~1 min to wake |
+| Free Postgres deleted 30 days after creation | Re-seed, or upgrade the plan |
+| Free Key Value is in-memory only | Queued leads lost on restart — the scheduler re-queues stale pending leads every 5 min, so the pipeline self-heals |
+
+`APP_BASE_URL` needs no configuration on Render: it falls back to
+`RENDER_EXTERNAL_URL`, so unsubscribe links, tracking pixels, and OAuth
+callbacks resolve on the first deploy.
+
 ### Railway (one-command cloud deploy)
 
 ```bash
@@ -388,11 +419,16 @@ SECRET_KEY     (generate with: make secret)
 GROQ_API_KEY   (optional — free at console.groq.com)
 ```
 
+Railway does bill a second always-on process, so keep the worker as its own
+service there (`python -m app.worker.lead_worker`) and leave
+`RUN_WORKER_IN_PROCESS` unset.
+
 ### Manual
 
-1. Postgres 16 with pgvector (Supabase · Railway · Neon all support it)
-2. Redis (Railway · Upstash free tier)
+1. Postgres 16 with pgvector (Supabase · Render · Railway · Neon all support it)
+2. Redis (Render Key Value · Railway · Upstash free tier)
 3. Two processes: `uvicorn app.main:app` and `python -m app.worker.lead_worker`
+   — or one, with `RUN_WORKER_IN_PROCESS=true`
 4. `alembic upgrade head` before first start
 
 ---

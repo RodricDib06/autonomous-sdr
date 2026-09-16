@@ -59,11 +59,19 @@ api.interceptors.request.use((config) => {
 });
 
 // ── Auto-refresh on 401 ──────────────────────────────────────────────────────
+// Sign-in, sign-up, and refresh are excluded: a 401 from those means the
+// credentials were wrong, not that a session expired. Treating them the same
+// sent a failed login into the session-expiry branch below, which hard-
+// navigates to /login — reloading the page out from under the error toast, so
+// a mistyped password looked like a dead button.
+const AUTH_ENDPOINTS = /\/auth\/(login|register|refresh)$/;
+
 api.interceptors.response.use(
   (r) => r,
   async (error) => {
     const original = error.config;
-    if (error.response?.status === 401 && !original._retry) {
+    const isAuthAttempt = AUTH_ENDPOINTS.test(original?.url ?? "");
+    if (error.response?.status === 401 && !original._retry && !isAuthAttempt) {
       original._retry = true;
       const refresh = localStorage.getItem("refresh_token");
       if (refresh) {

@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { renderWithProviders } from '../utils';
 import Login from '../../pages/Login';
 import App from '../../App';
+import { authApi } from '../../lib/api';
 import { server } from '../mocks/server';
 
 afterEach(() => {
@@ -91,7 +92,7 @@ describe('Login page', () => {
   it('shows error toast when login fails with API error', async () => {
     server.use(
       http.post('http://localhost:8000/auth/login', () =>
-        HttpResponse.json({ detail: 'Invalid credentials' }, { status: 401 })
+        HttpResponse.json({ detail: 'Incorrect email or password' }, { status: 401 })
       )
     );
     const user = userEvent.setup();
@@ -102,7 +103,7 @@ describe('Login page', () => {
     fireEvent.submit(screen.getByRole('button', { name: /sign in/i }).closest('form')!);
 
     await waitFor(() => {
-      expect(screen.getByText(/Invalid credentials/i)).toBeInTheDocument();
+      expect(screen.getByText(/Incorrect email or password/i)).toBeInTheDocument();
     }, { timeout: 3000 });
   });
 
@@ -134,7 +135,7 @@ describe('Login feedback in the real App tree', () => {
   it('shows an error when credentials are rejected', async () => {
     server.use(
       http.post('http://localhost:8000/auth/login', () =>
-        HttpResponse.json({ detail: 'Invalid credentials' }, { status: 401 })
+        HttpResponse.json({ detail: 'Incorrect email or password' }, { status: 401 })
       )
     );
 
@@ -146,6 +147,38 @@ describe('Login feedback in the real App tree', () => {
     await user.type(screen.getByLabelText('Password'), 'wrong-password');
     await user.click(screen.getByRole('button', { name: /sign in/i }));
 
-    expect(await screen.findByText(/invalid credentials/i, {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByText(/incorrect email or password/i, {}, { timeout: 5000 })).toBeInTheDocument();
+  });
+});
+
+describe('401 handling on the sign-in request', () => {
+  // jsdom cannot actually navigate — it only warns — so the App-level test
+  // above still renders a toast even when the interceptor tries to reload.
+  // In a real browser that reload wipes the page. Assert the navigation is
+  // never attempted rather than relying on what jsdom happens to do.
+  it('does not treat rejected credentials as an expired session', async () => {
+    server.use(
+      http.post('http://localhost:8000/auth/login', () =>
+        HttpResponse.json({ detail: 'Incorrect email or password' }, { status: 401 })
+      )
+    );
+
+    const realLocation = window.location;
+    const assigned: string[] = [];
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: Object.defineProperty({ ...realLocation }, 'href', {
+        get: () => realLocation.href,
+        set: (v: string) => { assigned.push(v); },
+      }),
+    });
+
+    try {
+      localStorage.removeItem('refresh_token');
+      await expect(authApi.login('admin@autonomoussdr.com', 'wrong')).rejects.toBeDefined();
+      expect(assigned).toEqual([]);
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: realLocation });
+    }
   });
 });

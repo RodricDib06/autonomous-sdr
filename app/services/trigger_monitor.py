@@ -389,3 +389,10 @@ def run_trigger_check_job(db: Session) -> dict:
     if checked:
         log.info(f"[trigger] job complete: {summary}")
     return summary
+
+
+# Intent-signal types produced by trigger monitoring. Shared by the lead
+# trigger-signals endpoint and the analytics signal feed.
+TRIGGER_SIGNAL_TYPES = frozenset({
+    "funding_trigger", "job_posting_trigger", "news_trigger", "job_change_trigger",
+})

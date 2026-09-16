@@ -275,3 +275,8 @@ class SlackNotifier:
         except Exception as e:
             log.error(f"Failed to send import notification: {e}")
             return False
+
+
+# Module-level singleton. Several routers (and main) send notifications; one
+# instance keeps configuration lookups and any client state in a single place.
+slack_notifier = SlackNotifier()

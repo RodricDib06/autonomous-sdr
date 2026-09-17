@@ -119,7 +119,7 @@ status and timing, streamed live over SSE while a lead is processed.
 |---|---|
 | API | FastAPI 0.136 + slowapi rate limiting |
 | Agent framework | LangGraph 0.2 |
-| AI inference | Groq llama-3.1-70b (default, free) · Ollama + Mistral 7B · Anthropic Claude |
+| AI inference | Groq (default, free tier) · Ollama + Mistral 7B · Anthropic Claude |
 | Research | Tavily (1k searches/mo free) · DuckDuckGo fallback (no key needed) |
 | Scheduler | APScheduler 3.x (AsyncIO, in-process) |
 | Queue | Redis |

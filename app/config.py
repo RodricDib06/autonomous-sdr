@@ -31,7 +31,11 @@ class Settings(BaseSettings):
 
     # Groq — used when AI_PROVIDER=groq (free tier: 6 000 req/h, 500 k tok/min)
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    # Groq retired the llama-3.x "versatile" models; requests for them now 404
+    # with model_not_found, which surfaced as the validator failing on every
+    # lead. Verify against GET https://api.groq.com/openai/v1/models before
+    # changing this.
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
 
     # ── Research / web search ─────────────────────────────────────────────────
     # Tavily — free: 1 000 searches/mo. Falls back to DuckDuckGo when unset.

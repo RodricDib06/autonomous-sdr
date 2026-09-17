@@ -8,11 +8,9 @@ class GroqClient:
     """
     Groq inference client — drop-in replacement for OllamaClient.
 
-    Uses llama-3.1-70b-versatile by default (~500 tok/s, free tier:
+    Model comes from GROQ_MODEL (~500 tok/s, free tier:
     6 000 req/h, 500 000 tok/min). Sign up at https://console.groq.com.
 
-    # PRODUCTION: swap model for groq/llama-3.3-70b-specdec for even higher
-    # throughput, or mixtral-8x7b-32768 for longer context windows.
     """
 
     def __init__(self):

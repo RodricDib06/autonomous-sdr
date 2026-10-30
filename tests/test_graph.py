@@ -1,5 +1,11 @@
 """Tests for LangGraph routing functions in app.agents.graph."""
-from app.agents.graph import route_after_validate, route_after_orchestrate_human
+from types import SimpleNamespace
+
+import pytest
+
+from app.agents import graph as graph_module
+from app.agents.graph import route_after_validate
+from app.agents.orchestrator_agent import OrchestratorAgent
 
 
 # ---------------------------------------------------------------------------
@@ -57,24 +63,64 @@ def test_missing_validation_key_defaults_cold():
 
 
 # ---------------------------------------------------------------------------
-# route_after_orchestrate_human
+# Human handoff happens after qualification
 # ---------------------------------------------------------------------------
 
-def test_human_handoff_when_in_pipeline():
-    state = {"routing": {"pipeline": ["human_handoff"]}}
-    assert route_after_orchestrate_human(state) == "human_handoff"
+@pytest.mark.parametrize("verdict", ["Hot", "Warm", "Cold"])
+def test_handoff_pipeline_routes_to_handoff_after_validate(verdict):
+    state = _state(verdict, ["enrichment", "analysis", "validator", "human_handoff"])
+    assert route_after_validate(state) == "human_handoff"
 
 
-def test_no_human_handoff_goes_to_enrich():
-    state = {"routing": {"pipeline": ["outreach", "sync_crm"]}}
-    assert route_after_orchestrate_human(state) == "enrich"
+def _walk(monkeypatch, pipeline, verdict):
+    """Run the compiled graph with stub nodes; return the nodes visited in order."""
+    visited = []
+
+    def stub(name, update=None):
+        def node(state):
+            visited.append(name)
+            return {**state, **(update or {})}
+        return node
+
+    monkeypatch.setattr(graph_module, "node_orchestrate",
+                        stub("orchestrate", {"routing": {"action": "qualify", "pipeline": pipeline}}))
+    monkeypatch.setattr(graph_module, "node_validate",
+                        stub("validate", {"validation": {"final_verdict": verdict}}))
+    for name in ("enrich", "research", "score_intent", "analyse",
+                 "booking", "outreach", "sync_crm", "human_handoff"):
+        monkeypatch.setattr(graph_module, f"node_{name}", stub(name))
+
+    graph_module.build_graph().invoke({"lead_id": "x", "lead_name": "x", "errors": []})
+    return visited
 
 
-def test_empty_pipeline_goes_to_enrich():
-    state = {"routing": {"pipeline": []}}
-    assert route_after_orchestrate_human(state) == "enrich"
+_QUALIFY = ["orchestrate", "enrich", "research", "score_intent", "analyse", "validate"]
 
 
-def test_missing_routing_key_goes_to_enrich():
-    state = {}
-    assert route_after_orchestrate_human(state) == "enrich"
+def test_handoff_lead_is_qualified_then_completed(monkeypatch):
+    visited = _walk(monkeypatch, ["enrichment", "analysis", "validator", "human_handoff"], "Hot")
+    assert visited == _QUALIFY + ["human_handoff", "sync_crm"]
+
+
+def test_hot_inbound_books_then_sequences(monkeypatch):
+    visited = _walk(monkeypatch, ["enrichment", "analysis", "validator", "booking", "outreach"], "Hot")
+    assert visited == _QUALIFY + ["booking", "outreach", "sync_crm"]
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator: which pipeline each source gets
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("source,expected_tail", [
+    ("website_form", ["booking", "outreach"]),
+    ("referral", ["booking", "outreach"]),
+    ("csv_import", ["outreach"]),
+    ("prospecting:pdl", ["outreach"]),
+    ("prospecting:synthetic", ["outreach"]),
+    ("org_chart", ["human_handoff"]),     # guessed address — a human checks it
+    ("ip_visit", ["human_handoff"]),
+    ("manual", ["human_handoff"]),
+])
+def test_pipeline_by_source(source, expected_tail):
+    pipeline = OrchestratorAgent()._decide_pipeline(SimpleNamespace(source=source), {})
+    assert pipeline == ["enrichment", "analysis", "validator", *expected_tail]

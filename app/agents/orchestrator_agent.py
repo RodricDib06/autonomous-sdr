@@ -138,18 +138,20 @@ class OrchestratorAgent(BaseAgent):
         """
         Build the ordered list of pipeline stages for this lead.
 
-        Hot inbound (form / LinkedIn / event) → full qualification + booking.
-        Cold (ads / CSV) → full qualification + outreach sequence.
-        Manual / low-priority → qualify only, flag for human review.
+        Hot inbound (form / LinkedIn / event / referral) → full qualification + booking.
+        Cold (ads / CSV / prospecting) → full qualification + outreach sequence.
+        Guessed addresses (org chart, IP visit) / manual → qualify only, then
+        flag for human review — emailing a guessed address is a bounce.
         """
-        source = lead.source
+        source = lead.source or ""
         pipeline = ["enrichment", "analysis", "validator"]
 
-        if source in ("linkedin_signal", "inbound_email", "event", "website_form"):
+        if source in ("linkedin_signal", "inbound_email", "event", "website_form", "referral"):
             # High-intent source → try to book a meeting directly after qualification
             pipeline += ["booking", "outreach"]
-        elif source in ("marketing_ad", "csv_import", "webhook"):
-            # Cold outreach sequence
+        elif source in ("marketing_ad", "csv_import", "webhook") or source.startswith("prospecting:"):
+            # Cold outreach sequence. Prospected addresses already passed the
+            # sourcing pipeline's verification gate.
             pipeline += ["outreach"]
         else:
             # Unknown / manual source → human decides

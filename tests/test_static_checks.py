@@ -1,11 +1,15 @@
 """
-The codebase mixes structlog (which takes key=value context) and stdlib
-logging (which raises TypeError on unknown keyword arguments). A structlog
-style call on a stdlib logger only fails at runtime, on the line that logs —
-it silently broke ML training, Bayesian re-qualification and web enrichment.
-This scans every module so the mix-up can't ship again.
+Static checks for bug classes that only fail at runtime, on a line that is
+usually wrapped in try/except — so they fail silently:
+
+  - stdlib loggers called with structlog-style key=value kwargs (TypeError at
+    the log line): silently broke ML training, Bayesian re-qualification and
+    web enrichment
+  - lazy `from app.x import y` inside functions where y doesn't exist: the
+    reply-score boost imported a function from the wrong module for months
 """
 import ast
+import importlib
 import pathlib
 
 _STDLIB_KWARGS = {"exc_info", "stack_info", "stacklevel", "extra"}
@@ -34,6 +38,24 @@ def test_no_structlog_kwargs_on_stdlib_loggers():
                 if bad:
                     offenders.append(f"{path}:{node.lineno} {', '.join(bad)}")
     assert not offenders, "stdlib logger called with structlog kwargs:\n" + "\n".join(offenders)
+
+
+def test_every_app_import_resolves():
+    offenders = []
+    for path in sorted([*pathlib.Path("app").rglob("*.py"), *pathlib.Path("scripts").glob("*.py")]):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not (isinstance(node, ast.ImportFrom) and node.level == 0
+                    and (node.module or "").startswith("app")):
+                continue
+            module = importlib.import_module(node.module)
+            for alias in node.names:
+                if alias.name == "*" or hasattr(module, alias.name):
+                    continue
+                try:
+                    importlib.import_module(f"{node.module}.{alias.name}")
+                except ImportError:
+                    offenders.append(f"{path}:{node.lineno} {node.module} has no {alias.name}")
+    assert not offenders, "unresolvable imports:\n" + "\n".join(offenders)
 
 
 def test_bayesian_update_does_not_raise(test_db):

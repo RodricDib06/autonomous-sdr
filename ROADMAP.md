@@ -328,11 +328,13 @@ of likely demand:
 
 ## Standing debt register (chip away, never a dedicated "debt sprint")
 
-- [ ] `app/main.py` is ~3,500 lines — extract remaining legacy routes into
-      `app/routers/` (leads, analytics, tracking, config). Rule: any endpoint you
-      touch for another reason moves out in the same PR
-- [ ] Analytics endpoints are not org-scoped (core CRUD is) — scope them before any
-      multi-tenant pilot
+- [x] `app/main.py` is ~3,500 lines — extract remaining legacy routes into
+      `app/routers/` (leads, analytics, tracking, config) — `c3dc999`, now ~1,000 lines
+- [x] Analytics endpoints are not org-scoped (core CRUD is) — scope them before any
+      multi-tenant pilot — `130aea7`: all collection endpoints scoped, plus an
+      app-wide guard on every route that names a lead-owned record
+- [ ] HubSpot webhooks are verified against HubSpot's signing spec in tests only —
+      do one real round trip with a developer portal before demoing that flow
 - [ ] Sync SQLAlchemy inside async FastAPI handlers — fine at pilot scale; revisit
       only if p95 latency complains
 - [ ] `Conversation.embedding` pgvector column still lives in a script, not alembic —

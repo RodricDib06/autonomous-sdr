@@ -12,6 +12,7 @@ import base64
 import email as email_lib
 import hashlib
 import imaplib
+import html
 import logging
 import smtplib
 from datetime import timedelta
@@ -130,7 +131,7 @@ def send_via_mailbox(
         if settings.APP_BASE_URL:
             pixel_url = f"{settings.APP_BASE_URL}/track/open/{email_record.id}"
             html_body = (
-                f"<html><body><pre style='font-family:sans-serif'>{email_record.body}</pre>"
+                f"<html><body><pre style='font-family:sans-serif'>{html.escape(email_record.body)}</pre>"
                 f"<p style='font-size:11px;color:#888'>Don't want to hear from us? "
                 f"<a href='{unsubscribe_url}'>Unsubscribe</a></p>"
                 f"<img src='{pixel_url}' width='1' height='1' style='display:none' /></body></html>"

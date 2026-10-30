@@ -265,10 +265,10 @@ describe('Users page', () => {
     });
   });
 
-  it('shows error toast when changeRole API fails', async () => {
+  it('shows the server reason when changeRole API fails', async () => {
     server.use(
       http.put('http://localhost:8000/auth/users/:id/role', () =>
-        HttpResponse.json({ detail: 'Forbidden' }, { status: 403 })
+        HttpResponse.json({ detail: "Cannot demote the organization's last admin" }, { status: 400 })
       )
     );
     const user = userEvent.setup();
@@ -283,7 +283,7 @@ describe('Users page', () => {
     await user.click(saveBtn);
 
     await waitFor(() => {
-      expect(screen.getByText(/Failed to update role/i)).toBeInTheDocument();
+      expect(screen.getByText(/Cannot demote the organization's last admin/i)).toBeInTheDocument();
     });
   });
 

@@ -492,7 +492,7 @@ def batch_leads(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        log.error("Batch action '{request.action}' failed", error=str(e))
+        log.error(f"Batch action '{request.action}' failed", error=str(e))
         raise HTTPException(status_code=500, detail="Batch action failed")
 
 @router.post("/leads/{lead_id}/assign")
@@ -627,7 +627,7 @@ def get_lead(
     except HTTPException:
         raise
     except Exception as e:
-        log.error("Failed to fetch lead {lead_id}", error=str(e))
+        log.error(f"Failed to fetch lead {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to fetch lead")
 
 @router.get("/leads/{lead_id}/verdict-explanation")
@@ -754,7 +754,7 @@ def get_lead_quality_score(
     except HTTPException:
         raise
     except Exception as e:
-        log.error("Failed to get quality score for {lead_id}", error=str(e))
+        log.error(f"Failed to get quality score for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to get quality score")
 
 @router.post("/leads/{lead_id}/check-duplicate")
@@ -794,7 +794,7 @@ def check_lead_duplicate(
     except HTTPException:
         raise
     except Exception as e:
-        log.error("Failed to check duplicates for {lead_id}", error=str(e))
+        log.error(f"Failed to check duplicates for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to check duplicates")
 
 @router.post("/leads/{primary_id}/merge/{duplicate_id}")
@@ -828,7 +828,7 @@ def merge_duplicate_leads(
     except HTTPException:
         raise
     except Exception as e:
-        log.error("Failed to merge leads {primary_id} and {duplicate_id}", error=str(e))
+        log.error(f"Failed to merge leads {primary_id} and {duplicate_id}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to merge leads")
 
 @router.post("/leads/{lead_id}/outreach")
@@ -844,7 +844,7 @@ def trigger_outreach(
         result = agent._timed_run(db, lead_id, {"triggered_by": current_user.email})
         return result
     except Exception as e:
-        log.error("Outreach failed for {lead_id}", error=str(e))
+        log.error(f"Outreach failed for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/leads/{lead_id}/outreach")
@@ -896,7 +896,7 @@ def trigger_booking(
         result = agent._timed_run(db, lead_id, {})
         return result
     except Exception as e:
-        log.error("Booking failed for {lead_id}", error=str(e))
+        log.error(f"Booking failed for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/leads/{lead_id}/bookings")
@@ -1079,7 +1079,7 @@ def send_chat_message(
         })
         return result
     except Exception as e:
-        log.error("Conversational agent failed for {lead_id}", error=str(e))
+        log.error(f"Conversational agent failed for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/leads/{lead_id}/conversations")
@@ -1161,7 +1161,7 @@ def sync_to_crm(
         result = sync_lead_to_crm(db, lead_id)
         return result
     except Exception as e:
-        log.error("CRM sync failed for {lead_id}", error=str(e))
+        log.error(f"CRM sync failed for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/leads/{lead_id}/outreach/generate/stream", include_in_schema=False)

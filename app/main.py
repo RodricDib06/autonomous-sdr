@@ -366,7 +366,7 @@ def validate_email(
             "issues": result['email']['issues'] + (result['domain']['issues'] if result['domain'] else [])
         }
     except Exception as e:
-        log.error("Failed to validate email {email}", error=str(e))
+        log.error(f"Failed to validate email {email}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to validate email")
 
 
@@ -432,7 +432,7 @@ def track_email_event(
         record_event(db, email_id, event)
         return {"status": "recorded", "email_id": email_id, "event": event}
     except Exception as e:
-        log.error("Failed to record event {event} on email {email_id}", error=str(e))
+        log.error(f"Failed to record event {event} on email {email_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 

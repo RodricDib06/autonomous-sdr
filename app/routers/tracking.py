@@ -97,7 +97,7 @@ def track_open(email_id: str, db: Session = Depends(get_db)):
                     except Exception:
                         pass
     except Exception as e:
-        log.warning("[track/open] Failed to record open for {email_id}", error=str(e))
+        log.warning(f"[track/open] Failed to record open for {email_id}", error=str(e))
     return Response(content=_TRACKING_PIXEL, media_type="image/gif")
 
 @router.get("/track/click/{email_id}", include_in_schema=False)

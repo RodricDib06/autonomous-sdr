@@ -160,6 +160,19 @@ def disconnect_hubspot(
 
 # ── Inbound webhook ──────────────────────────────────────────────────────────
 
+def _signed_url(request: Request) -> str:
+    """
+    The URL HubSpot signed: the public one it was configured with. Behind a
+    TLS-terminating proxy (Render, Railway) request.url reads http://, which
+    never matches HubSpot's https:// signature, so rebuild it on APP_BASE_URL.
+    """
+    from app.config import settings
+    if not settings.APP_BASE_URL:
+        return str(request.url)
+    query = f"?{request.url.query}" if request.url.query else ""
+    return f"{settings.APP_BASE_URL.rstrip('/')}{request.url.path}{query}"
+
+
 @router.post("/ingest/hubspot-webhook")
 async def hubspot_webhook(request: Request, db: Session = Depends(get_db)):
     """
@@ -171,7 +184,7 @@ async def hubspot_webhook(request: Request, db: Session = Depends(get_db)):
     signature = request.headers.get("X-HubSpot-Signature-v3", "")
     timestamp = request.headers.get("X-HubSpot-Request-Timestamp", "")
 
-    if not validate_signature_v3("POST", str(request.url), body, timestamp, signature):
+    if not validate_signature_v3("POST", _signed_url(request), body, timestamp, signature):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     try:

@@ -62,7 +62,7 @@ def _evaluate_candidate(db: Session, candidate: ProspectCandidate, org_id, icp_c
     if is_suppressed(db, candidate.email, org_id=org_id):
         return {"gate": "suppressed"}
 
-    if dedup.find_duplicates_by_email(candidate.email):
+    if dedup.find_duplicates_by_email(candidate.email, org_id=org_id):
         return {"gate": "duplicate"}
 
     verification_status = "unknown"

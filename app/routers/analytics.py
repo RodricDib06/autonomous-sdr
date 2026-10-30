@@ -25,6 +25,7 @@ from app.config import settings  # noqa: F401
 from app.utils.time import utcnow  # noqa: F401
 from app.services.queue_service import push_lead_job, get_redis  # noqa: F401
 from app.schemas.lead import AssignmentStats
+from app.services.tenancy import scoped
 
 log = structlog.get_logger(__name__)
 
@@ -42,7 +43,7 @@ def get_assignment_stats(
     """Get assignment and conversion stats for all reps."""
     from app.database.models import User, Lead
 
-    reps = db.query(User).filter(User.role == "rep", User.is_active).all()
+    reps = scoped(db.query(User), User, current_user.org_id).filter(User.role == "rep", User.is_active).all()
     stats = []
 
     for rep in reps:
@@ -87,6 +88,7 @@ def get_signal_feed(
         .join(LeadModel, IntentSignal.lead_id == LeadModel.id)
         .filter(IntentSignal.signal_type.in_(list(TRIGGER_SIGNAL_TYPES)))
     )
+    query = scoped(query, LeadModel, current_user.org_id)
     if signal_type:
         query = query.filter(IntentSignal.signal_type == signal_type)
     results = query.order_by(IntentSignal.captured_at.desc()).limit(limit).all()
@@ -127,7 +129,7 @@ def get_revenue_funnel(
 
     stage_counts: dict[str, int] = {}
     for stage in _FUNNEL_STAGES:
-        count = db.query(Lead).filter(Lead.conversion_status == stage).count()
+        count = scoped(db.query(Lead), Lead, current_user.org_id).filter(Lead.conversion_status == stage).count()
         stage_counts[stage] = count
 
     # Fetch BANT-weighted close probabilities for each stage for better value estimates
@@ -193,7 +195,7 @@ def powerbi_export(
     from sqlalchemy.orm import selectinload
 
     leads = (
-        db.query(Lead)
+        scoped(db.query(Lead), Lead, current_user.org_id)
         .options(
             selectinload(Lead.enrichments),
             selectinload(Lead.verdicts),
@@ -305,7 +307,9 @@ def semantic_search(
       - 'companies evaluating competitors'
     """
     from app.services.embedding_service import semantic_search_conversations
-    results = semantic_search_conversations(db, query, lead_id=lead_id, limit=limit)
+    results = semantic_search_conversations(
+        db, query, lead_id=lead_id, limit=limit, org_id=current_user.org_id
+    )
     return {"query": query, "results": results, "count": len(results)}
 
 @router.post("/analytics/ml/retrain")
@@ -342,7 +346,7 @@ def get_market_intelligence(
     Shows which industry × seniority combinations convert best.
     """
     from app.services.market_intelligence import compute_market_intelligence
-    return compute_market_intelligence(db)
+    return compute_market_intelligence(db, org_id=current_user.org_id)
 
 @router.get("/analytics/pipeline-velocity")
 def get_pipeline_velocity(
@@ -362,7 +366,7 @@ def get_pipeline_velocity(
     from app.database.models import BookingRequest as BookingModel
 
     complete_leads = (
-        db.query(Lead)
+        scoped(db.query(Lead), Lead, current_user.org_id)
         .filter(Lead.status == "complete", Lead.updated_at.isnot(None))
         .all()
     )
@@ -431,7 +435,7 @@ def get_rep_performance(
     """
     from app.database.models import User as UserModel, BookingRequest as BookingModel, OutreachEmail as OutreachEmailModel, Verdict as VerdictModel
 
-    reps = db.query(UserModel).filter(UserModel.is_active == True).all()  # noqa: E712
+    reps = scoped(db.query(UserModel), UserModel, current_user.org_id).filter(UserModel.is_active == True).all()  # noqa: E712
     rows = []
 
     for rep in reps:

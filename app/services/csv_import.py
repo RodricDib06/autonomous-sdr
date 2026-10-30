@@ -172,7 +172,7 @@ class CSVImportService:
             try:
                 # Check for duplicates
                 if check_duplicates:
-                    duplicates = self.dedup_service.find_duplicates_by_email(record['email'])
+                    duplicates = self.dedup_service.find_duplicates_by_email(record['email'], org_id=org_id)
                     if duplicates:
                         duplicates_count += 1
                         import_records.append(ImportRecord(
@@ -260,6 +260,7 @@ class CSVImportService:
         filename: str,
         result: "ImportResult",
         imported_by: Optional[str] = None,
+        org_id: Optional[str] = None,
     ):
         """Persist an import result to the import_history table for auditing."""
         from app.database.models import ImportHistory
@@ -272,6 +273,7 @@ class CSVImportService:
             failed=result.failed,
             duplicates=result.duplicates_found,
             imported_by=imported_by,
+            org_id=org_id,
         )
         db.add(record)
         db.commit()

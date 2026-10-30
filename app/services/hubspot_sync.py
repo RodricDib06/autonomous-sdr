@@ -37,6 +37,7 @@ from jose import jwt
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database import crud
 from app.database.models import CrmConnection, CrmSyncLog, Lead, LeadHistory
 from app.utils.time import utcnow
 
@@ -345,7 +346,7 @@ def _resolve_lead(db: Session, connection: CrmConnection, contact_id: str) -> Le
         return None
     if not email:
         return None
-    q = db.query(Lead).filter(Lead.email.ilike(email))
+    q = db.query(Lead).filter(crud.email_equals(Lead.email, email))
     if connection.org_id is not None:
         q = q.filter(Lead.org_id == connection.org_id)
     lead = q.first()

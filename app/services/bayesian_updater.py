@@ -70,10 +70,8 @@ def apply_bayesian_update(db, lead_id: str, signal: str) -> dict | None:
     db.commit()
 
     log.info(
-        "Bayesian BANT update applied",
-        lead_id=lead_id,
-        signal=signal,
-        new_confidence=verdict.confidence_score,
+        f"Bayesian BANT update applied (lead_id={lead_id}, signal={signal}, "
+        f"new_confidence={verdict.confidence_score})"
     )
 
     return {

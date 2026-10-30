@@ -15,6 +15,11 @@ from app.utils.time import utcnow
 if TYPE_CHECKING:
     pass
 
+# A closed deal. The API and HubSpot sync record "won"; "converted" is the
+# pre-API spelling still present in older data and the demo seed. Every
+# learning loop must count both, or real wins never reach the models.
+WON_STATUSES = ("won", "converted")
+
 VALID_CONVERSION_STATUSES = {
     "unqualified",
     "qualified",
@@ -85,7 +90,7 @@ def get_rep_assignments(db: Session, rep_id: str) -> list[Lead]:
     """Get all leads assigned to a specific rep."""
     return (
         db.query(Lead)
-        .filter(Lead.assigned_to_id == rep_id, not Lead.archived)
+        .filter(Lead.assigned_to_id == rep_id, Lead.archived.is_(False))
         .order_by(Lead.created_at.desc())
         .all()
     )

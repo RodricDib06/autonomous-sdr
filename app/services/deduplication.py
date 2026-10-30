@@ -30,27 +30,41 @@ class DeduplicationService:
                         company, flags=re.IGNORECASE)
         return re.sub(r'\s+', ' ', company.lower().strip())
 
-    def find_duplicates_by_email(self, email: str) -> List[Lead]:
-        """Find leads with exact email match"""
+    def find_duplicates_by_email(self, email: str, org_id: str | None = None) -> List[Lead]:
+        """Find leads with exact email match (within one org — two tenants may share a prospect)"""
+        from app.services.tenancy import scoped
+
         normalized_email = self.normalize_email(email)
-        return self.db.query(Lead).filter(
+        return scoped(self.db.query(Lead), Lead, org_id).filter(
             Lead.email == normalized_email
         ).all()
 
     def find_potential_duplicates(self,
                                  name: str,
                                  email: str,
-                                 company: str) -> List[Dict]:
+                                 company: str,
+                                 org_id: str | None = None,
+                                 exclude_id: str | None = None) -> List[Dict]:
         """
         Find potential duplicate leads using fuzzy matching
         Returns list of matches with similarity scores
+
+        exclude_id: the lead being checked. It must be excluded up front — its
+        own email is always an exact match, which would short-circuit the
+        fuzzy pass and hide every near-duplicate.
         """
+        from app.services.tenancy import scoped
+
         norm_email = self.normalize_email(email)
         norm_name = self.normalize_name(name)
         norm_company = self.normalize_company(company)
 
+        candidates = scoped(self.db.query(Lead), Lead, org_id)
+        if exclude_id:
+            candidates = candidates.filter(Lead.id != exclude_id)
+
         # First check for exact email match (highest priority)
-        exact_email_match = self.db.query(Lead).filter(
+        exact_email_match = candidates.filter(
             Lead.email == norm_email
         ).all()
 
@@ -63,7 +77,7 @@ class DeduplicationService:
             } for lead in exact_email_match]
 
         # Find leads with similar names and companies
-        all_leads = self.db.query(Lead).all()
+        all_leads = candidates.all()
         potential_matches = []
 
         for lead in all_leads:
@@ -88,9 +102,17 @@ class DeduplicationService:
         # Sort by score descending
         return sorted(potential_matches, key=lambda x: x['score'], reverse=True)
 
+    # One-row-per-lead tables: when both leads have a row, the primary's wins
+    _KEEP_PRIMARY = ("enrichments", "verdicts")
+
     def merge_leads(self, primary_lead_id: str, duplicate_lead_id: str) -> bool:
         """
         Merge duplicate lead into primary lead
+
+        Every table with a foreign key to leads.id is re-pointed at the
+        primary, discovered from the schema so a new child table can't be
+        forgotten. Deleting the duplicate without that would cascade away its
+        emails, conversations, bookings and signals.
 
         Args:
             primary_lead_id: ID of lead to keep
@@ -99,6 +121,11 @@ class DeduplicationService:
         Returns:
             True if merge successful, False otherwise
         """
+        from sqlalchemy import delete, select, update
+        from app.database.connection import Base
+
+        if primary_lead_id == duplicate_lead_id:
+            return False
         try:
             primary = self.db.query(Lead).filter(Lead.id == primary_lead_id).first()
             duplicate = self.db.query(Lead).filter(Lead.id == duplicate_lead_id).first()
@@ -106,22 +133,27 @@ class DeduplicationService:
             if not primary or not duplicate:
                 return False
 
-            # Move enrichments from duplicate to primary
-            if duplicate.enrichments:
-                for enrichment in duplicate.enrichments:
-                    enrichment.lead_id = primary_lead_id
+            leads_table = Lead.__table__
+            for table in Base.metadata.sorted_tables:
+                for fk in table.foreign_keys:
+                    if fk.column.table is not leads_table:
+                        continue
+                    col = fk.parent
+                    if table.name in self._KEEP_PRIMARY:
+                        has_own = self.db.execute(
+                            select(col).where(col == primary_lead_id).limit(1)
+                        ).first()
+                        if has_own:
+                            self.db.execute(delete(table).where(col == duplicate_lead_id))
+                            continue
+                    self.db.execute(
+                        update(table).where(col == duplicate_lead_id).values({col.name: primary_lead_id})
+                    )
 
-            # Move verdicts from duplicate to primary
-            if duplicate.verdicts:
-                for verdict in duplicate.verdicts:
-                    verdict.lead_id = primary_lead_id
-
-            # Move agent logs from duplicate to primary
-            if duplicate.agent_logs:
-                for log in duplicate.agent_logs:
-                    log.lead_id = primary_lead_id
-
-            # Delete duplicate lead
+            # Drop stale in-memory collections so the delete can't cascade
+            # over rows that now belong to the primary
+            self.db.expire_all()
+            duplicate = self.db.get(Lead, duplicate_lead_id)
             self.db.delete(duplicate)
             self.db.commit()
 
@@ -130,50 +162,65 @@ class DeduplicationService:
             self.db.rollback()
             raise e
 
-    def get_duplicate_report(self) -> Dict:
-        """Generate a report of potential duplicates in the system"""
-        all_leads = self.db.query(Lead).all()
+    def get_duplicate_report(self, org_id: str | None = None) -> Dict:
+        """Generate a report of potential duplicates within one org"""
+        from app.services.tenancy import scoped
+
+        all_leads = scoped(self.db.query(Lead), Lead, org_id).all()
         duplicates_found = {}
         processed_ids = set()
 
+        # Pairwise in memory over the org's leads. The old version called
+        # find_potential_duplicates per lead, which re-queried every lead in
+        # every org on each iteration.
         for i, lead in enumerate(all_leads):
             if lead.id in processed_ids:
                 continue
+            matches = []
+            for other in all_leads[i + 1:]:
+                if other.id in processed_ids:
+                    continue
+                match = self._match(lead, other)
+                if match:
+                    matches.append(match)
 
-            # Check remaining leads for duplicates
-            remaining_leads = all_leads[i+1:]
-            potential_dupes = self.find_potential_duplicates(
-                lead.name, lead.email, lead.company
-            )
-
-            # Filter to only remaining leads
-            remaining_potential = [
-                p for p in potential_dupes
-                if p['lead'].id in [lead.id for lead in remaining_leads]
-            ]
-
-            if remaining_potential:
+            if matches:
+                matches.sort(key=lambda m: m["score"], reverse=True)
                 duplicates_found[lead.id] = {
                     "lead_name": lead.name,
                     "lead_company": lead.company,
                     "duplicates": [
                         {
-                            "id": p['lead'].id,
-                            "name": p['lead'].name,
-                            "company": p['lead'].company,
-                            "email": p['lead'].email,
-                            "match_score": p['score'],
-                            "match_type": p['match_type'],
-                            "reason": p['reason']
+                            "id": m["lead"].id,
+                            "name": m["lead"].name,
+                            "company": m["lead"].company,
+                            "email": m["lead"].email,
+                            "match_score": m["score"],
+                            "match_type": m["match_type"],
+                            "reason": m["reason"],
                         }
-                        for p in remaining_potential
-                    ]
+                        for m in matches
+                    ],
                 }
-                for p in remaining_potential:
-                    processed_ids.add(p['lead'].id)
+                processed_ids.update(m["lead"].id for m in matches)
 
         return {
             "total_leads": len(all_leads),
             "potential_duplicates_found": len(duplicates_found),
             "duplicates": duplicates_found
         }
+
+    def _match(self, lead: Lead, other: Lead) -> Dict | None:
+        """Same rules as find_potential_duplicates, for one pair."""
+        if self.normalize_email(lead.email) == self.normalize_email(other.email):
+            return {"lead": other, "match_type": "exact_email", "score": 100,
+                    "reason": f"Exact email match: {other.email}"}
+        name_score = fuzz.token_set_ratio(self.normalize_name(lead.name), self.normalize_name(other.name))
+        company_score = fuzz.token_set_ratio(
+            self.normalize_company(lead.company), self.normalize_company(other.company)
+        )
+        overall = (name_score * 0.4) + (company_score * 0.6)
+        if overall >= self.similarity_threshold:
+            return {"lead": other, "match_type": "fuzzy_match", "score": round(overall, 2),
+                    "reason": f"Name similarity: {name_score}%, Company similarity: {company_score}%"}
+        return None

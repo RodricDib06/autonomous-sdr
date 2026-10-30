@@ -97,7 +97,7 @@ def track_open(email_id: str, db: Session = Depends(get_db)):
                     except Exception:
                         pass
     except Exception as e:
-        log.warning("[track/open] Failed to record open for {email_id}", error=str(e))
+        log.warning(f"[track/open] Failed to record open for {email_id}", error=str(e))
     return Response(content=_TRACKING_PIXEL, media_type="image/gif")
 
 @router.get("/track/click/{email_id}", include_in_schema=False)
@@ -115,39 +115,42 @@ def track_click(
     """
     from app.database.models import OutreachEmail
     from app.services.ab_testing import record_event
+    email = db.query(OutreachEmail).filter(OutreachEmail.id == email_id).first()
+    if email is None:
+        # Redirecting for an unknown id would make this an open redirect
+        # anyone can point at a phishing page from our domain
+        raise HTTPException(status_code=404, detail="Not found")
     try:
-        email = db.query(OutreachEmail).filter(OutreachEmail.id == email_id).first()
-        if email:
-            if not email.opened_at:
-                email.opened_at = utcnow()
-                email.status = "opened"
-                record_event(db, email_id, "opened")
-            db.commit()
-            log.info(f"[track/click] Email {email_id} clicked → {url[:80]}")
-            # Clicks are a stronger intent signal than opens — apply Bayesian update
-            # and re-qualify at a lower threshold (0.60) since clicking shows real interest.
-            if email.lead_id:
-                from app.services.bayesian_updater import apply_bayesian_update
-                from app.database.models import Verdict as _VerdictC
-                result = apply_bayesian_update(db, email.lead_id, "click")
-                if result and result["new_confidence"] >= 0.60:
-                    verdict_row = (
-                        db.query(_VerdictC)
-                        .filter(_VerdictC.lead_id == email.lead_id)
-                        .first()
-                    )
-                    if verdict_row and verdict_row.final_verdict in ("Cold", "Warm", None):
-                        try:
-                            push_lead_job(email.lead_id)
-                            crud.update_lead_status(db, email.lead_id, "pending")
-                            log.info(
-                                f"[track/click] Re-queued lead {email.lead_id[:8]} after click "
-                                f"(confidence={result['new_confidence']:.2f})"
-                            )
-                        except Exception:
-                            pass
+        if not email.opened_at:
+            email.opened_at = utcnow()
+            email.status = "opened"
+            record_event(db, email_id, "opened")
+        db.commit()
+        log.info(f"[track/click] Email {email_id} clicked → {url[:80]}")
+        # Clicks are a stronger intent signal than opens — apply Bayesian update
+        # and re-qualify at a lower threshold (0.60) since clicking shows real interest.
+        if email.lead_id:
+            from app.services.bayesian_updater import apply_bayesian_update
+            from app.database.models import Verdict as _VerdictC
+            result = apply_bayesian_update(db, email.lead_id, "click")
+            if result and result["new_confidence"] >= 0.60:
+                verdict_row = (
+                    db.query(_VerdictC)
+                    .filter(_VerdictC.lead_id == email.lead_id)
+                    .first()
+                )
+                if verdict_row and verdict_row.final_verdict in ("Cold", "Warm", None):
+                    try:
+                        push_lead_job(email.lead_id)
+                        crud.update_lead_status(db, email.lead_id, "pending")
+                        log.info(
+                            f"[track/click] Re-queued lead {email.lead_id[:8]} after click "
+                            f"(confidence={result['new_confidence']:.2f})"
+                        )
+                    except Exception:
+                        pass
     except Exception as e:
-        log.warning("[track/click] Failed to record click for {email_id}", error=str(e))
+        log.warning(f"[track/click] Failed to record click for {email_id}", error=str(e))
     return RedirectResponse(url=url, status_code=302)
 
 @router.get("/track/visit", include_in_schema=False)
@@ -194,7 +197,12 @@ def track_visit(
                     f"visitor+{re.sub(r'[^a-z0-9]', '', company.lower())}@unknown.com"
                 )
 
-                existing = db.query(Lead).filter(Lead.email == synthetic_email).first()
+                from app.services.tenancy import get_default_org
+                existing = (
+                    db.query(Lead)
+                    .filter(Lead.email == synthetic_email, Lead.org_id == get_default_org(db).id)
+                    .first()
+                )
                 if not existing:
                     new_lead = crud.create_lead(
                         db,

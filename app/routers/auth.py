@@ -207,27 +207,42 @@ def change_password(
 # User management (admin only)
 # ---------------------------------------------------------------------------
 
+def _org_users(db: Session, admin: User):
+    """Admins manage their own org's users — never another tenant's."""
+    from app.services.tenancy import scoped
+    return scoped(db.query(User), User, admin.org_id)
+
+
 @router.get("/users", response_model=list[UserResponse])
 def list_users(
-    _: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    return db.query(User).order_by(User.created_at).all()
+    return _org_users(db, current_user).order_by(User.created_at).all()
 
 
 @router.put("/users/{user_id}/role", response_model=UserResponse)
 def change_user_role(
     user_id: str,
     role: str,
-    _: User = Depends(require_admin),
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     if role not in ("admin", "manager", "rep"):
         raise HTTPException(status_code=400, detail="Role must be admin, manager, or rep")
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = _org_users(db, current_user).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    if user.role == "admin" and role != "admin":
+        other_admins = (
+            _org_users(db, current_user)
+            .filter(User.role == "admin", User.is_active, User.id != user.id)
+            .count()
+        )
+        if other_admins == 0:
+            raise HTTPException(status_code=400, detail="Cannot demote the organization's last admin")
 
     user.role = role
     db.commit()
@@ -244,7 +259,7 @@ def deactivate_user(
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot deactivate your own account")
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = _org_users(db, current_user).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 

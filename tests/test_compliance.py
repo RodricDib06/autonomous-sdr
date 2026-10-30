@@ -311,13 +311,31 @@ def test_unsubscribe_endpoint_full_flow(client, test_session_factory):
     email_id = email.id
     db.close()
 
-    r = client.get(f"/unsubscribe/{email_id}")
+    r = client.post(f"/unsubscribe/{email_id}")
     assert r.status_code == 200
     assert "unsubscribed" in r.text.lower()
 
     db = test_session_factory()
     assert is_suppressed(db, "optout@corp.com") is not None
     assert db.query(OutreachEmail).filter_by(status="cancelled").count() == 1
+    db.close()
+
+
+def test_unsubscribe_get_only_confirms(client, test_session_factory):
+    """Link scanners prefetch GETs — a GET must never opt anyone out."""
+    db = test_session_factory()
+    lead = _make_lead(db, email="scanned@corp.com")
+    email_id = _make_email(db, lead, status="sent", step=1).id
+    _make_email(db, lead, status="scheduled", step=2)
+    db.close()
+
+    r = client.get(f"/unsubscribe/{email_id}")
+    assert r.status_code == 200
+    assert '<form method="post">' in r.text
+
+    db = test_session_factory()
+    assert is_suppressed(db, "scanned@corp.com") is None
+    assert db.query(OutreachEmail).filter_by(status="scheduled").count() == 1
     db.close()
 
 

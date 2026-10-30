@@ -130,12 +130,15 @@ def test_lead_detail_cross_org_404(client, test_session_factory):
 
 
 def test_created_lead_carries_creator_org(client, test_session_factory):
+    from unittest.mock import patch
+
     headers = _register_first_admin(client)
-    r = client.post(
-        "/leads",
-        json={"name": "N", "email": "new@corp.com", "company": "C", "source": "website_form"},
-        headers=headers,
-    )
+    with patch("app.routers.leads.push_lead_job"):   # unit test — no Redis
+        r = client.post(
+            "/leads",
+            json={"name": "N", "email": "new@corp.com", "company": "C", "source": "website_form"},
+            headers=headers,
+        )
     assert r.status_code == 200, r.text
     db = test_session_factory()
     lead = db.query(Lead).filter(Lead.email == "new@corp.com").first()

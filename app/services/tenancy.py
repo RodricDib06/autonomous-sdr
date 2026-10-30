@@ -14,9 +14,10 @@ authenticated ingest (API key / JWT) lands in the caller's organization.
 import logging
 import re
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database.models import Organization
+from app.database.models import Lead, Organization
 from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
@@ -60,6 +61,39 @@ def scoped(query, model, org_id: str | None):
     if org_id is None:
         return query
     return query.filter(model.org_id == org_id)
+
+
+def org_lead_ids(org_id: str):
+    """SELECT of the org's lead ids, for `col.in_(...)` on tables keyed by lead."""
+    return select(Lead.id).where(Lead.org_id == org_id)
+
+
+def scoped_by_lead(query, lead_id_col, org_id: str | None):
+    """
+    Org-scope a table that has no org_id of its own but hangs off a lead
+    (verdicts, outreach emails, conversations, LLM calls, ...). A subquery
+    rather than a join, so it composes with queries that already join Lead.
+    """
+    if org_id is None:
+        return query
+    return query.filter(lead_id_col.in_(org_lead_ids(org_id)))
+
+
+def is_operator(user) -> bool:
+    """Member of the org that runs the install (or a pre-tenancy user)."""
+    if user.org_id is None:
+        return True
+    return user.organization is not None and user.organization.slug == DEFAULT_ORG_SLUG
+
+
+def is_instance_admin(user) -> bool:
+    """
+    Instance-wide settings (AI/enrichment provider, Slack webhook, the shared
+    BANT weights) affect every tenant, so only admins of the default org — the
+    operator who runs the install — may change them. Legacy users with no org
+    predate tenancy and are the operator by definition.
+    """
+    return user.role == "admin" and is_operator(user)
 
 
 def get_org_setting(db: Session, org_id: str | None, key: str, default=None):

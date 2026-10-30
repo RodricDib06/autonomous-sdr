@@ -487,14 +487,14 @@ def node_human_handoff(state: LeadState) -> LeadState:
     lead_id = state["lead_id"]
     _publish(lead_id, "human_handoff", "running")
     notifier = SlackNotifier(settings.SLACK_WEBHOOK_URL)
+    verdict = state.get("validation", {}).get("final_verdict", "unknown")
     if notifier.enabled:
         notifier.notify(
-            f":raising_hand: *Human review needed*: {state['lead_name']} "
-            f"(source={state.get('routing', {}).get('reason', 'unknown')})"
+            f":raising_hand: *Human review needed*: {state['lead_name']} — qualified {verdict} "
+            f"({state.get('routing', {}).get('reason', 'unknown')})"
         )
-    log.info("graph.node.complete", node="human_handoff", lead_id=lead_id[:8])
+    log.info("graph.node.complete", node="human_handoff", lead_id=lead_id[:8], verdict=verdict)
     _publish(lead_id, "human_handoff", "complete")
-    _publish_complete(lead_id, "handoff")
     return state
 
 
@@ -535,19 +535,15 @@ def route_after_validate(state: LeadState) -> str:
     verdict = state.get("validation", {}).get("final_verdict", "Cold")
     pipeline = state.get("routing", {}).get("pipeline", [])
 
+    # Qualified, but a human decides what happens next — no automated contact
+    if "human_handoff" in pipeline:
+        return "human_handoff"
     if verdict == "Hot":
         return "booking" if "booking" in pipeline else "outreach"
     elif verdict == "Warm":
         return "outreach" if "outreach" in pipeline else "sync_crm"
     else:
         return "sync_crm"
-
-
-def route_after_orchestrate_human(state: LeadState) -> str:
-    pipeline = state.get("routing", {}).get("pipeline", [])
-    if "human_handoff" in pipeline:
-        return "human_handoff"
-    return "enrich"
 
 
 # ---------------------------------------------------------------------------
@@ -570,13 +566,14 @@ def build_graph() -> StateGraph:
 
     workflow.set_entry_point("orchestrate")
 
+    # Handoff leads are qualified like any other — the handoff happens after
+    # validate. Routing them straight here once skipped qualification and,
+    # since nothing marked them complete, the stale-job watchdog re-queued
+    # them every 15 minutes.
     workflow.add_conditional_edges(
         "orchestrate",
-        lambda s: (
-            "human_handoff" if "human_handoff" in s.get("routing", {}).get("pipeline", [])
-            else route_after_orchestrate(s)
-        ),
-        {"enrich": "enrich", END: END, "human_handoff": "human_handoff"},
+        route_after_orchestrate,
+        {"enrich": "enrich", END: END},
     )
 
     # Linear qualification chain — research sits between enrich and score_intent
@@ -588,13 +585,14 @@ def build_graph() -> StateGraph:
     workflow.add_conditional_edges(
         "validate",
         route_after_validate,
-        {"booking": "booking", "outreach": "outreach", "sync_crm": "sync_crm"},
+        {"booking": "booking", "outreach": "outreach", "sync_crm": "sync_crm",
+         "human_handoff": "human_handoff"},
     )
 
     workflow.add_edge("booking",       "outreach")
     workflow.add_edge("outreach",      "sync_crm")
     workflow.add_edge("sync_crm",      END)
-    workflow.add_edge("human_handoff", END)
+    workflow.add_edge("human_handoff", "sync_crm")   # marks the lead complete
 
     return workflow.compile()
 

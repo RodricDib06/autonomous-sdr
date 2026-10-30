@@ -86,11 +86,12 @@ class CloseProbabilityModel:
         try:
             from sqlalchemy.orm import selectinload
             from app.database.models import Lead
+            from app.services.assignment_service import WON_STATUSES
 
             rows = (
                 db.query(Lead)
                 .options(selectinload(Lead.verdicts), selectinload(Lead.enrichments))
-                .filter(Lead.conversion_status.in_(["converted", "lost"]))
+                .filter(Lead.conversion_status.in_([*WON_STATUSES, "lost"]))
                 .all()
             )
 
@@ -101,16 +102,14 @@ class CloseProbabilityModel:
                     continue
                 enrichment = lead.enrichments[0] if lead.enrichments else None
                 X.append(_build_feature_vector(lead, verdict, enrichment))
-                y.append(1 if lead.conversion_status == "converted" else 0)
+                y.append(1 if lead.conversion_status in WON_STATUSES else 0)
 
             positives = sum(y)
             negatives = len(y) - positives
             if positives < _MIN_PER_CLASS or negatives < _MIN_PER_CLASS:
                 log.info(
-                    "Insufficient labeled leads for ML training",
-                    converted=positives,
-                    lost=negatives,
-                    required=_MIN_PER_CLASS,
+                    "Insufficient labeled leads for ML training "
+                    f"(converted={positives}, lost={negatives}, required={_MIN_PER_CLASS})"
                 )
                 return False
 
@@ -132,15 +131,13 @@ class CloseProbabilityModel:
                 self.n_lost = negatives
 
             log.info(
-                "ML close probability model trained",
-                n_samples=len(X),
-                converted=positives,
-                lost=negatives,
+                f"ML close probability model trained (n_samples={len(X)}, "
+                f"converted={positives}, lost={negatives})"
             )
             return True
 
         except Exception as exc:
-            log.error("ML training failed", error=str(exc))
+            log.error(f"ML training failed: {exc}")
             return False
 
     def predict(self, lead, verdict, enrichment) -> dict | None:
@@ -180,7 +177,7 @@ class CloseProbabilityModel:
                 "trained_at": self.trained_at.isoformat() if self.trained_at else None,
             }
         except Exception as exc:
-            log.error("ML prediction failed", error=str(exc))
+            log.error(f"ML prediction failed: {exc}")
             return None
 
 

@@ -632,8 +632,17 @@ def _daily_counts(total: int, days: int = 30) -> list:
 # Main seeder
 # ---------------------------------------------------------------------------
 
-def seed(db):
-    existing = db.query(Lead).filter(Lead.tags.contains(["demo"])).count()
+def seed(db, org_id: str | None = None):
+    """
+    Seed demo data into `org_id` (the default org when omitted). Leads and
+    sequences must carry an org: org-scoped users never see org-less rows, so
+    an orphaned seed looks to the onboarding wizard like nothing happened.
+    """
+    if org_id is None:
+        from app.services.tenancy import get_default_org
+        org_id = get_default_org(db).id
+
+    existing = db.query(Lead).filter(Lead.tags.contains(["demo"]), Lead.org_id == org_id).count()
     if existing > 0:
         print(f"  ✓ Demo data already present ({existing} leads) — skipping.")
         print("  To re-seed, delete demo leads first: DELETE FROM leads WHERE tags @> '[\"demo\"]';")
@@ -835,6 +844,12 @@ def seed(db):
             created_at=_ago(minutes=minutes) if minutes else _ago(days=days_f),
         ))
 
+    db.flush()
+    db.query(Lead).filter(Lead.tags.contains(["demo"]), Lead.org_id.is_(None)).update(
+        {Lead.org_id: org_id}, synchronize_session=False
+    )
+    for seq in (seq_a, seq_b):
+        seq.org_id = org_id
     db.commit()
 
     hot_total  = n_hot_curated + n_hot_gen

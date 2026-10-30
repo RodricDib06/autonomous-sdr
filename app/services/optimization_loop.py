@@ -30,6 +30,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.database.models import Lead, Verdict, OptimizationRun
+from app.services.assignment_service import WON_STATUSES
 
 log = logging.getLogger(__name__)
 
@@ -121,7 +122,7 @@ def _gather_outcomes(db: Session) -> tuple[list[dict], list[dict]]:
 
     leads = (
         db.query(Lead)
-        .filter(Lead.conversion_status.in_(["converted", "lost"]))
+        .filter(Lead.conversion_status.in_([*WON_STATUSES, "lost"]))
         .all()
     )
 
@@ -134,7 +135,7 @@ def _gather_outcomes(db: Session) -> tuple[list[dict], list[dict]]:
         if not verdict or not verdict.bant_scores:
             continue
         scores = verdict.bant_scores  # {"budget": float, "authority": float, ...}
-        if lead.conversion_status == "converted":
+        if lead.conversion_status in WON_STATUSES:
             converted.append(scores)
         else:
             lost.append(scores)

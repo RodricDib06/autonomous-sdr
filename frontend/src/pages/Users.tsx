@@ -115,7 +115,7 @@ export default function Users() {
       toast.success(`Role updated to ${updated.role}`);
       setEditingId(null);
     },
-    onError: () => toast.error("Failed to update role"),
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Failed to update role")),
   });
 
   const { mutate: deactivate } = useMutation({

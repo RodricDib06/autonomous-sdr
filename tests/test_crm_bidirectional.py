@@ -323,6 +323,24 @@ def test_webhook_endpoint_validates_signature(client, test_db, monkeypatch):
     assert r.status_code == 401
 
 
+def test_webhook_signature_uses_public_url_behind_proxy(client, test_db, monkeypatch):
+    """TLS ends at the proxy, so the app sees http://; HubSpot signed the https URL."""
+    monkeypatch.setattr(hs.settings, "HUBSPOT_CLIENT_SECRET", "s3cret")
+    monkeypatch.setattr(hs.settings, "APP_BASE_URL", "https://api.example.com")
+    org = get_default_org(test_db)
+    _connection(test_db, org.id)
+    _lead(test_db, org_id=org.id, hubspot_contact_id="901")
+
+    body = json.dumps([_lifecycle_event(value="customer")]).encode()
+    sig, ts = _sign(body, "https://api.example.com/ingest/hubspot-webhook", "s3cret")
+
+    r = client.post("/ingest/hubspot-webhook", content=body,
+                    headers={"X-HubSpot-Signature-v3": sig,
+                             "X-HubSpot-Request-Timestamp": ts,
+                             "Content-Type": "application/json"})
+    assert r.status_code == 200, r.text
+
+
 def test_crm_log_and_disconnect(client, test_db):
     headers = _login(client)
     org = get_default_org(test_db)

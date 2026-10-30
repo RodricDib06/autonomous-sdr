@@ -20,6 +20,7 @@ PoC: uses Python's smtplib with Gmail SMTP (free, 500 emails/day).
 #   PRODUCTION: use SendGrid's built-in click/open tracking or a service like Litmus.
 """
 
+import html
 import json
 import logging
 import smtplib
@@ -300,7 +301,10 @@ class OutreachAgent(BaseAgent):
         if autonomy_mode != "auto":
             send_result = f"held_for_approval ({autonomy_mode} mode)"
         elif step1 and (settings.SMTP_HOST or pick_mailbox(db, lead.org_id) is not None):
-            send_result = self._send_email(db, step1, lead.email)
+            # Same guardrails as follow-ups. A held step 1 stays 'scheduled'
+            # (due now), so the scheduler sends it once the window opens.
+            hold = _send_hold_reason(db, lead)
+            send_result = f"deferred: {hold}" if hold else self._send_email(db, step1, lead.email)
         else:
             send_result = "smtp_not_configured"
 
@@ -542,7 +546,7 @@ class OutreachAgent(BaseAgent):
             if settings.APP_BASE_URL:
                 pixel_url = f"{settings.APP_BASE_URL}/track/open/{email_record.id}"
                 html_body = (
-                    f"<html><body><pre style='font-family:sans-serif'>{email_record.body}</pre>"
+                    f"<html><body><pre style='font-family:sans-serif'>{html.escape(email_record.body)}</pre>"
                     f"<p style='font-size:11px;color:#888'>Don't want to hear from us? "
                     f"<a href='{unsubscribe_url}'>Unsubscribe</a></p>"
                     f"<img src='{pixel_url}' width='1' height='1' style='display:none' /></body></html>"
@@ -569,6 +573,52 @@ class OutreachAgent(BaseAgent):
 # ---------------------------------------------------------------------------
 # Scheduled follow-up sender (called by APScheduler every 15 min)
 # ---------------------------------------------------------------------------
+
+# Due emails scanned per tick, and sends allowed per tick. Scanning more than
+# we send matters: held emails (recipient asleep, org at target) would
+# otherwise fill the batch every tick and starve the sendable ones behind them.
+_SCAN_PER_TICK = 500
+_SENDS_PER_TICK = 50
+
+
+def _shift_later_steps(db: Session, email: OutreachEmail, lateness: timedelta) -> None:
+    """
+    A step that went out late (held for quiet hours, a weekend, the daily cap)
+    pushes the lead's remaining steps back by the same amount, so the cadence
+    keeps its spacing instead of firing steps back-to-back.
+    """
+    if lateness < timedelta(hours=1):
+        return
+    later = (
+        db.query(OutreachEmail)
+        .filter(
+            OutreachEmail.lead_id == email.lead_id,
+            OutreachEmail.step_number > email.step_number,
+            OutreachEmail.status.in_(("scheduled", "pending_approval")),
+        )
+        .all()
+    )
+    for step in later:
+        step.scheduled_at = step.scheduled_at + lateness
+    db.commit()
+
+
+def _send_hold_reason(db: Session, lead) -> str | None:
+    """Why an immediate send to `lead` must wait, or None if it may go now."""
+    from app.services.compliance import (
+        can_send_to_recipient, sent_in_last_24h, sent_in_last_24h_for_org,
+    )
+    from app.services.tenancy import get_org_setting
+
+    ok, reason = can_send_to_recipient(lead)
+    if not ok:
+        return reason
+    if sent_in_last_24h(db) >= settings.OUTREACH_DAILY_SEND_LIMIT:
+        return "daily send cap reached"
+    target = get_org_setting(db, lead.org_id, "daily_send_target", None)
+    if target is not None and sent_in_last_24h_for_org(db, lead.org_id) >= int(target):
+        return "org daily send target reached"
+    return None
 
 def send_pending_scheduled_emails(db: Session) -> dict:
     """
@@ -611,7 +661,8 @@ def send_pending_scheduled_emails(db: Session) -> dict:
             OutreachEmail.scheduled_at <= now,
             _Lead.archived == False,  # noqa: E712
         )
-        .limit(50)
+        .order_by(OutreachEmail.scheduled_at)
+        .limit(_SCAN_PER_TICK)
         .all()
     )
 
@@ -621,9 +672,31 @@ def send_pending_scheduled_emails(db: Session) -> dict:
     _org_sent: dict = {}
     agent = OutreachAgent()
 
+    sent_to_this_tick: set[str] = set()
     for email in pending:
+        if sent >= _SENDS_PER_TICK:
+            break
+        # One email per lead per tick; a send earlier this tick may also
+        # have pushed this step's slot back (_shift_later_steps)
+        if email.lead_id in sent_to_this_tick or email.scheduled_at > now:
+            skipped += 1
+            continue
         lead = db.query(_Lead).filter(_Lead.id == email.lead_id).first()
         if not lead or not lead.email:
+            skipped += 1
+            continue
+
+        # Steps go out in order: a later step never overtakes a held earlier one
+        earlier_unsent = (
+            db.query(OutreachEmail.id)
+            .filter(
+                OutreachEmail.lead_id == lead.id,
+                OutreachEmail.step_number < email.step_number,
+                OutreachEmail.status.in_(("scheduled", "pending_approval")),
+            )
+            .first()
+        )
+        if earlier_unsent:
             skipped += 1
             continue
 
@@ -675,9 +748,12 @@ def send_pending_scheduled_emails(db: Session) -> dict:
                 skipped += 1
                 continue
 
+        lateness = now - email.scheduled_at
         result = agent._send_email(db, email, lead.email)
         if result.startswith("sent"):
             sent += 1
+            sent_to_this_tick.add(lead.id)
+            _shift_later_steps(db, email, lateness)
             if lead.org_id in _org_sent:
                 _org_sent[lead.org_id] += 1
             log.info(

@@ -18,7 +18,7 @@ import structlog
 from app.database.connection import get_db  # noqa: F401
 from app.database import crud  # noqa: F401
 from app.database.models import Lead, Enrichment, Verdict, User  # noqa: F401
-from app.auth.dependencies import require_admin, require_manager, require_rep  # noqa: F401
+from app.auth.dependencies import require_admin, require_manager, require_rep, user_from_query_token  # noqa: F401
 from app.config import settings  # noqa: F401
 from app.utils.time import utcnow  # noqa: F401
 from app.services.queue_service import push_lead_job, get_redis  # noqa: F401
@@ -36,6 +36,7 @@ from app.services.export_service import (
 )
 from app.services.slack_notifier import slack_notifier
 from app.services.trigger_monitor import TRIGGER_SIGNAL_TYPES
+from app.services.tenancy import scoped, scoped_by_lead
 
 log = structlog.get_logger(__name__)
 
@@ -66,12 +67,9 @@ async def stream_pipeline_events(
       es.addEventListener('complete', () => es.close());
     """
     # Authenticate via query-param token (EventSource doesn't support headers)
-    if token:
-        from app.auth.dependencies import _user_from_jwt
-        user = _user_from_jwt(token, db)
-        if not user or not user.is_active:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    # (In dev/test, allow unauthenticated SSE when no token is provided)
+    user = user_from_query_token(token, db)
+    if not crud.get_lead(db, lead_id, org_id=user.org_id):
+        raise HTTPException(status_code=404, detail="Lead not found")
 
     async def event_generator():
         import redis.asyncio as aioredis
@@ -184,15 +182,18 @@ def get_lead_stats(
 ):
     """Get statistics about processed leads"""
     try:
-        total_leads = db.query(Lead).count()
-        completed_leads = db.query(Lead).filter(Lead.status == "complete").count()
-        failed_leads = db.query(Lead).filter(Lead.status == "failed").count()
-        processing_leads = db.query(Lead).filter(Lead.status == "processing").count()
+        org_id = current_user.org_id
+        leads = scoped(db.query(Lead), Lead, org_id)
+        total_leads = leads.count()
+        completed_leads = leads.filter(Lead.status == "complete").count()
+        failed_leads = leads.filter(Lead.status == "failed").count()
+        processing_leads = leads.filter(Lead.status == "processing").count()
 
         # Verdict breakdown
-        hot_leads = db.query(Verdict).filter(Verdict.final_verdict == "Hot").count()
-        warm_leads = db.query(Verdict).filter(Verdict.final_verdict == "Warm").count()
-        cold_leads = db.query(Verdict).filter(Verdict.final_verdict == "Cold").count()
+        verdicts = scoped_by_lead(db.query(Verdict), Verdict.lead_id, org_id)
+        hot_leads = verdicts.filter(Verdict.final_verdict == "Hot").count()
+        warm_leads = verdicts.filter(Verdict.final_verdict == "Warm").count()
+        cold_leads = verdicts.filter(Verdict.final_verdict == "Cold").count()
 
         return {
             "total_leads": total_leads,
@@ -221,7 +222,7 @@ def get_lead_trend(
     from sqlalchemy import func, case
 
     since = utcnow() - timedelta(days=days)
-    rows = (
+    query = (
         db.query(
             func.date(Lead.created_at).label("day"),
             func.count(Lead.id).label("total"),
@@ -231,6 +232,9 @@ def get_lead_trend(
         )
         .outerjoin(Verdict, Lead.id == Verdict.lead_id)
         .filter(Lead.created_at >= since)
+    )
+    rows = (
+        scoped(query, Lead, current_user.org_id)
         .group_by(func.date(Lead.created_at))
         .order_by(func.date(Lead.created_at))
         .all()
@@ -256,7 +260,7 @@ def get_quality_report(
 ):
     """Get system-wide data quality summary"""
     try:
-        report = DataQualityService().get_quality_report(db)
+        report = DataQualityService().get_quality_report(db, org_id=current_user.org_id)
         return report
     except Exception as e:
         log.error("Failed to get quality report", error=str(e))
@@ -269,7 +273,7 @@ def backfill_quality_scores(
 ):
     """Score all leads that have never been quality-scored."""
     try:
-        unscored = db.query(Lead).filter(Lead.data_quality_score.is_(None)).all()
+        unscored = scoped(db.query(Lead), Lead, current_user.org_id).filter(Lead.data_quality_score.is_(None)).all()
         service = DataQualityService()
         for lead in unscored:
             service.update_lead_quality(db, lead)
@@ -287,7 +291,7 @@ def get_hot_leads(
 ):
     """Get high-priority (Hot) leads ready for sales follow-up"""
     try:
-        hot_leads = db.query(Lead).join(Verdict).filter(
+        hot_leads = scoped(db.query(Lead), Lead, current_user.org_id).join(Verdict).filter(
             Lead.status == "complete",
             Verdict.final_verdict == "Hot"
         ).order_by(Verdict.confidence_score.desc()).limit(limit).all()
@@ -325,7 +329,9 @@ def export_leads(
 ):
     """Export leads data — supports JSON and CRM-formatted CSV (HubSpot, Salesforce)."""
     try:
-        query = db.query(Lead).filter(Lead.status == "complete", not Lead.archived)
+        query = scoped(db.query(Lead), Lead, current_user.org_id).filter(
+            Lead.status == "complete", Lead.archived.is_(False)
+        )
 
         if verdict_filter:
             query = query.join(Verdict).filter(Verdict.final_verdict == verdict_filter)
@@ -396,7 +402,10 @@ def import_csv_leads(
         )
 
         # Persist import audit record
-        import_service.persist_history(db, file.filename or "unknown.csv", result)
+        import_service.persist_history(
+            db, file.filename or "unknown.csv", result,
+            imported_by=current_user.email, org_id=current_user.org_id,
+        )
 
         # Send Slack notification if configured
         if slack_notifier.enabled:
@@ -418,7 +427,7 @@ def get_duplicate_report(
     """Get report of potential duplicate leads in system"""
     try:
         dedup_service = DeduplicationService(db)
-        report = dedup_service.get_duplicate_report()
+        report = dedup_service.get_duplicate_report(org_id=current_user.org_id)
 
         return {
             "report": report,
@@ -438,7 +447,7 @@ def get_import_history(
     try:
         from app.database.models import ImportHistory
         records = (
-            db.query(ImportHistory)
+            scoped(db.query(ImportHistory), ImportHistory, current_user.org_id)
             .order_by(ImportHistory.started_at.desc())
             .limit(limit)
             .all()
@@ -458,7 +467,7 @@ def reprocess_failed(
 ):
     """Re-queue all failed leads back into the processing pipeline."""
     from app.services.queue_service import push_lead_job
-    failed = db.query(Lead).filter(Lead.status == "failed").all()
+    failed = scoped(db.query(Lead), Lead, current_user.org_id).filter(Lead.status == "failed").all()
     if not failed:
         return {"requeued": 0, "message": "No failed leads found"}
     now = utcnow()
@@ -478,12 +487,12 @@ def batch_leads(
 ):
     """Perform a bulk action on multiple leads at once."""
     try:
-        result = execute_batch(db, request.action, request.lead_ids, request.payload)
+        result = execute_batch(db, request.action, request.lead_ids, request.payload, org_id=current_user.org_id)
         return result.to_dict()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        log.error("Batch action '{request.action}' failed", error=str(e))
+        log.error(f"Batch action '{request.action}' failed", error=str(e))
         raise HTTPException(status_code=500, detail="Batch action failed")
 
 @router.post("/leads/{lead_id}/assign")
@@ -569,7 +578,7 @@ def get_cooling_leads(
     Only 'watch' (7–13 days) and 'urgent' (14+ days) leads are returned.
     """
     from app.services.decay_service import get_cooling_leads as _get_cooling
-    results = _get_cooling(db, limit=limit)
+    results = _get_cooling(db, limit=limit, org_id=current_user.org_id)
     return {"leads": results, "count": len(results)}
 
 @router.get("/leads/{lead_id}", response_model=LeadDetail)
@@ -618,7 +627,7 @@ def get_lead(
     except HTTPException:
         raise
     except Exception as e:
-        log.error("Failed to fetch lead {lead_id}", error=str(e))
+        log.error(f"Failed to fetch lead {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to fetch lead")
 
 @router.get("/leads/{lead_id}/verdict-explanation")
@@ -745,7 +754,7 @@ def get_lead_quality_score(
     except HTTPException:
         raise
     except Exception as e:
-        log.error("Failed to get quality score for {lead_id}", error=str(e))
+        log.error(f"Failed to get quality score for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to get quality score")
 
 @router.post("/leads/{lead_id}/check-duplicate")
@@ -762,13 +771,9 @@ def check_lead_duplicate(
 
         dedup_service = DeduplicationService(db)
         potential_dupes = dedup_service.find_potential_duplicates(
-            lead.name, lead.email, lead.company
+            lead.name, lead.email, lead.company,
+            org_id=current_user.org_id, exclude_id=lead_id,
         )
-
-        # Filter out the lead itself
-        potential_dupes = [
-            d for d in potential_dupes if d['lead'].id != lead_id
-        ]
 
         return {
             "lead_id": lead_id,
@@ -789,7 +794,7 @@ def check_lead_duplicate(
     except HTTPException:
         raise
     except Exception as e:
-        log.error("Failed to check duplicates for {lead_id}", error=str(e))
+        log.error(f"Failed to check duplicates for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to check duplicates")
 
 @router.post("/leads/{primary_id}/merge/{duplicate_id}")
@@ -823,7 +828,7 @@ def merge_duplicate_leads(
     except HTTPException:
         raise
     except Exception as e:
-        log.error("Failed to merge leads {primary_id} and {duplicate_id}", error=str(e))
+        log.error(f"Failed to merge leads {primary_id} and {duplicate_id}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to merge leads")
 
 @router.post("/leads/{lead_id}/outreach")
@@ -839,7 +844,7 @@ def trigger_outreach(
         result = agent._timed_run(db, lead_id, {"triggered_by": current_user.email})
         return result
     except Exception as e:
-        log.error("Outreach failed for {lead_id}", error=str(e))
+        log.error(f"Outreach failed for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/leads/{lead_id}/outreach")
@@ -891,7 +896,7 @@ def trigger_booking(
         result = agent._timed_run(db, lead_id, {})
         return result
     except Exception as e:
-        log.error("Booking failed for {lead_id}", error=str(e))
+        log.error(f"Booking failed for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/leads/{lead_id}/bookings")
@@ -1074,7 +1079,7 @@ def send_chat_message(
         })
         return result
     except Exception as e:
-        log.error("Conversational agent failed for {lead_id}", error=str(e))
+        log.error(f"Conversational agent failed for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/leads/{lead_id}/conversations")
@@ -1156,7 +1161,7 @@ def sync_to_crm(
         result = sync_lead_to_crm(db, lead_id)
         return result
     except Exception as e:
-        log.error("CRM sync failed for {lead_id}", error=str(e))
+        log.error(f"CRM sync failed for {lead_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/leads/{lead_id}/outreach/generate/stream", include_in_schema=False)
@@ -1181,17 +1186,13 @@ async def stream_outreach_generation(
         if (ev.type === 'complete') es.close();
       };
     """
-    if token:
-        from app.auth.dependencies import _user_from_jwt
-        user = _user_from_jwt(token, db)
-        if not user or not user.is_active:
-            raise HTTPException(status_code=401, detail="Invalid token")
+    user = user_from_query_token(token, db)
 
     async def generate():
         from app.database.models import Enrichment, OutreachSequence
         from app.agents.outreach_agent import _PERSONALISE_PROMPT, OutreachAgent
 
-        lead = crud.get_lead(db, lead_id)
+        lead = crud.get_lead(db, lead_id, org_id=user.org_id)
         if not lead:
             yield f"data: {json.dumps({'type': 'error', 'message': 'Lead not found'})}\n\n"
             return
@@ -1530,7 +1531,7 @@ def get_referral_chain(
     # Parent — who discovered this lead
     referred_by = None
     if lead.referred_by_lead_id:
-        parent = crud.get_lead(db, lead.referred_by_lead_id)
+        parent = crud.get_lead(db, lead.referred_by_lead_id, org_id=current_user.org_id)
         if parent:
             referred_by = _lead_stub(parent)
 
@@ -1540,6 +1541,7 @@ def get_referral_chain(
         db.query(Lead)
         .options(selectinload(Lead.enrichments), selectinload(Lead.verdicts))
         .filter(Lead.referred_by_lead_id == lead_id)
+        .filter(*([Lead.org_id == current_user.org_id] if current_user.org_id else []))
         .order_by(Lead.created_at.asc())
         .all()
     )
@@ -1561,7 +1563,7 @@ def get_similar_leads(
 ):
     """Return leads with the most similar BANT + enrichment profile."""
     from app.services.market_intelligence import similar_leads
-    results = similar_leads(db, lead_id, limit=limit)
+    results = similar_leads(db, lead_id, limit=limit, org_id=current_user.org_id)
     return {"lead_id": lead_id, "similar": results, "count": len(results)}
 
 @router.post("/leads/{lead_id}/web-enrich")

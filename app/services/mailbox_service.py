@@ -12,6 +12,7 @@ import base64
 import email as email_lib
 import hashlib
 import imaplib
+import html
 import logging
 import smtplib
 from datetime import timedelta
@@ -23,6 +24,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database.crud import email_equals
 from app.database.models import Lead, OutreachEmail, SendingMailbox
 from app.utils.time import utcnow
 
@@ -130,7 +132,7 @@ def send_via_mailbox(
         if settings.APP_BASE_URL:
             pixel_url = f"{settings.APP_BASE_URL}/track/open/{email_record.id}"
             html_body = (
-                f"<html><body><pre style='font-family:sans-serif'>{email_record.body}</pre>"
+                f"<html><body><pre style='font-family:sans-serif'>{html.escape(email_record.body)}</pre>"
                 f"<p style='font-size:11px;color:#888'>Don't want to hear from us? "
                 f"<a href='{unsubscribe_url}'>Unsubscribe</a></p>"
                 f"<img src='{pixel_url}' width='1' height='1' style='display:none' /></body></html>"
@@ -246,7 +248,7 @@ def _process_inbound(
     if not sender or not body:
         return "ignored"
 
-    lead_q = db.query(Lead).filter(Lead.email.ilike(sender))
+    lead_q = db.query(Lead).filter(email_equals(Lead.email, sender))
     if mailbox.org_id is not None:
         lead_q = lead_q.filter(Lead.org_id == mailbox.org_id)
     lead = lead_q.first()

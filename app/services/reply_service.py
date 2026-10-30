@@ -25,6 +25,7 @@ from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
+from app.database.crud import email_equals
 from app.database.models import Conversation, Lead, LeadEvent, OutreachEmail
 from app.services.reply_classifier import (
     DEFAULT_REENGAGE_DAYS,
@@ -107,7 +108,9 @@ def _handle_referral(db: Session, lead: Lead, classification: Classification) ->
     if not email:
         return {"referral_created": False, "reason": "no contact extracted"}
 
-    existing = db.query(Lead).filter(Lead.email.ilike(email)).first()
+    existing = db.query(Lead).filter(
+        email_equals(Lead.email, email), Lead.org_id.is_not_distinct_from(lead.org_id)
+    ).first()
     if existing:
         return {"referral_created": False, "reason": "contact already a lead",
                 "existing_lead_id": existing.id}
@@ -218,8 +221,8 @@ def handle_reply(
 
     # Reply is the strongest positive engagement signal
     try:
-        from app.services.intent_scoring import apply_bayesian_update
-        apply_bayesian_update(db, lead.id, "replied")
+        from app.services.bayesian_updater import apply_bayesian_update
+        apply_bayesian_update(db, lead.id, "reply")
     except Exception as e:
         log.warning(f"[reply] Bayesian update failed for {lead.id[:8]}: {e}")
 

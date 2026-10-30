@@ -11,9 +11,9 @@ about a minute while it wakes.
 Built for the way companies actually adopt outbound AI:
 
 - **Trust ramp (autonomy dial)** — start in *draft-only*, graduate to *approve-each-email*, switch to *full auto* when the output has earned it. Inline-edit any draft before it sends.
-- **Multi-tenant** — organizations isolate leads, sequences, suppression lists, ICP configs, and autonomy settings; existing single-tenant installs upgrade transparently.
+- **Multi-tenant** — organizations isolate leads, sequences, suppression lists, ICP configs, and autonomy settings. An app-wide guard 404s any route that names another org's lead, email, conversation, or booking, and a test sweeps the live route table so a new endpoint can't skip it. Existing single-tenant installs upgrade transparently.
 - **Deliverability-first sending** — rotate across per-rep mailboxes with warm-up ramps, recipient-local send windows (a lead in Berlin never gets a 3 a.m. email), rolling daily caps, and IMAP reply detection that stops the cadence the moment a human answers.
-- **Compliance built in** — RFC 8058 one-click unsubscribe, opt-out intent detection, org-scoped do-not-contact lists, GDPR right-to-erasure with a hashed audit trail, and configurable data retention.
+- **Compliance built in** — RFC 8058 one-click unsubscribe (the footer link opens a confirm page, so corporate link scanners can't opt recipients out), opt-out intent detection, org-scoped do-not-contact lists, GDPR right-to-erasure with a hashed audit trail, and configurable data retention.
 - **ROI you can defend** — every LLM call is metered (tokens, dollars, latency, per lead); the ROI panel computes cost-per-qualified-lead and cost-per-meeting against a human SDR from your own pipeline data.
 
 ```
@@ -89,7 +89,7 @@ status and timing, streamed live over SSE while a lead is processed.
 | **Email tracking** | 1×1 pixel open tracking + click redirect |
 | **Campaign manager agent** | Goal-directed autonomy: quota + constraints in, daily observe→diagnose→propose→execute→report loop; pydantic-constrained action vocabulary; strategy-level approval dial |
 | **Autonomous prospecting** | Agent-built lead lists (synthetic demo / PDL Person Search) through suppression→dedup→verification→scoring gates with daily budget caps |
-| **Bidirectional CRM sync** | HubSpot OAuth: verdicts push out as contacts; lifecycle/deal-stage webhooks (HMAC-v3 verified) flow real outcomes back into the scoring models |
+| **Bidirectional CRM sync** | HubSpot OAuth: verdicts push out as contacts; lifecycle/deal-stage webhooks (HMAC-v3 verified) flow real outcomes back into the scoring models. Tested against HubSpot's signing spec; not yet against a live portal |
 | **Reply intelligence** | Deterministic-first reply classification; referrals become leads, OOO doesn't kill cadences, "not now" re-engages on schedule, objections feed variant drafting |
 | **Provenance-grounded emails** | Every factual claim in a generated email is matched to the research snippet that supports it; unverified claims flagged in the approval queue |
 | **Backtest mode** | Upload last quarter's CRM export (won/lost) → deterministic re-qualification → calibration report: hot recall, precision, lift, score-decile calibration |
@@ -99,7 +99,7 @@ status and timing, streamed live over SSE while a lead is processed.
 | **Compliance & send safety** | Do-not-contact suppression list (email + domain), RFC 8058 one-click unsubscribe, opt-out intent detection on replies, auto-stop sequences on reply |
 | **Send guardrails** | Rolling 24h send cap, recipient-local quiet hours (TLD-inferred timezone), weekday-only sends |
 | **Autonomy dial** | Per-org draft / approve / auto modes; approval queue with inline edits; bulk approve |
-| **Multi-tenancy** | Organizations with org-scoped leads, sequences, suppressions, ICP, autonomy settings |
+| **Multi-tenancy** | Organizations with org-scoped leads, sequences, suppressions, ICP, autonomy settings, analytics, and users; app-wide path guard; instance-wide settings reserved for the operator's admins |
 | **Mailbox rotation** | Per-rep sending identities, Fernet-encrypted credentials, warm-up ramps (10/day + 5/day), LRU rotation |
 | **Reply automation** | IMAP polling + webhook ingest through one shared pipeline; reply stops cadence; opt-out suppresses |
 | **Sequence authoring** | CRUD API + step editor UI; global templates clone-on-edit per org; soft delete keeps history |
@@ -112,7 +112,7 @@ status and timing, streamed live over SSE while a lead is processed.
 | **Prometheus metrics** | Queue depth, node duration histograms, LLM call counters, in-flight gauge |
 | **React dashboard** | Live pipeline SSE stream, A/B results, BANT weight chart, lead detail drawer |
 | **Production hardening** | Rate limiting (slowapi), security headers middleware, CORS from env var, Alembic migrations |
-| **499 backend + 483 frontend tests** | pytest + mocks; vitest + MSW; plus a real-Postgres/Redis integration suite in CI. Ingest, auth, A/B, tenancy, approvals, compliance, GDPR, provenance, backtests, verification, OAuth, … |
+| **623 backend + 503 frontend tests** | pytest + mocks; vitest + MSW; plus a real-Postgres/Redis integration suite in CI. Cross-tenant route sweep, static checks for silent-failure bug classes, ingest, auth, A/B, approvals, compliance, GDPR, provenance, backtests, verification, OAuth, … |
 
 ---
 
@@ -347,15 +347,16 @@ Full interactive docs: `http://localhost:8000/docs`
 ## Testing
 
 ```bash
-make test           # 499 backend tests, all passing
+make test           # 623 backend tests — in-memory SQLite, no Postgres or Redis needed
 make lint           # ruff check
 make fmt            # ruff format
 
-cd frontend && npm test -- --run    # 483 frontend tests (vitest + MSW)
+cd frontend && npm test -- --run    # 503 frontend tests (vitest + MSW)
 ```
 
-Backend coverage (499 tests):
-- Auth (register, login, refresh, RBAC, API keys) and multi-tenancy isolation
+Backend coverage (623 tests):
+- Auth (register, login, refresh, RBAC, API keys) and multi-tenancy isolation — a sweep
+  of every route that names a lead-owned record, plus every collection endpoint
 - Ingest (webhook secret, all 5 channels, universal webhook field detection, job status)
 - Enrichment (synthetic, hunter, deduplication) and email verification
 - A/B testing (chi-square approximation, event recording, winner promotion)
@@ -363,8 +364,10 @@ Backend coverage (499 tests):
 - Campaigns, autonomous prospecting, reply intelligence, bidirectional CRM sync
 - Provenance matching, backtest calibration, OAuth mailboxes, approvals, compliance, GDPR
 - Export, batch, CSV import, data quality, Slack notifier, outreach agent, ROI, LLM telemetry
+- Static checks for bugs that only fail at runtime inside a try/except: stdlib loggers
+  called with structlog kwargs, and lazy `from app... import` names that don't exist
 
-Frontend coverage (483 tests): component and page tests with mocked API boundaries
+Frontend coverage (503 tests): component and page tests with mocked API boundaries
 (MSW), store logic, and utility units. A separate integration suite
 (`tests_integration/`) runs against real Postgres and Redis in CI.
 
@@ -459,7 +462,7 @@ first error:
 | `RuntimeError: DATABASE_URL is not set` | No Postgres attached. The app raises on import, so the container exits before serving anything. | Provision Postgres and wire `DATABASE_URL` into the API service |
 | `startup.redis status=degraded` | Redis unreachable | Provision Redis/Key Value and wire `REDIS_URL`. The app now boots anyway and reports `"status": "degraded"` on `/health` |
 | `connection refused` / healthcheck timeout | Bound to the wrong port | Don't override the Docker `CMD` with an exec-form start command — `$PORT` won't expand. The image already binds `${PORT:-8000}` |
-| `alembic upgrade head` fails in pre-deploy | Database reachable but migration failed | Read the alembic error; a fresh database should replay 0001→0015 cleanly |
+| `alembic upgrade head` fails in pre-deploy | Database reachable but migration failed | Read the alembic error; a fresh database should replay 0001→0016 cleanly |
 
 `curl https://<your-api>/health` is the fastest triage once anything is
 serving: it returns 200 even when degraded, and names the failing dependency.
@@ -514,7 +517,7 @@ app/
 ├── metrics.py                   # Prometheus counters + histograms
 └── main.py                      # FastAPI app, middleware, legacy REST endpoints
 
-alembic/versions/                # 15 migrations, 0001 → 0015
+alembic/versions/                # 16 migrations, 0001 → 0016
 
 frontend/src/pages/
 ├── Dashboard.tsx                # KPI cards, pipeline funnel, hot leads feed
@@ -531,9 +534,9 @@ frontend/src/pages/
 ├── Leads.tsx                    # Lead table + 5-tab detail drawer
 ├── Import.tsx · Users.tsx · Settings.tsx · Login.tsx
 
-tests/                           # 499 backend tests — pytest + unittest.mock
+tests/                           # 623 backend tests — pytest + unittest.mock
 tests_integration/               # real Postgres + Redis suite (CI)
-frontend/src/__tests__/          # 483 frontend tests — vitest + MSW
+frontend/src/__tests__/          # 503 frontend tests — vitest + MSW
 ```
 
 ---

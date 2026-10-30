@@ -2,7 +2,7 @@ import json
 import asyncio
 import threading
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, Query, Request, BackgroundTasks
+from fastapi import FastAPI, Depends, Header, HTTPException, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -22,7 +22,7 @@ from app.database.models import Lead
 from app.services.queue_service import get_redis
 from app.services.ollama_client import OllamaConnectionError
 from app.services.validation import EmailDomainValidator
-from app.auth.dependencies import require_admin, require_manager, require_rep
+from app.auth.dependencies import enforce_path_org, require_admin, require_manager, require_rep
 from app.database.models import User
 from app.routers.auth import router as auth_router
 from app.routers.ingest import router as ingest_router
@@ -157,7 +157,8 @@ async def lifespan(app: FastAPI):
         raise
 
 
-app = FastAPI(title="AutonomousSDR", lifespan=lifespan)
+# Tenant guard on every route whose path names a lead-owned record
+app = FastAPI(title="AutonomousSDR", lifespan=lifespan, dependencies=[Depends(enforce_path_org)])
 
 # Rate limiting
 app.state.limiter = limiter
@@ -365,7 +366,7 @@ def validate_email(
             "issues": result['email']['issues'] + (result['domain']['issues'] if result['domain'] else [])
         }
     except Exception as e:
-        log.error("Failed to validate email {email}", error=str(e))
+        log.error(f"Failed to validate email {email}", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to validate email")
 
 
@@ -431,7 +432,7 @@ def track_email_event(
         record_event(db, email_id, event)
         return {"status": "recorded", "email_id": email_id, "event": event}
     except Exception as e:
-        log.error("Failed to record event {event} on email {email_id}", error=str(e))
+        log.error(f"Failed to record event {event} on email {email_id}", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -469,12 +470,15 @@ def get_autonomy_feed(
     )
     from app.database.models import LeadEvent
 
+    from app.services.tenancy import scoped
+
     since = utcnow() - timedelta(hours=hours)
     events = []
+    org_id = current_user.org_id
 
     # ── Follow-up emails sent by the scheduler (step > 1) ───────────────────
     follow_ups = (
-        db.query(OutreachEmail, LeadModel)
+        scoped(db.query(OutreachEmail, LeadModel), LeadModel, org_id)
         .join(LeadModel, OutreachEmail.lead_id == LeadModel.id)
         .filter(
             OutreachEmail.sent_at >= since,
@@ -496,7 +500,7 @@ def get_autonomy_feed(
 
     # ── Trigger monitor fired (funding / job posting / news) ─────────────────
     signals = (
-        db.query(IntentSignal, LeadModel)
+        scoped(db.query(IntentSignal, LeadModel), LeadModel, org_id)
         .join(LeadModel, IntentSignal.lead_id == LeadModel.id)
         .filter(IntentSignal.captured_at >= since)
         .order_by(IntentSignal.captured_at.desc())
@@ -516,7 +520,7 @@ def get_autonomy_feed(
 
     # ── Bayesian re-qualification (pipeline.complete events after open/click) ─
     requalified = (
-        db.query(LeadEvent, LeadModel)
+        scoped(db.query(LeadEvent, LeadModel), LeadModel, org_id)
         .join(LeadModel, LeadEvent.lead_id == LeadModel.id)
         .filter(
             LeadEvent.event_type == "pipeline.complete",
@@ -615,9 +619,10 @@ def get_inbox(
 ):
     """Return all conversation threads across leads, sorted: needs_human first, then newest."""
     from app.database.models import Conversation, Lead as LeadModel
-    query = (
-        db.query(Conversation, LeadModel)
-        .join(LeadModel, Conversation.lead_id == LeadModel.id)
+    from app.services.tenancy import scoped
+    query = scoped(
+        db.query(Conversation, LeadModel).join(LeadModel, Conversation.lead_id == LeadModel.id),
+        LeadModel, current_user.org_id,
     )
     if needs_human is not None:
         query = query.filter(Conversation.needs_human == needs_human)
@@ -733,6 +738,7 @@ async def ingest_email_reply(
     payload: dict,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    x_webhook_secret: str | None = Header(None),
 ):
     """
     Webhook endpoint for inbound email replies from a sending platform
@@ -751,6 +757,10 @@ async def ingest_email_reply(
     and (if no SMTP is configured) marks the agent reply as "sent_demo".
     """
     from app.database.models import OutreachEmail as OutreachEmailModel
+    from app.routers.ingest import _verify_webhook_secret
+
+    # A forged reply can opt any lead out or spend LLM calls — same gate as /ingest/*
+    _verify_webhook_secret(x_webhook_secret)
 
     reply_text = (payload.get("reply_text") or "").strip()
     if not reply_text:
@@ -870,11 +880,8 @@ async def global_event_stream(
       const es = new EventSource(`/events/stream?token=${token}`);
       es.addEventListener('lead_complete', e => { ... });
     """
-    if token:
-        from app.auth.dependencies import _user_from_jwt
-        user = _user_from_jwt(token, db)
-        if not user or not user.is_active:
-            raise HTTPException(status_code=401, detail="Invalid token")
+    from app.auth.dependencies import user_from_query_token
+    user_from_query_token(token, db)
 
     async def generator():
         import redis.asyncio as aioredis
@@ -931,8 +938,11 @@ def get_outreach_stats(
 ):
     """Aggregate email engagement stats across all sequences."""
     from app.database.models import OutreachEmail as OutreachEmailModel
+    from app.services.tenancy import scoped_by_lead
 
-    rows = db.query(OutreachEmailModel).all()
+    rows = scoped_by_lead(
+        db.query(OutreachEmailModel), OutreachEmailModel.lead_id, current_user.org_id
+    ).all()
     total_sent = sum(1 for r in rows if r.status in ("sent", "opened", "replied"))
     total_opened = sum(1 for r in rows if r.status in ("opened", "replied"))
     total_replied = sum(1 for r in rows if r.status == "replied")
@@ -1002,7 +1012,14 @@ async def seed_demo(
     """
     from app.database.models import Lead as LeadModel
 
-    existing = db.query(LeadModel).filter(LeadModel.tags.contains(["demo"])).count()
+    from app.services.tenancy import get_default_org
+    org_id = current_user.org_id or get_default_org(db).id
+
+    existing = (
+        db.query(LeadModel)
+        .filter(LeadModel.tags.contains(["demo"]), LeadModel.org_id == org_id)
+        .count()
+    )
     if existing > 0:
         return {"status": "already_seeded", "count": existing, "message": f"{existing} demo leads already exist."}
 
@@ -1014,7 +1031,7 @@ async def seed_demo(
         from app.database.connection import SessionLocal
         _db = SessionLocal()
         try:
-            seed(_db)
+            seed(_db, org_id=org_id)
         finally:
             _db.close()
 

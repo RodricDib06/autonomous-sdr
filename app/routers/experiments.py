@@ -18,7 +18,7 @@ import structlog
 from app.database.connection import get_db  # noqa: F401
 from app.database import crud  # noqa: F401
 from app.database.models import Lead, Enrichment, Verdict, User  # noqa: F401
-from app.auth.dependencies import require_admin, require_manager, require_rep  # noqa: F401
+from app.auth.dependencies import require_admin, require_instance_admin, require_manager, require_rep  # noqa: F401
 from app.config import settings  # noqa: F401
 from app.utils.time import utcnow  # noqa: F401
 from app.services.queue_service import push_lead_job, get_redis  # noqa: F401
@@ -28,6 +28,41 @@ log = structlog.get_logger(__name__)
 router = APIRouter(tags=["experiments"])
 
 
+def _visible_sequences(db: Session, user: User):
+    """The org's own sequences plus the shared global defaults."""
+    from app.database.models import OutreachSequence
+    q = db.query(OutreachSequence)
+    if user.org_id is not None:
+        q = q.filter((OutreachSequence.org_id == user.org_id) | OutreachSequence.org_id.is_(None))
+    return q
+
+
+def _promote(db: Session, user: User, sequence_id: str) -> dict:
+    """
+    Make `sequence_id` the org's only active sequence of its own. Global
+    defaults are shared by every tenant, so they are never switched off from
+    inside one org; an unknown id is a 404 rather than a silent deactivation
+    of every sequence.
+    """
+    from app.database.models import OutreachSequence
+    winner = _visible_sequences(db, user).filter(OutreachSequence.id == sequence_id).first()
+    if winner is None:
+        raise HTTPException(status_code=404, detail="Sequence not found")
+    own = db.query(OutreachSequence)
+    if user.org_id is not None:
+        own = own.filter(OutreachSequence.org_id == user.org_id)
+    deactivated = 0
+    for seq in own.all():
+        active = seq.id == sequence_id
+        if seq.is_active and not active:
+            deactivated += 1
+        seq.is_active = active
+    winner.is_active = True
+    db.commit()
+    log.info("ab.promoted", sequence_id=sequence_id, deactivated=deactivated, by=user.email)
+    return {"status": "promoted", "winning_sequence_id": sequence_id, "deactivated": deactivated}
+
+
 @router.get("/ab-tests/results")
 def get_ab_results(
     current_user: User = Depends(require_manager),
@@ -35,15 +70,10 @@ def get_ab_results(
 ):
     """Return per-variant conversion metrics for all outreach sequences."""
     from app.services.ab_testing import get_test_results, _chi_square_p, _MIN_SAMPLE
-    from app.database.models import OutreachSequence
-
-    raw = get_test_results(db)
 
     # Attach sequence names and normalise field names for the frontend
-    seq_names: dict[str, str] = {
-        s.id: s.name
-        for s in db.query(OutreachSequence).all()
-    }
+    seq_names: dict[str, str] = {s.id: s.name for s in _visible_sequences(db, current_user).all()}
+    raw = get_test_results(db, sequence_ids=list(seq_names)) if seq_names else []
     variants = [
         {
             "sequence_id": r["sequence_id"],
@@ -94,9 +124,7 @@ def promote_ab_winner_legacy(
     db: Session = Depends(get_db),
 ):
     """Legacy query-param route — prefer POST /ab-tests/{sequence_id}/promote."""
-    from app.services.ab_testing import promote_winner
-    promote_winner(db, sequence_id)
-    return {"status": "promoted", "winning_sequence_id": sequence_id}
+    return _promote(db, current_user, sequence_id)
 
 @router.post("/ab-tests/{sequence_id}/promote")
 def promote_ab_winner(
@@ -104,14 +132,13 @@ def promote_ab_winner(
     current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """Deactivate all other sequences and promote this one as the winner."""
-    from app.services.ab_testing import promote_winner
-    promote_winner(db, sequence_id)
-    return {"status": "promoted", "winning_sequence_id": sequence_id}
+    """Deactivate the org's other sequences and promote this one as the winner."""
+    return _promote(db, current_user, sequence_id)
 
 @router.post("/optimization/run")
 def run_optimization(
-    current_user: User = Depends(require_admin),
+    # BANT weights are shared by every tenant
+    current_user: User = Depends(require_instance_admin),
     db: Session = Depends(get_db),
 ):
     """Trigger a scoring weight optimization cycle based on conversion outcomes."""
@@ -170,7 +197,10 @@ def get_multi_axis_ab(
     """
     from app.database.models import OutreachEmail as OE
 
-    emails = db.query(OE).filter(OE.sent_at != None).all()  # noqa: E711
+    from app.services.tenancy import scoped_by_lead
+    emails = scoped_by_lead(
+        db.query(OE).filter(OE.sent_at != None), OE.lead_id, current_user.org_id  # noqa: E711
+    ).all()
 
     def classify(email):
         slot = None

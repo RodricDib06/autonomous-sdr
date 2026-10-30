@@ -85,7 +85,14 @@ def _create_and_queue(db: Session, name: str, email: str, company: str, source: 
     # PoC dedup: check by email only
     # PRODUCTION: probabilistic matching on (email, name, domain, phone) via Clearbit /v2/people/find
     from app.database.models import Lead
-    existing = db.query(Lead).filter(Lead.email == email).first()
+    from app.services.tenancy import get_default_org
+    # Public ingest lands in the default org, so that's the only org a
+    # duplicate can live in — and the only one whose lead id we may reveal
+    existing = (
+        db.query(Lead)
+        .filter(Lead.email == email, Lead.org_id == get_default_org(db).id)
+        .first()
+    )
     if existing:
         log.info("ingest.duplicate", email=email, existing_id=existing.id[:8])
         return {"status": "duplicate", "lead_id": existing.id, "email": email}

@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 _MIN_SEGMENT_SIZE = 3  # ignore segments with too few leads
 
 
-def compute_market_intelligence(db) -> dict:
+def compute_market_intelligence(db, org_id: str | None = None) -> dict:
     """
     Analyse all complete leads and return segment-level conversion patterns.
 
@@ -38,6 +38,7 @@ def compute_market_intelligence(db) -> dict:
         db.query(Lead)
         .options(selectinload(Lead.verdicts), selectinload(Lead.enrichments))
         .filter(Lead.status == "complete", Lead.archived == False)  # noqa: E712
+        .filter(*([Lead.org_id == org_id] if org_id is not None else []))
         .all()
     )
 
@@ -121,7 +122,7 @@ def compute_market_intelligence(db) -> dict:
     }
 
 
-def similar_leads(db, lead_id: str, limit: int = 5) -> list[dict]:
+def similar_leads(db, lead_id: str, limit: int = 5, org_id: str | None = None) -> list[dict]:
     """
     Return the top *limit* leads most similar to *lead_id* by BANT profile
     and enrichment features, using cosine similarity.
@@ -178,6 +179,7 @@ def similar_leads(db, lead_id: str, limit: int = 5) -> list[dict]:
         db.query(Lead)
         .options(selectinload(Lead.verdicts), selectinload(Lead.enrichments))
         .filter(Lead.status == "complete", Lead.id != lead_id, Lead.archived == False)  # noqa: E712
+        .filter(*([Lead.org_id == org_id] if org_id is not None else []))
         .limit(500)
         .all()
     )

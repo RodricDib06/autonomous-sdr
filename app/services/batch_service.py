@@ -41,9 +41,18 @@ def execute_batch(
     action: str,
     lead_ids: list[str],
     payload: dict,
+    org_id: str | None = None,
 ) -> BatchResult:
     if action not in VALID_ACTIONS:
         raise ValueError(f"Unknown action '{action}'. Valid actions: {sorted(VALID_ACTIONS)}")
+
+    # Another org's leads are reported as not found, never touched
+    visible = lead_ids
+    if org_id is not None:
+        owned = {
+            lid for (lid,) in db.query(Lead.id).filter(Lead.id.in_(lead_ids), Lead.org_id == org_id)
+        }
+        visible = [lid for lid in lead_ids if lid in owned]
 
     handlers = {
         "tag_add": _tag_add,
@@ -52,7 +61,10 @@ def execute_batch(
         "archive": _archive,
         "delete": _delete,
     }
-    return handlers[action](db, lead_ids, payload)
+    result = handlers[action](db, visible, payload)
+    result.requested = len(lead_ids)
+    result.not_found += len(lead_ids) - len(visible)
+    return result
 
 
 # ---------------------------------------------------------------------------

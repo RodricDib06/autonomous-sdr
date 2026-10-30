@@ -197,7 +197,12 @@ def track_visit(
                     f"visitor+{re.sub(r'[^a-z0-9]', '', company.lower())}@unknown.com"
                 )
 
-                existing = db.query(Lead).filter(Lead.email == synthetic_email).first()
+                from app.services.tenancy import get_default_org
+                existing = (
+                    db.query(Lead)
+                    .filter(Lead.email == synthetic_email, Lead.org_id == get_default_org(db).id)
+                    .first()
+                )
                 if not existing:
                     new_lead = crud.create_lead(
                         db,

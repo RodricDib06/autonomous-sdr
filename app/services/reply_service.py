@@ -107,7 +107,7 @@ def _handle_referral(db: Session, lead: Lead, classification: Classification) ->
     if not email:
         return {"referral_created": False, "reason": "no contact extracted"}
 
-    existing = db.query(Lead).filter(Lead.email.ilike(email)).first()
+    existing = db.query(Lead).filter(Lead.email.ilike(email), Lead.org_id.is_not_distinct_from(lead.org_id)).first()
     if existing:
         return {"referral_created": False, "reason": "contact already a lead",
                 "existing_lead_id": existing.id}

@@ -22,7 +22,7 @@ from app.database.models import Lead
 from app.services.queue_service import get_redis
 from app.services.ollama_client import OllamaConnectionError
 from app.services.validation import EmailDomainValidator
-from app.auth.dependencies import require_admin, require_manager, require_rep
+from app.auth.dependencies import enforce_path_org, require_admin, require_manager, require_rep
 from app.database.models import User
 from app.routers.auth import router as auth_router
 from app.routers.ingest import router as ingest_router
@@ -157,7 +157,8 @@ async def lifespan(app: FastAPI):
         raise
 
 
-app = FastAPI(title="AutonomousSDR", lifespan=lifespan)
+# Tenant guard on every route whose path names a lead-owned record
+app = FastAPI(title="AutonomousSDR", lifespan=lifespan, dependencies=[Depends(enforce_path_org)])
 
 # Rate limiting
 app.state.limiter = limiter
@@ -469,12 +470,15 @@ def get_autonomy_feed(
     )
     from app.database.models import LeadEvent
 
+    from app.services.tenancy import scoped
+
     since = utcnow() - timedelta(hours=hours)
     events = []
+    org_id = current_user.org_id
 
     # ── Follow-up emails sent by the scheduler (step > 1) ───────────────────
     follow_ups = (
-        db.query(OutreachEmail, LeadModel)
+        scoped(db.query(OutreachEmail, LeadModel), LeadModel, org_id)
         .join(LeadModel, OutreachEmail.lead_id == LeadModel.id)
         .filter(
             OutreachEmail.sent_at >= since,
@@ -496,7 +500,7 @@ def get_autonomy_feed(
 
     # ── Trigger monitor fired (funding / job posting / news) ─────────────────
     signals = (
-        db.query(IntentSignal, LeadModel)
+        scoped(db.query(IntentSignal, LeadModel), LeadModel, org_id)
         .join(LeadModel, IntentSignal.lead_id == LeadModel.id)
         .filter(IntentSignal.captured_at >= since)
         .order_by(IntentSignal.captured_at.desc())
@@ -516,7 +520,7 @@ def get_autonomy_feed(
 
     # ── Bayesian re-qualification (pipeline.complete events after open/click) ─
     requalified = (
-        db.query(LeadEvent, LeadModel)
+        scoped(db.query(LeadEvent, LeadModel), LeadModel, org_id)
         .join(LeadModel, LeadEvent.lead_id == LeadModel.id)
         .filter(
             LeadEvent.event_type == "pipeline.complete",
@@ -615,9 +619,10 @@ def get_inbox(
 ):
     """Return all conversation threads across leads, sorted: needs_human first, then newest."""
     from app.database.models import Conversation, Lead as LeadModel
-    query = (
-        db.query(Conversation, LeadModel)
-        .join(LeadModel, Conversation.lead_id == LeadModel.id)
+    from app.services.tenancy import scoped
+    query = scoped(
+        db.query(Conversation, LeadModel).join(LeadModel, Conversation.lead_id == LeadModel.id),
+        LeadModel, current_user.org_id,
     )
     if needs_human is not None:
         query = query.filter(Conversation.needs_human == needs_human)
@@ -933,8 +938,11 @@ def get_outreach_stats(
 ):
     """Aggregate email engagement stats across all sequences."""
     from app.database.models import OutreachEmail as OutreachEmailModel
+    from app.services.tenancy import scoped_by_lead
 
-    rows = db.query(OutreachEmailModel).all()
+    rows = scoped_by_lead(
+        db.query(OutreachEmailModel), OutreachEmailModel.lead_id, current_user.org_id
+    ).all()
     total_sent = sum(1 for r in rows if r.status in ("sent", "opened", "replied"))
     total_opened = sum(1 for r in rows if r.status in ("opened", "replied"))
     total_replied = sum(1 for r in rows if r.status == "replied")
@@ -1004,7 +1012,14 @@ async def seed_demo(
     """
     from app.database.models import Lead as LeadModel
 
-    existing = db.query(LeadModel).filter(LeadModel.tags.contains(["demo"])).count()
+    from app.services.tenancy import get_default_org
+    org_id = current_user.org_id or get_default_org(db).id
+
+    existing = (
+        db.query(LeadModel)
+        .filter(LeadModel.tags.contains(["demo"]), LeadModel.org_id == org_id)
+        .count()
+    )
     if existing > 0:
         return {"status": "already_seeded", "count": existing, "message": f"{existing} demo leads already exist."}
 
@@ -1016,7 +1031,7 @@ async def seed_demo(
         from app.database.connection import SessionLocal
         _db = SessionLocal()
         try:
-            seed(_db)
+            seed(_db, org_id=org_id)
         finally:
             _db.close()
 

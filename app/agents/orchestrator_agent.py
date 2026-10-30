@@ -112,7 +112,7 @@ class OrchestratorAgent(BaseAgent):
     def _check_duplicate(self, db: Session, lead: Lead) -> tuple[bool, str | None]:
         existing = (
             db.query(Lead)
-            .filter(Lead.email == lead.email, Lead.id != lead.id)
+            .filter(Lead.email == lead.email, Lead.id != lead.id, Lead.org_id.is_not_distinct_from(lead.org_id))
             .order_by(Lead.created_at.asc())
             .first()
         )

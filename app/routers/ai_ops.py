@@ -5,10 +5,11 @@ AI operations telemetry — what the LLM layer costs and how it performs.
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_manager, require_rep
+from app.services.tenancy import is_operator, org_lead_ids
 from app.database.connection import get_db
 from app.database.models import BookingRequest, Lead, LLMCall, OutreachEmail, User, Verdict
 from app.utils.time import utcnow
@@ -18,6 +19,20 @@ router = APIRouter(tags=["ai-ops"])
 # A human SDR handles roughly this many leads per year (≈250/month) —
 # used only for the cost-comparison denominator, and overridable per request.
 HUMAN_SDR_LEADS_PER_YEAR = 3000
+
+
+def _llm_window(cutoff, user: User) -> list:
+    """
+    Filters for the LLM spend a user may see since `cutoff`. Calls are
+    attributed to leads, so a tenant sees the spend on its own leads. Calls
+    with no lead (campaign planning, prospecting) are billed to the operator's
+    API key, so the operator's org sees those too.
+    """
+    conditions = [LLMCall.created_at >= cutoff]
+    if user.org_id is not None:
+        own = LLMCall.lead_id.in_(org_lead_ids(user.org_id))
+        conditions.append(or_(own, LLMCall.lead_id.is_(None)) if is_operator(user) else own)
+    return conditions
 
 
 @router.get("/analytics/llm-costs")
@@ -31,14 +46,14 @@ def llm_costs(
     and a daily cost series. All figures cover the trailing `days` window.
     """
     cutoff = utcnow() - timedelta(days=days)
-    base = db.query(LLMCall).filter(LLMCall.created_at >= cutoff)
+    base = db.query(LLMCall).filter(*_llm_window(cutoff, current_user))
 
     totals = db.query(
         func.count(LLMCall.id),
         func.coalesce(func.sum(LLMCall.prompt_tokens + LLMCall.completion_tokens), 0),
         func.coalesce(func.sum(LLMCall.cost_usd), 0.0),
         func.coalesce(func.avg(LLMCall.latency_ms), 0.0),
-    ).filter(LLMCall.created_at >= cutoff).one()
+    ).filter(*_llm_window(cutoff, current_user)).one()
 
     failures = base.filter(LLMCall.success.is_(False)).count()
 
@@ -56,7 +71,7 @@ def llm_costs(
             func.sum(LLMCall.prompt_tokens + LLMCall.completion_tokens),
             func.sum(LLMCall.cost_usd),
             func.avg(LLMCall.latency_ms),
-        ).filter(LLMCall.created_at >= cutoff).group_by(LLMCall.agent_name)
+        ).filter(*_llm_window(cutoff, current_user)).group_by(LLMCall.agent_name)
         .order_by(func.sum(LLMCall.cost_usd).desc()).all()
     ]
 
@@ -72,7 +87,7 @@ def llm_costs(
             LLMCall.model,
             func.count(LLMCall.id),
             func.sum(LLMCall.cost_usd),
-        ).filter(LLMCall.created_at >= cutoff).group_by(LLMCall.provider, LLMCall.model).all()
+        ).filter(*_llm_window(cutoff, current_user)).group_by(LLMCall.provider, LLMCall.model).all()
     ]
 
     daily = [
@@ -81,7 +96,7 @@ def llm_costs(
             func.date(LLMCall.created_at),
             func.count(LLMCall.id),
             func.sum(LLMCall.cost_usd),
-        ).filter(LLMCall.created_at >= cutoff)
+        ).filter(*_llm_window(cutoff, current_user))
         .group_by(func.date(LLMCall.created_at))
         .order_by(func.date(LLMCall.created_at)).all()
     ]
@@ -200,7 +215,7 @@ def roi(
 
     llm_cost = float(
         db.query(func.coalesce(func.sum(LLMCall.cost_usd), 0.0))
-        .filter(LLMCall.created_at >= cutoff)
+        .filter(*_llm_window(cutoff, current_user))
         .scalar() or 0.0
     )
 

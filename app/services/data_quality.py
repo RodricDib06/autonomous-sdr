@@ -158,21 +158,25 @@ class DataQualityService:
         db.refresh(lead)
         return scores
 
-    def get_quality_report(self, db: Session) -> dict:
-        """System-wide quality summary."""
+    def get_quality_report(self, db: Session, org_id: str | None = None) -> dict:
+        """Quality summary for one org (all leads when org_id is None)."""
         from sqlalchemy import func
         from app.database.models import Lead
+        from app.services.tenancy import scoped
 
-        total = db.query(Lead).count()
-        scored = db.query(Lead).filter(Lead.data_quality_score.isnot(None)).count()
+        def q(*cols):
+            return scoped(db.query(*cols) if cols else db.query(Lead), Lead, org_id)
+
+        total = q().count()
+        scored = q().filter(Lead.data_quality_score.isnot(None)).count()
 
         avg_quality = (
-            db.query(func.avg(Lead.data_quality_score))
+            q(func.avg(Lead.data_quality_score))
             .filter(Lead.data_quality_score.isnot(None))
             .scalar()
         )
         avg_completeness = (
-            db.query(func.avg(Lead.completeness_score))
+            q(func.avg(Lead.completeness_score))
             .filter(Lead.completeness_score.isnot(None))
             .scalar()
         )
@@ -180,7 +184,7 @@ class DataQualityService:
         # Distribution buckets
         def _bucket(col, lo, hi):
             return (
-                db.query(Lead)
+                q()
                 .filter(col >= lo, col < hi, col.isnot(None))
                 .count()
             )

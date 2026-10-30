@@ -159,7 +159,7 @@ def compute_decay(lead, outreach_emails: list, bookings: list) -> dict:
 # Cooling leads query
 # ---------------------------------------------------------------------------
 
-def get_cooling_leads(db, limit: int = 20) -> list[dict]:
+def get_cooling_leads(db, limit: int = 20, org_id: str | None = None) -> list[dict]:
     """
     Return Warm leads that are losing engagement, sorted by most overdue.
     Uses exponential decay scores and includes bandit-relevant fields.
@@ -174,6 +174,7 @@ def get_cooling_leads(db, limit: int = 20) -> list[dict]:
             Lead.status == "complete",
             Lead.archived == False,  # noqa: E712
             Verdict.final_verdict == "Warm",
+            *([Lead.org_id == org_id] if org_id is not None else []),
         )
         .options(
             selectinload(Lead.outreach_emails),

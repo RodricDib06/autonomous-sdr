@@ -89,6 +89,70 @@ def user_from_query_token(token: str | None, db: Session) -> User:
     return user
 
 
+def _identify(request: Request, db: Session) -> User | None:
+    """Best-effort caller lookup from any credential the request carries."""
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        user = _user_from_jwt(auth[7:], db)
+        if user:
+            return user
+    api_key = request.headers.get("x-api-key")
+    if api_key:
+        user = _user_from_api_key(api_key, db)
+        if user:
+            return user
+    token = request.query_params.get("token")
+    if token:
+        return _user_from_jwt(token, db)
+    return None
+
+
+def _org_of(db: Session, param: str, value: str):
+    """(found, org_id) for the record a path parameter names."""
+    from app.database.models import BookingRequest, Conversation, Lead, OutreachEmail
+
+    if param in ("lead_id", "primary_id", "duplicate_id"):
+        row = db.query(Lead.org_id).filter(Lead.id == value).first()
+    else:
+        child = {
+            "email_id": OutreachEmail,
+            "conv_id": Conversation,
+            "booking_id": BookingRequest,
+        }[param]
+        row = (
+            db.query(Lead.org_id)
+            .join(child, child.lead_id == Lead.id)
+            .filter(child.id == value)
+            .first()
+        )
+    return (row is not None, row[0] if row else None)
+
+
+_ORG_GUARDED_PATH_PARAMS = ("lead_id", "primary_id", "duplicate_id", "email_id", "conv_id", "booking_id")
+
+
+def enforce_path_org(request: Request, db: Session = Depends(get_db)) -> None:
+    """
+    App-wide guard: any route whose path names a lead (or a record hanging off
+    one) answers 404 when that record belongs to another organization.
+
+    Registered once on the app instead of per handler, so a new
+    /leads/{lead_id}/... route is tenant-safe without remembering to be.
+    Unknown ids pass through to the handler's own 404, and anonymous callers
+    pass through to the handler's own auth — this only ever narrows access.
+    """
+    params = [p for p in _ORG_GUARDED_PATH_PARAMS if p in request.path_params]
+    if not params:
+        return
+    user = _identify(request, db)
+    if user is None or user.org_id is None:
+        return
+    for param in params:
+        found, org_id = _org_of(db, param, request.path_params[param])
+        if found and org_id != user.org_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+
 def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(_bearer),
@@ -152,6 +216,17 @@ def require_role(*roles: str):
         return current_user
 
     return dependency
+
+
+def require_instance_admin(current_user: User = Depends(require_role("admin"))) -> User:
+    """Admin of the operator's org — for settings shared by every tenant."""
+    from app.services.tenancy import is_instance_admin
+    if not is_instance_admin(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Instance-wide settings can only be changed by the operator's admins",
+        )
+    return current_user
 
 
 # Convenience aliases used throughout the codebase

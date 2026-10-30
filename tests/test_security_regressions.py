@@ -14,6 +14,7 @@ import pytest
 from app.database.models import Lead, OutreachEmail, User
 from app.services.assignment_service import get_rep_assignments
 from app.services.auth_service import hash_password
+from app.services.tenancy import get_default_org
 
 
 def _admin_headers(client):
@@ -23,6 +24,7 @@ def _admin_headers(client):
 
 
 def _make_lead(db, email="jane@acme.com", **kwargs):
+    kwargs.setdefault("org_id", get_default_org(db).id)
     lead = Lead(name="Jane", email=email, company="Acme", **kwargs)
     db.add(lead)
     db.commit()

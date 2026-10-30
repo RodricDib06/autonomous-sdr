@@ -189,7 +189,11 @@ def traverse_org_chart(db: Session, lead_id: str) -> dict:
         synthetic_email = f"{name_slug}@{company_slug}.com"
 
         from app.database.models import Lead as LeadModel
-        existing = db.query(LeadModel).filter(LeadModel.email == synthetic_email).first()
+        existing = (
+            db.query(LeadModel)
+            .filter(LeadModel.email == synthetic_email, LeadModel.org_id.is_not_distinct_from(lead.org_id))
+            .first()
+        )
         if existing:
             log.debug(f"[org_chart] {dm['name']} already in DB — skipping")
             continue
@@ -200,6 +204,7 @@ def traverse_org_chart(db: Session, lead_id: str) -> dict:
             email=synthetic_email,
             company=company,
             source="org_chart",
+            org_id=lead.org_id,   # discoveries belong to the parent lead's tenant
         )
         new_lead.referred_by_lead_id = lead_id
         new_lead.quality_metadata = {

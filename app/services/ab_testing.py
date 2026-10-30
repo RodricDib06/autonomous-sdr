@@ -181,18 +181,6 @@ def find_winner(db: Session) -> dict | None:
     return None
 
 
-def promote_winner(db: Session, winning_sequence_id: str) -> None:
-    """
-    Deactivate all other sequences and keep only the winner active.
-    Call this after find_winner() confirms significance.
-    """
-    all_sequences = db.query(OutreachSequence).all()
-    for seq in all_sequences:
-        seq.is_active = seq.id == winning_sequence_id
-    db.commit()
-    log.info(f"[ab] Promoted winner: sequence {winning_sequence_id} — all others deactivated")
-
-
 # ---------------------------------------------------------------------------
 # Stats helper — Chi-square test for two proportions
 # ---------------------------------------------------------------------------

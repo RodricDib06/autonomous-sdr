@@ -114,6 +114,7 @@ def semantic_search_conversations(
     query: str,
     lead_id: str | None = None,
     limit: int = 5,
+    org_id: str | None = None,
 ) -> list[dict]:
     """
     Find conversations semantically similar to *query*.
@@ -127,7 +128,7 @@ def semantic_search_conversations(
 
     if vec is not None:
         try:
-            results = _vector_search(db, vec, lead_id, limit)
+            results = _vector_search(db, vec, lead_id, limit, org_id)
             if results:
                 return results
             # no embeddings stored yet — fall through to keyword search
@@ -135,13 +136,16 @@ def semantic_search_conversations(
             log.warning(f"[embedding] Vector search failed ({e}), falling back to keyword")
             db.rollback()
 
-    return _keyword_search(db, query, lead_id, limit)
+    return _keyword_search(db, query, lead_id, limit, org_id)
 
 
-def _vector_search(db: Session, vec: list[float], lead_id: str | None, limit: int) -> list[dict]:
+def _vector_search(
+    db: Session, vec: list[float], lead_id: str | None, limit: int, org_id: str | None = None,
+) -> list[dict]:
     """Cosine similarity search using pgvector <=> operator."""
     vec_literal = f"'[{','.join(str(x) for x in vec)}]'::vector"
     lead_filter = "AND c.lead_id = :lead_id" if lead_id else ""
+    org_filter = "AND l.org_id = :org_id" if org_id else ""
     sql = f"""
         SELECT c.id, c.lead_id, c.channel, c.summary,
                1 - (c.embedding <=> {vec_literal}) AS similarity,
@@ -150,6 +154,7 @@ def _vector_search(db: Session, vec: list[float], lead_id: str | None, limit: in
         JOIN leads l ON l.id = c.lead_id
         WHERE c.embedding IS NOT NULL
           {lead_filter}
+          {org_filter}
         ORDER BY c.embedding <=> {vec_literal}
         LIMIT :limit
     """
@@ -157,6 +162,8 @@ def _vector_search(db: Session, vec: list[float], lead_id: str | None, limit: in
     params: dict = {"limit": limit}
     if lead_id:
         params["lead_id"] = lead_id
+    if org_id:
+        params["org_id"] = org_id
 
     import sqlalchemy
     rows = db.execute(sqlalchemy.text(sql), params).fetchall()
@@ -175,11 +182,15 @@ def _vector_search(db: Session, vec: list[float], lead_id: str | None, limit: in
     ]
 
 
-def _keyword_search(db: Session, query: str, lead_id: str | None, limit: int) -> list[dict]:
+def _keyword_search(
+    db: Session, query: str, lead_id: str | None, limit: int, org_id: str | None = None,
+) -> list[dict]:
     """Fallback: search conversation summaries, lead name/company by keyword."""
     import sqlalchemy as sa
     from app.database.models import Conversation, Lead
     q = db.query(Conversation, Lead.name).join(Lead, Lead.id == Conversation.lead_id)
+    if org_id:
+        q = q.filter(Lead.org_id == org_id)
     if lead_id:
         q = q.filter(Conversation.lead_id == lead_id)
     filtered = q

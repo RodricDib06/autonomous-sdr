@@ -4,6 +4,7 @@ recording (incl. attribution via agent context), and analytics endpoints.
 """
 from unittest.mock import patch
 
+from app.services.tenancy import get_default_org
 from app.database.models import Lead, LLMCall
 from app.services.llm_tracker import (
     TrackedAIClient,
@@ -140,7 +141,7 @@ def test_llm_costs_endpoint(client, test_session_factory):
 def test_lead_llm_cost_endpoint(client, test_session_factory):
     headers = _admin_headers(client)
     db = test_session_factory()
-    lead = Lead(name="J", email="j@x.com", company="C")
+    lead = Lead(name="J", email="j@x.com", company="C", org_id=get_default_org(db).id)
     db.add(lead)
     db.commit()
     _seed_calls(db, lead_id=lead.id)

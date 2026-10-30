@@ -83,11 +83,12 @@ def compute_converted_centroid(db: Session) -> list[float] | None:
     Returns None if fewer than _MIN_CONVERTED leads are available.
     """
     from app.database.models import Lead
+    from app.services.assignment_service import WON_STATUSES
 
     converted = (
         db.query(Lead)
         .options(selectinload(Lead.verdicts), selectinload(Lead.enrichments))
-        .filter(Lead.conversion_status == "converted")
+        .filter(Lead.conversion_status.in_(WON_STATUSES))
         .all()
     )
 

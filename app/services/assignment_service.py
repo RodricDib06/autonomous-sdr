@@ -15,6 +15,11 @@ from app.utils.time import utcnow
 if TYPE_CHECKING:
     pass
 
+# A closed deal. The API and HubSpot sync record "won"; "converted" is the
+# pre-API spelling still present in older data and the demo seed. Every
+# learning loop must count both, or real wins never reach the models.
+WON_STATUSES = ("won", "converted")
+
 VALID_CONVERSION_STATUSES = {
     "unqualified",
     "qualified",

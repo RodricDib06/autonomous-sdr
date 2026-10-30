@@ -177,10 +177,7 @@ def enrich_from_domain(email_or_domain: str) -> dict:
     result["signals"] = deduped
 
     log.info(
-        "Web enrichment complete",
-        domain=domain,
-        pages=result["pages_fetched"],
-        signals=len(result["signals"]),
-        tech=result["tech_stack"],
+        f"Web enrichment complete (domain={domain}, pages={result['pages_fetched']}, "
+        f"signals={len(result['signals'])}, tech={result['tech_stack']})"
     )
     return result

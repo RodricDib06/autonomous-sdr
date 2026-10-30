@@ -172,3 +172,40 @@ def test_demo_seed_assigns_org(test_db):
     total = test_db.query(Lead).count()
     assert total > 0
     assert test_db.query(Lead).filter(Lead.org_id == org).count() == total
+
+
+# ---------------------------------------------------------------------------
+# Learning loops see real wins
+# ---------------------------------------------------------------------------
+
+def _outcomes(db, n_won, n_lost, won_status="won"):
+    """Wins via the API's own vocabulary ("won"), not the seed's "converted"."""
+    org = get_default_org(db).id
+    for i in range(n_won + n_lost):
+        won = i < n_won
+        lead = Lead(name=f"L{i}", email=f"l{i}@x.com", company="C", org_id=org, status="complete",
+                    conversion_status=won_status if won else "lost")
+        db.add(lead)
+        db.flush()
+        hi, lo = (0.9, 0.2) if won else (0.2, 0.8)
+        db.add(Verdict(lead_id=lead.id, final_verdict="Hot" if won else "Cold", confidence_score=0.8,
+                       bant_scores={"budget": 0.5, "authority": hi, "need": hi, "timeline": lo}))
+    db.commit()
+
+
+def test_optimizer_counts_won_deals(test_db):
+    from app.services.optimization_loop import run_optimization
+    _outcomes(test_db, n_won=10, n_lost=6)
+    assert run_optimization(test_db)["status"] == "ran"
+
+
+def test_ml_scorer_trains_on_won_deals(test_db):
+    from app.services.ml_scorer import retrain
+    _outcomes(test_db, n_won=4, n_lost=4)
+    assert retrain(test_db) is True
+
+
+def test_lookalike_centroid_uses_won_deals(test_db):
+    from app.services.lookalike_scorer import compute_converted_centroid
+    _outcomes(test_db, n_won=6, n_lost=0)
+    assert compute_converted_centroid(test_db) is not None

@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_manager, require_rep
+from app.database import crud
 from app.database.connection import get_db
 from app.database.models import Lead, User
 
@@ -132,9 +133,11 @@ def create_suppression(
     if current_user.org_id is not None:
         match_q = match_q.filter(Lead.org_id == current_user.org_id)
     if entry.kind == "email":
-        matches = match_q.filter(Lead.email.ilike(value)).all()
+        matches = match_q.filter(crud.email_equals(Lead.email, value)).all()
     else:
-        matches = match_q.filter(Lead.email.ilike(f"%@{value}")).all()
+        # Escape so a literal "_" in the domain can't match any character
+        escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        matches = match_q.filter(Lead.email.ilike(f"%@{escaped}", escape="\\")).all()
     for lead in matches:
         cancelled += cancel_scheduled_emails(db, lead.id, "Address added to suppression list")
 

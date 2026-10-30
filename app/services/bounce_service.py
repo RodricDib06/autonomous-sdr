@@ -123,7 +123,7 @@ def handle_bounce(
     from app.services.email_verification import mark_undeliverable
 
     recipient = (recipient or "").strip().lower()
-    lead_q = db.query(Lead).filter(Lead.email.ilike(recipient))
+    lead_q = db.query(Lead).filter(crud.email_equals(Lead.email, recipient))
     if org_id is not None:
         lead_q = lead_q.filter(Lead.org_id == org_id)
     lead = lead_q.first()

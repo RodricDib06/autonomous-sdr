@@ -1,3 +1,4 @@
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.database.models import Lead, Enrichment, Verdict, AgentLog, LeadEvent
 from app.utils.time import utcnow
@@ -24,6 +25,16 @@ def create_lead(
     db.commit()
     db.refresh(lead)
     return lead
+
+
+def email_equals(column, address: str):
+    """
+    Case-insensitive exact match on an email column. Not ilike: `_` and `%`
+    are LIKE wildcards, and `_` is common in addresses — ilike("j_doe@x.com")
+    also matches jxdoe@x.com, attributing replies, bounces and CRM outcomes
+    to the wrong lead.
+    """
+    return func.lower(column) == (address or "").strip().lower()
 
 
 def get_lead(db: Session, lead_id: str, org_id: str | None = None) -> Lead | None:

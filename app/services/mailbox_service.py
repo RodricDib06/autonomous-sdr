@@ -24,6 +24,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database.crud import email_equals
 from app.database.models import Lead, OutreachEmail, SendingMailbox
 from app.utils.time import utcnow
 
@@ -247,7 +248,7 @@ def _process_inbound(
     if not sender or not body:
         return "ignored"
 
-    lead_q = db.query(Lead).filter(Lead.email.ilike(sender))
+    lead_q = db.query(Lead).filter(email_equals(Lead.email, sender))
     if mailbox.org_id is not None:
         lead_q = lead_q.filter(Lead.org_id == mailbox.org_id)
     lead = lead_q.first()

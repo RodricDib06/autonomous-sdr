@@ -209,3 +209,49 @@ def test_lookalike_centroid_uses_won_deals(test_db):
     from app.services.lookalike_scorer import compute_converted_centroid
     _outcomes(test_db, n_won=6, n_lost=0)
     assert compute_converted_centroid(test_db) is not None
+
+
+# ---------------------------------------------------------------------------
+# Email matching is exact, not LIKE
+# ---------------------------------------------------------------------------
+
+def test_bounce_does_not_hit_wildcard_lookalike(test_db):
+    from app.services.bounce_service import handle_bounce
+    org = get_default_org(test_db).id
+    bystander = _lead(test_db, org, "jxdoe@acme.com")
+    target = _lead(test_db, org, "j_doe@acme.com")
+
+    handle_bounce(test_db, "j_doe@acme.com", True, "550 no such user", org_id=org)
+    test_db.expire_all()
+
+    assert test_db.get(Lead, target.id).email_verification_status == "undeliverable"
+    assert test_db.get(Lead, bystander.id).email_verification_status != "undeliverable"
+
+
+def test_inbound_reply_matches_exact_sender(test_db):
+    from types import SimpleNamespace
+    from app.services.mailbox_service import _process_inbound
+    org = get_default_org(test_db).id
+    _lead(test_db, org, "jxdoe@acme.com")
+    mailbox = SimpleNamespace(org_id=org, email="sdr@us.com")
+
+    with patch("app.services.reply_service.handle_reply") as handle:
+        outcome = _process_inbound(test_db, mailbox, "j_doe@acme.com", "Re: hi", "Sounds good")
+    assert outcome == "ignored"
+    handle.assert_not_called()
+
+
+def test_reply_applies_bayesian_boost(test_db):
+    from app.services.reply_classifier import Classification
+    from app.services.reply_service import handle_reply
+    lead = _lead(test_db, get_default_org(test_db).id, "warm@acme.com")
+    test_db.add(Verdict(lead_id=lead.id, final_verdict="Warm", confidence_score=0.5,
+                        bant_scores={"budget": 0.5, "authority": 0.5, "need": 0.5, "timeline": 0.5}))
+    test_db.commit()
+
+    interested = Classification(category="interested", confidence=0.9)
+    with patch("app.services.reply_service.classify_reply", return_value=interested):
+        handle_reply(test_db, lead, "Yes, let's talk next week")
+    test_db.expire_all()
+    verdict = test_db.query(Verdict).filter_by(lead_id=lead.id).one()
+    assert verdict.bant_scores["need"] > 0.5

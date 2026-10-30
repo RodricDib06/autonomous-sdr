@@ -5,7 +5,7 @@ management, and live send-guardrail status.
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.auth.dependencies import require_manager, require_rep
@@ -21,46 +21,54 @@ router = APIRouter(tags=["compliance"])
 # ===========================================================================
 
 _UNSUBSCRIBE_PAGE = """<!doctype html>
-<html><head><title>Unsubscribed</title></head>
-<body style="font-family:sans-serif;max-width:480px;margin:80px auto;text-align:center">
-<h2>{title}</h2><p>{message}</p>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title></head>
+<body style="font-family:sans-serif;max-width:480px;margin:80px auto;padding:0 16px;text-align:center">
+<h2>{title}</h2><p>{message}</p>{action}
 </body></html>"""
+
+_CONFIRM_FORM = """<form method="post">
+<button type="submit" style="font-size:16px;padding:10px 24px;cursor:pointer">Unsubscribe</button>
+</form>"""
+
+
+def _page(title: str, message: str, action: str = "", status_code: int = 200):
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(
+        _UNSUBSCRIBE_PAGE.format(title=title, message=message, action=action),
+        status_code=status_code,
+    )
 
 
 @router.api_route("/unsubscribe/{email_id}", methods=["GET", "POST"])
-def unsubscribe(email_id: str, db: Session = Depends(get_db)):
+def unsubscribe(email_id: str, request: Request, db: Session = Depends(get_db)):
     """
-    One-click unsubscribe landing page (public, no auth).
+    Unsubscribe landing page (public, no auth).
 
-    Linked from every outreach email footer and the RFC 8058
-    List-Unsubscribe-Post header (POST for mail-client one-click).
-    Suppresses the lead's address and cancels all pending follow-ups.
+    POST opts out: the confirm button on this page, and the RFC 8058
+    List-Unsubscribe-Post one-click that Gmail/Outlook send. GET only shows
+    the confirm button — corporate link scanners (Safe Links, Mimecast,
+    Proofpoint) fetch every URL in inbound mail, so a GET that unsubscribed
+    would silently opt out every recipient behind one.
     """
-    from fastapi.responses import HTMLResponse
     from app.database.models import OutreachEmail as OutreachEmailModel
     from app.services.compliance import process_unsubscribe
 
     email_rec = db.query(OutreachEmailModel).filter(OutreachEmailModel.id == email_id).first()
     if not email_rec:
-        return HTMLResponse(
-            _UNSUBSCRIBE_PAGE.format(
-                title="Link not recognised",
-                message="This unsubscribe link is invalid or has expired.",
-            ),
-            status_code=404,
-        )
+        return _page("Link not recognised", "This unsubscribe link is invalid or has expired.",
+                     status_code=404)
+
+    if request.method == "GET":
+        return _page("Unsubscribe", "Click below and you won't receive any further emails from us.",
+                     action=_CONFIRM_FORM)
 
     lead = db.query(Lead).filter(Lead.id == email_rec.lead_id).first()
     if lead:
         process_unsubscribe(db, lead, source="unsubscribe_link")
         log.info(f"[unsubscribe] Lead {lead.id[:8]} opted out via one-click link")
 
-    return HTMLResponse(
-        _UNSUBSCRIBE_PAGE.format(
-            title="You're unsubscribed",
-            message="You won't receive any further emails from us. Sorry to see you go.",
-        )
-    )
+    return _page("You're unsubscribed",
+                 "You won't receive any further emails from us. Sorry to see you go.")
 
 
 @router.get("/suppressions")

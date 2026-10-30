@@ -77,6 +77,18 @@ def _user_from_api_key(raw_key: str, db: Session) -> User | None:
     return db.query(User).filter(User.id == api_key.user_id, User.is_active).first()
 
 
+def user_from_query_token(token: str | None, db: Session) -> User:
+    """
+    Authenticate an SSE request. EventSource can't set headers, so the JWT
+    rides in ?token= — and a missing token must fail like a bad one, or
+    dropping the parameter would bypass auth entirely.
+    """
+    user = _user_from_jwt(token, db) if token else None
+    if user is None:
+        raise _CREDENTIALS_ERROR
+    return user
+
+
 def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(_bearer),

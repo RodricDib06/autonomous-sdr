@@ -18,7 +18,7 @@ import structlog
 from app.database.connection import get_db  # noqa: F401
 from app.database import crud  # noqa: F401
 from app.database.models import Lead, Enrichment, Verdict, User  # noqa: F401
-from app.auth.dependencies import require_admin, require_manager, require_rep  # noqa: F401
+from app.auth.dependencies import require_admin, require_manager, require_rep, user_from_query_token  # noqa: F401
 from app.config import settings  # noqa: F401
 from app.utils.time import utcnow  # noqa: F401
 from app.services.queue_service import push_lead_job, get_redis  # noqa: F401
@@ -66,12 +66,9 @@ async def stream_pipeline_events(
       es.addEventListener('complete', () => es.close());
     """
     # Authenticate via query-param token (EventSource doesn't support headers)
-    if token:
-        from app.auth.dependencies import _user_from_jwt
-        user = _user_from_jwt(token, db)
-        if not user or not user.is_active:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    # (In dev/test, allow unauthenticated SSE when no token is provided)
+    user = user_from_query_token(token, db)
+    if not crud.get_lead(db, lead_id, org_id=user.org_id):
+        raise HTTPException(status_code=404, detail="Lead not found")
 
     async def event_generator():
         import redis.asyncio as aioredis
@@ -325,7 +322,7 @@ def export_leads(
 ):
     """Export leads data — supports JSON and CRM-formatted CSV (HubSpot, Salesforce)."""
     try:
-        query = db.query(Lead).filter(Lead.status == "complete", not Lead.archived)
+        query = db.query(Lead).filter(Lead.status == "complete", Lead.archived.is_(False))
 
         if verdict_filter:
             query = query.join(Verdict).filter(Verdict.final_verdict == verdict_filter)
@@ -1181,17 +1178,13 @@ async def stream_outreach_generation(
         if (ev.type === 'complete') es.close();
       };
     """
-    if token:
-        from app.auth.dependencies import _user_from_jwt
-        user = _user_from_jwt(token, db)
-        if not user or not user.is_active:
-            raise HTTPException(status_code=401, detail="Invalid token")
+    user = user_from_query_token(token, db)
 
     async def generate():
         from app.database.models import Enrichment, OutreachSequence
         from app.agents.outreach_agent import _PERSONALISE_PROMPT, OutreachAgent
 
-        lead = crud.get_lead(db, lead_id)
+        lead = crud.get_lead(db, lead_id, org_id=user.org_id)
         if not lead:
             yield f"data: {json.dumps({'type': 'error', 'message': 'Lead not found'})}\n\n"
             return

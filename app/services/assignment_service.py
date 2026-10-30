@@ -85,7 +85,7 @@ def get_rep_assignments(db: Session, rep_id: str) -> list[Lead]:
     """Get all leads assigned to a specific rep."""
     return (
         db.query(Lead)
-        .filter(Lead.assigned_to_id == rep_id, not Lead.archived)
+        .filter(Lead.assigned_to_id == rep_id, Lead.archived.is_(False))
         .order_by(Lead.created_at.desc())
         .all()
     )

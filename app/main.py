@@ -2,7 +2,7 @@ import json
 import asyncio
 import threading
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, Query, Request, BackgroundTasks
+from fastapi import FastAPI, Depends, Header, HTTPException, Query, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -733,6 +733,7 @@ async def ingest_email_reply(
     payload: dict,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    x_webhook_secret: str | None = Header(None),
 ):
     """
     Webhook endpoint for inbound email replies from a sending platform
@@ -751,6 +752,10 @@ async def ingest_email_reply(
     and (if no SMTP is configured) marks the agent reply as "sent_demo".
     """
     from app.database.models import OutreachEmail as OutreachEmailModel
+    from app.routers.ingest import _verify_webhook_secret
+
+    # A forged reply can opt any lead out or spend LLM calls — same gate as /ingest/*
+    _verify_webhook_secret(x_webhook_secret)
 
     reply_text = (payload.get("reply_text") or "").strip()
     if not reply_text:
@@ -870,11 +875,8 @@ async def global_event_stream(
       const es = new EventSource(`/events/stream?token=${token}`);
       es.addEventListener('lead_complete', e => { ... });
     """
-    if token:
-        from app.auth.dependencies import _user_from_jwt
-        user = _user_from_jwt(token, db)
-        if not user or not user.is_active:
-            raise HTTPException(status_code=401, detail="Invalid token")
+    from app.auth.dependencies import user_from_query_token
+    user_from_query_token(token, db)
 
     async def generator():
         import redis.asyncio as aioredis

@@ -23,7 +23,7 @@ from datetime import timedelta
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.database.models import GdprErasureLog, Lead, LLMCall, SuppressionEntry
+from app.database.models import GdprErasureLog, Lead
 from app.utils.time import utcnow
 
 log = logging.getLogger(__name__)
@@ -38,17 +38,12 @@ def erase_lead(
     """Irreversibly erase one lead. Returns a summary of what was removed."""
     email_hash = hashlib.sha256((lead.email or "").lower().encode()).hexdigest()
 
-    # Anonymise telemetry (no PII in llm_calls; drop the association only)
-    anonymised = (
-        db.query(LLMCall)
-        .filter(LLMCall.lead_id == lead.id)
-        .update({"lead_id": None}, synchronize_session=False)
-    )
-
-    # Keep the do-not-contact entry, drop the lead link
-    db.query(SuppressionEntry).filter(SuppressionEntry.lead_id == lead.id).update(
-        {"lead_id": None}, synchronize_session=False
-    )
+    # Rows that outlive the lead keep their data and lose only the link:
+    # LLM telemetry (no PII), the do-not-contact entry, the CRM sync audit
+    # trail, leads this one referred. Found from the schema — any reference
+    # left behind is a foreign-key violation on Postgres, which made erasure
+    # (and the retention purge) fail outright.
+    anonymised = _detach_references(db, lead.id).get("llm_calls", 0)
 
     counts = {
         "enrichments": len(lead.enrichments),
@@ -76,6 +71,28 @@ def erase_lead(
 
     log.info(f"[gdpr] Erased lead (hash {email_hash[:12]}…), reason={reason}")
     return {"erasure_id": erasure.id, "email_hash": email_hash, "purged": counts}
+
+
+def _detach_references(db: Session, lead_id: str) -> dict[str, int]:
+    """NULL every non-cascading foreign key to this lead; returns rows touched per table."""
+    from sqlalchemy import update
+    from app.database.connection import Base
+
+    cascaded = {
+        rel.mapper.local_table.name
+        for rel in Lead.__mapper__.relationships
+        if "delete" in rel.cascade
+    }
+    touched: dict[str, int] = {}
+    for table in Base.metadata.sorted_tables:
+        if table.name in cascaded:
+            continue
+        for fk in table.foreign_keys:
+            if fk.column.table is Lead.__table__:
+                col = fk.parent
+                result = db.execute(update(table).where(col == lead_id).values({col.name: None}))
+                touched[table.name] = touched.get(table.name, 0) + (result.rowcount or 0)
+    return touched
 
 
 def purge_expired_leads(db: Session, limit: int = 200) -> dict:

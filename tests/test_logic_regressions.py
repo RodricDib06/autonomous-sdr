@@ -255,3 +255,33 @@ def test_reply_applies_bayesian_boost(test_db):
     test_db.expire_all()
     verdict = test_db.query(Verdict).filter_by(lead_id=lead.id).one()
     assert verdict.bant_scores["need"] > 0.5
+
+
+# ---------------------------------------------------------------------------
+# GDPR erasure leaves no dangling foreign keys
+# ---------------------------------------------------------------------------
+
+def test_erasure_succeeds_with_crm_log_and_referrals(test_db):
+    """SQLite skips FK checks by default — turn them on so this fails like Postgres did."""
+    from sqlalchemy import text
+    from app.database.models import CrmSyncLog, LLMCall
+    from app.services.gdpr_service import erase_lead
+
+    test_db.execute(text("PRAGMA foreign_keys=ON"))
+    org = get_default_org(test_db).id
+    lead = _lead(test_db, org, "erase.me@acme.com")
+    child = Lead(name="Ref", email="ref@acme.com", company="Acme", org_id=org, referred_by_lead_id=lead.id)
+    test_db.add_all([
+        child,
+        CrmSyncLog(lead_id=lead.id, org_id=org, direction="outbound", event_type="contact.upsert"),
+        LLMCall(lead_id=lead.id, provider="groq", model="m"),
+    ])
+    test_db.commit()
+
+    result = erase_lead(test_db, lead, requested_by_id=None)
+    test_db.expire_all()
+
+    assert result["purged"]["llm_calls_anonymised"] == 1
+    assert test_db.query(Lead).filter_by(email="erase.me@acme.com").count() == 0
+    assert test_db.get(Lead, child.id).referred_by_lead_id is None
+    assert test_db.query(CrmSyncLog).one().lead_id is None

@@ -804,12 +804,16 @@ async def ingest_email_reply(
             "message": "Opt-out detected — lead suppressed and sequence stopped",
         }
 
-    background_tasks.add_task(generate_agent_response, lead_id, reply_text)
+    if result.get("auto_reply_enabled"):
+        background_tasks.add_task(generate_agent_response, lead_id, reply_text)
+        message = "Reply received and queued for an agent draft"
+    else:
+        message = "Reply received and flagged for human review"
 
     return {
         "status": "accepted",
         "lead_id": lead_id,
-        "message": "Reply received and queued for autonomous response",
+        "message": message,
     }
 
 

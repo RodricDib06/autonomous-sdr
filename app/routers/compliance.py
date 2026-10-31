@@ -157,6 +157,46 @@ def delete_suppression(
     return {"status": "deleted", "id": entry_id}
 
 
+@router.get("/outreach/sending-settings")
+def get_sending_settings(
+    current_user: User = Depends(require_rep),
+    db: Session = Depends(get_db),
+):
+    """The org's CAN-SPAM postal address and whether the agent may answer prospects."""
+    from app.services.email_compose import postal_address
+    from app.services.reply_service import auto_reply_enabled
+
+    return {
+        "postal_address": postal_address(db, current_user.org_id),
+        "auto_reply_enabled": auto_reply_enabled(db, current_user.org_id),
+    }
+
+
+@router.put("/outreach/sending-settings")
+def update_sending_settings(
+    payload: dict,
+    current_user: User = Depends(require_manager),
+    db: Session = Depends(get_db),
+):
+    """
+    Body (any subset): {"postal_address": "...", "auto_reply_enabled": bool}.
+    An empty postal address holds every real send until one is set.
+    """
+    from app.services.tenancy import set_org_setting
+
+    if "postal_address" in payload:
+        address = str(payload["postal_address"] or "").strip()
+        if len(address) > 300:
+            raise HTTPException(status_code=422, detail="postal_address must be 300 characters or fewer")
+        set_org_setting(db, current_user.org_id, "postal_address", address)
+    if "auto_reply_enabled" in payload:
+        if not isinstance(payload["auto_reply_enabled"], bool):
+            raise HTTPException(status_code=422, detail="auto_reply_enabled must be true or false")
+        set_org_setting(db, current_user.org_id, "auto_reply_enabled", payload["auto_reply_enabled"])
+    log.info(f"[compliance] Sending settings updated by {current_user.email}: {sorted(payload)}")
+    return get_sending_settings(current_user=current_user, db=db)
+
+
 @router.get("/outreach/guardrails")
 def get_outreach_guardrails(
     current_user: User = Depends(require_rep),
@@ -168,7 +208,7 @@ def get_outreach_guardrails(
     """
     from app.services.compliance import guardrail_status
 
-    return guardrail_status(db)
+    return guardrail_status(db, current_user.org_id)
 
 
 

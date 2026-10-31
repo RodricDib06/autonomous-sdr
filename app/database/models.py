@@ -299,6 +299,9 @@ class SendingMailbox(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_imap_poll_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # SPF/DKIM/DMARC result for the sending domain (app/services/sender_auth.py)
+    dns_auth: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    dns_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

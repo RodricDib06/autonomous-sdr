@@ -145,7 +145,24 @@ class Settings(BaseSettings):
     #   draft   — agent writes emails, sends nothing (copy-out only)
     #   approve — every email waits in the approval queue before sending
     #   auto    — full autonomy: step 1 sends immediately, follow-ups on schedule
-    DEFAULT_AUTONOMY_MODE: str = "auto"
+    # A new org starts at "approve": nothing reaches a prospect until a human
+    # has read it. Graduating to "auto" is a deliberate choice, not a default.
+    DEFAULT_AUTONOMY_MODE: str = "approve"
+
+    # ── Sending compliance ─────────────────────────────────────────────────────
+    # CAN-SPAM requires the sender's physical postal address in every commercial
+    # email. Per-org value set in Settings → Sending compliance; this is the
+    # fallback. Real sends are held while neither is set.
+    OUTREACH_POSTAL_ADDRESS: str = ""
+
+    # LLM-written replies to inbound prospect messages. Off by default: the
+    # reply is classified and the thread flagged for a human instead. Per-org
+    # override in Settings → Sending compliance.
+    CONVERSATIONAL_AUTO_REPLY: bool = False
+
+    # Skip mailboxes whose sending domain has no SPF and no DKIM (DNS lookup,
+    # cached on the mailbox for 24h). Off only for tests / offline dev.
+    SENDER_AUTH_CHECK_ENABLED: bool = True
 
     # ── Outreach guardrails (compliance & deliverability) ─────────────────────
     # Max emails sent in any rolling 24h window — protects sender reputation

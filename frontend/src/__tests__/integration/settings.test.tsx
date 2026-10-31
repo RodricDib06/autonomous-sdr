@@ -802,4 +802,72 @@ describe('Settings — CRM sync (HubSpot)', () => {
       expect(screen.getByText(/api key \(outbound only\)/i)).toBeInTheDocument();
     });
   });
+
+  it('shows the saved postal address and saves an edit', async () => {
+    let saved: Record<string, unknown> | null = null;
+    server.use(
+      http.put('http://localhost:8000/outreach/sending-settings', async ({ request }) => {
+        saved = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ postal_address: saved.postal_address, auto_reply_enabled: false });
+      })
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />);
+    const input = await screen.findByDisplayValue('1 Main St, Springfield');
+    await user.clear(input);
+    await user.type(input, '2 Elm St, Shelbyville');
+    const saveButtons = screen.getAllByRole('button', { name: 'Save' });
+    await user.click(saveButtons[0]);
+    await waitFor(() => expect(saved).toEqual({ postal_address: '2 Elm St, Shelbyville' }));
+  });
+
+  it('auto-reply is off and toggling sends the setting', async () => {
+    let saved: Record<string, unknown> | null = null;
+    server.use(
+      http.put('http://localhost:8000/outreach/sending-settings', async ({ request }) => {
+        saved = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ postal_address: '1 Main St, Springfield', auto_reply_enabled: true });
+      })
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<Settings />);
+    const toggle = await screen.findByRole('checkbox', { name: /draft replies to prospects/i });
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    await waitFor(() => expect(saved).toEqual({ auto_reply_enabled: true }));
+  });
+
+  it('shows SPF/DKIM/DMARC status on each mailbox', async () => {
+    renderWithProviders(<Settings />);
+    await screen.findByText('rep@corp.com');
+    expect(screen.getByText('SPF ✓')).toBeInTheDocument();
+    expect(screen.getByText('DKIM ✓')).toBeInTheDocument();
+    expect(screen.getByText('DMARC ✗')).toBeInTheDocument();
+    expect(screen.getByText(/No DMARC record/)).toBeInTheDocument();
+  });
+
+  it('warns when a mailbox is kept out of rotation', async () => {
+    server.use(
+      http.get('http://localhost:8000/mailboxes', () =>
+        HttpResponse.json({
+          total: 1,
+          mailboxes: [{
+            id: 'mb-3', email: 'rep@nospf.io', display_name: '', provider: 'smtp',
+            smtp_host: 'smtp.nospf.io', imap_enabled: false, is_active: true,
+            daily_limit: 50, effective_daily_limit: 10, sent_last_24h: 0, warming_up: true,
+            last_used_at: null, last_imap_poll_at: null, created_at: null,
+            dns_auth: {
+              domain: 'nospf.io', spf: { ok: false, record: null }, dkim: { ok: null, selector: null },
+              dmarc: { ok: false, record: null, policy: null }, can_send: false,
+              issues: ['Domain has no SPF and no DKIM we could find — Gmail and Yahoo will reject this mail'],
+              checked_at: '2026-07-03T09:00:00Z',
+            },
+          }],
+        })
+      )
+    );
+    renderWithProviders(<Settings />);
+    expect(await screen.findByText(/Not used for sending/)).toBeInTheDocument();
+  });
 });

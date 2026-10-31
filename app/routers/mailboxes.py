@@ -56,8 +56,21 @@ def _serialize(db: Session, m: SendingMailbox) -> dict:
         "warming_up": limit < m.daily_limit,
         "last_used_at": m.last_used_at.isoformat() if m.last_used_at else None,
         "last_imap_poll_at": m.last_imap_poll_at.isoformat() if m.last_imap_poll_at else None,
+        "dns_auth": m.dns_auth,
         "created_at": m.created_at.isoformat() if m.created_at else None,
     }
+
+
+def _check_dns(db: Session, mailbox: SendingMailbox) -> None:
+    """Best-effort SPF/DKIM/DMARC check so the UI shows it right away."""
+    from app.config import settings
+    from app.services.sender_auth import check_mailbox
+    if not settings.SENDER_AUTH_CHECK_ENABLED:
+        return
+    try:
+        check_mailbox(db, mailbox)
+    except Exception as e:
+        log.warning(f"[mailboxes] DNS auth check failed for {mailbox.email}: {e}")
 
 
 def _org_query(db: Session, user: User):
@@ -104,6 +117,7 @@ def create_mailbox(
     db.add(mailbox)
     db.commit()
     db.refresh(mailbox)
+    _check_dns(db, mailbox)
     log.info(f"[mailboxes] Added {mailbox.email} (warmup={payload.start_warmup}) by {current_user.email}")
     return _serialize(db, mailbox)
 
@@ -217,6 +231,7 @@ def mailbox_oauth_callback(
         db.add(mailbox)
         db.commit()
         db.refresh(mailbox)
+        _check_dns(db, mailbox)
         log.info(f"[mailboxes] Connected new {mailbox_provider} mailbox {email}")
 
     return {"status": "connected", "mailbox": _serialize(db, mailbox)}
@@ -232,7 +247,8 @@ def test_mailbox(
     if not mailbox:
         raise HTTPException(status_code=404, detail="Mailbox not found")
     ok, message = test_mailbox_connection(mailbox, db=db)
-    return {"ok": ok, "message": message}
+    _check_dns(db, mailbox)
+    return {"ok": ok, "message": message, "dns_auth": mailbox.dns_auth}
 
 
 @router.delete("/{mailbox_id}")

@@ -228,7 +228,8 @@ def test_send_via_mailbox_routes_oauth_to_api(test_db):
     test_db.commit()
 
     with patch("app.services.oauth_mailbox.send_mime") as mock_send, \
-         patch("smtplib.SMTP_SSL") as mock_smtp:
+         patch("smtplib.SMTP_SSL") as mock_smtp, \
+         patch("app.config.settings.OUTREACH_POSTAL_ADDRESS", "1 Main St, Springfield"):
         result = send_via_mailbox(test_db, mailbox, email, "jane@acme.io")
 
     assert result == "sent"
@@ -255,7 +256,11 @@ def test_auto_mode_sends_step1_via_oauth_pool_without_global_smtp(test_db):
     fake_quality = {"overall_score": 0.9, "issues": [], "improvement_hint": ""}
     with patch.object(OutreachAgent, "_personalise_with_judge",
                       return_value=("Subj", "Body", fake_quality)), \
-         patch("app.config.settings.SMTP_HOST", ""), \
+         patch.multiple("app.config.settings", SMTP_HOST="", DEFAULT_AUTONOMY_MODE="auto",
+                        OUTREACH_POSTAL_ADDRESS="1 Main St, Springfield",
+                        # pinned: step 1 honours the send window, and the real clock may be a weekend
+                        OUTREACH_SEND_WINDOW_START=0, OUTREACH_SEND_WINDOW_END=24,
+                        OUTREACH_WEEKDAYS_ONLY=False), \
          patch("app.services.oauth_mailbox.send_mime") as mock_send:
         result = agent.run(test_db, lead.id, {})
 

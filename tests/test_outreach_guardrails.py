@@ -126,7 +126,8 @@ def test_html_part_escapes_body(test_db):
         def sendmail(self, frm, to, msg): sent["msg"] = msg
 
     with patch.multiple("app.config.settings", SMTP_HOST="smtp.example.com",
-                        APP_BASE_URL="https://api.example.com"), \
+                        APP_BASE_URL="https://api.example.com",
+                        OUTREACH_POSTAL_ADDRESS="1 Main St, Springfield"), \
          patch("app.services.mailbox_service.pick_mailbox", return_value=None), \
          patch("app.agents.outreach_agent.smtplib.SMTP_SSL", FakeSMTP):
         OutreachAgent()._send_email(test_db, email, lead.email)

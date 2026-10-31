@@ -71,14 +71,13 @@ def _store_classification(db: Session, lead: Lead, reply_text: str, classificati
         .order_by(Conversation.created_at.desc())
         .first()
     )
+    inbound = {"role": "lead", "content": reply_text[:2000], "timestamp": utcnow().isoformat()}
     if conversation is None:
-        conversation = Conversation(
-            lead_id=lead.id,
-            channel="email",
-            messages=[{"role": "lead", "content": reply_text[:2000],
-                       "timestamp": utcnow().isoformat()}],
-        )
+        conversation = Conversation(lead_id=lead.id, channel="email", messages=[inbound])
         db.add(conversation)
+    else:
+        # Every reply lands in the thread, whether or not an agent answers it
+        conversation.messages = [*(conversation.messages or []), inbound]
 
     conversation.classification = classification.model_dump()
     conversation.updated_at = utcnow()
@@ -91,6 +90,13 @@ def _store_classification(db: Session, lead: Lead, reply_text: str, classificati
     db.commit()
     db.refresh(conversation)
     return conversation
+
+
+def auto_reply_enabled(db: Session, org_id: str | None) -> bool:
+    """Whether the org lets the conversational agent answer prospects itself."""
+    from app.config import settings
+    from app.services.tenancy import get_org_setting
+    return bool(get_org_setting(db, org_id, "auto_reply_enabled", settings.CONVERSATIONAL_AUTO_REPLY))
 
 
 def _add_tag(db: Session, lead: Lead, tag: str) -> None:
@@ -206,7 +212,14 @@ def handle_reply(
 
     # 3. A human answered
     _mark_replied(db, lead, email_id)
-    _store_classification(db, lead, reply_text, classification)
+    conversation = _store_classification(db, lead, reply_text, classification)
+
+    # Unless the org opted in to agent replies, a person answers this one
+    agent_replies = auto_reply_enabled(db, lead.org_id)
+    if not agent_replies and not conversation.needs_human:
+        conversation.needs_human = True
+        conversation.human_flagged_at = utcnow()
+        db.commit()
 
     action_result: dict = {}
     if classification.category == "referral":
@@ -228,6 +241,7 @@ def handle_reply(
 
     return {
         "status": "replied",
+        "auto_reply_enabled": agent_replies,
         "cancelled_emails": cancelled,
         "classification": classification.model_dump(),
         **action_result,

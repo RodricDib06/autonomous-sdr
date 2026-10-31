@@ -20,13 +20,10 @@ PoC: uses Python's smtplib with Gmail SMTP (free, 500 emails/day).
 #   PRODUCTION: use SendGrid's built-in click/open tracking or a service like Litmus.
 """
 
-import html
 import json
 import logging
 import smtplib
 from datetime import timedelta
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from sqlalchemy.orm import Session
 
 from app.agents.base import BaseAgent
@@ -506,11 +503,7 @@ class OutreachAgent(BaseAgent):
         lead_org_id = email_record.lead.org_id if email_record.lead else None
         mailbox = pick_mailbox(db, lead_org_id)
         if mailbox is not None:
-            unsubscribe_url = (
-                f"{settings.APP_BASE_URL}/unsubscribe/{email_record.id}"
-                if settings.APP_BASE_URL else ""
-            )
-            return send_via_mailbox(db, mailbox, email_record, to_address, unsubscribe_url)
+            return send_via_mailbox(db, mailbox, email_record, to_address)
 
         # Demo mode: when SMTP is not configured, mark as "sent" so the
         # autonomy feed and outreach stats reflect real scheduled-sequence behaviour.
@@ -521,37 +514,16 @@ class OutreachAgent(BaseAgent):
             log.info(f"[outreach] Demo mode — email {email_record.id} marked sent (no SMTP)")
             return "sent_demo"
 
-        # CAN-SPAM: every commercial email carries a working opt-out
-        unsubscribe_url = (
-            f"{settings.APP_BASE_URL}/unsubscribe/{email_record.id}"
-            if settings.APP_BASE_URL else ""
-        )
-        plain_body = email_record.body
-        if unsubscribe_url:
-            plain_body += f"\n\n—\nDon't want to hear from us? Unsubscribe: {unsubscribe_url}"
+        # CAN-SPAM: opt-out link and postal address on every commercial email.
+        # Without an address the email stays scheduled rather than going out
+        # non-compliant.
+        from app.services.email_compose import build_message, real_send_blocker
+        blocker = real_send_blocker(db, lead_org_id)
+        if blocker:
+            return f"held: {blocker}"
 
         try:
-            msg = MIMEMultipart("alternative")
-            msg["Subject"] = email_record.subject
-            msg["From"] = settings.OUTREACH_FROM_EMAIL
-            msg["To"] = to_address
-            if unsubscribe_url:
-                msg["List-Unsubscribe"] = f"<{unsubscribe_url}>"
-                msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
-            msg.attach(MIMEText(plain_body, "plain"))
-
-            # HTML part with open-tracking pixel embedded
-            # The pixel fires a GET /track/open/{email_id} which records the open
-            # PRODUCTION: also wrap every link with /track/click/{id}?url=... for click tracking
-            if settings.APP_BASE_URL:
-                pixel_url = f"{settings.APP_BASE_URL}/track/open/{email_record.id}"
-                html_body = (
-                    f"<html><body><pre style='font-family:sans-serif'>{html.escape(email_record.body)}</pre>"
-                    f"<p style='font-size:11px;color:#888'>Don't want to hear from us? "
-                    f"<a href='{unsubscribe_url}'>Unsubscribe</a></p>"
-                    f"<img src='{pixel_url}' width='1' height='1' style='display:none' /></body></html>"
-                )
-                msg.attach(MIMEText(html_body, "html"))
+            msg = build_message(db, email_record, settings.OUTREACH_FROM_EMAIL, to_address, lead_org_id)
 
             with smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT) as server:
                 server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
@@ -760,6 +732,8 @@ def send_pending_scheduled_emails(db: Session) -> dict:
                 f"[outreach_scheduler] Sent step {email.step_number} to "
                 f"{lead.name} @ {lead.company} ({lead.email[:20]}…)"
             )
+        elif result.startswith("held"):
+            skipped += 1     # still scheduled; goes out once the blocker clears
         else:
             failed += 1
 

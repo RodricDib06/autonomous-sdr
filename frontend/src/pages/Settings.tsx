@@ -8,7 +8,7 @@ import {
 import { toast } from "sonner";
 import {
   authApi, configApi, complianceApi, mailboxesApi, verificationApi, crmApi2,
-  type MailboxCreatePayload, type OAuthProvider, type EmailVerification,
+  type MailboxCreatePayload, type OAuthProvider, type EmailVerification, type DnsAuth,
 } from "../lib/api";
 import type { APIKeyCreated } from "../types";
 import { Header } from "../components/layout/Header";
@@ -346,7 +346,11 @@ function MailboxSection() {
 
   const { mutate: testBox } = useMutation({
     mutationFn: mailboxesApi.test,
-    onSuccess: (res) => (res.ok ? toast.success(res.message) : toast.error(res.message)),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["mailboxes"] });   // refreshed DNS result
+      if (res.ok) toast.success(res.message);
+      else toast.error(res.message);
+    },
   });
 
   const { mutate: remove } = useMutation({
@@ -446,6 +450,7 @@ function MailboxSection() {
                   <p className="text-xs text-muted-foreground">
                     {m.sent_last_24h}/{m.effective_daily_limit} today · cap {m.daily_limit}/day
                   </p>
+                  {m.dns_auth && <DnsAuthLine auth={m.dns_auth} />}
                 </div>
                 <Button variant="ghost" size="sm" onClick={() => testBox(m.id)} className="text-xs">Test login</Button>
                 {m.is_active && (
@@ -464,6 +469,33 @@ function MailboxSection() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function DnsAuthLine({ auth }: { auth: DnsAuth }) {
+  const chips: [string, boolean | null][] = [
+    ["SPF", auth.spf.ok], ["DKIM", auth.dkim.ok], ["DMARC", auth.dmarc.ok],
+  ];
+  return (
+    <div className="mt-1 space-y-0.5">
+      <div className="flex items-center gap-1.5">
+        {chips.map(([label, ok]) => (
+          <Badge
+            key={label}
+            variant={ok === true ? "success" : ok === false ? "destructive" : "secondary"}
+            className="text-[10px]"
+            title={ok === null ? `${label}: couldn't confirm` : undefined}
+          >
+            {label} {ok === true ? "✓" : ok === false ? "✗" : "?"}
+          </Badge>
+        ))}
+      </div>
+      {!auth.can_send ? (
+        <p className="text-[11px] text-red-400">Not used for sending: {auth.issues[0]}</p>
+      ) : auth.issues.length > 0 ? (
+        <p className="text-[11px] text-yellow-500">{auth.issues[0]}</p>
+      ) : null}
+    </div>
   );
 }
 
@@ -657,6 +689,66 @@ function VerificationSection() {
   );
 }
 
+function SendingSettingsBlock() {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ["sending-settings"], queryFn: complianceApi.sendingSettings });
+  const [draft, setDraft] = useState<string | null>(null);   // null = not edited
+  const address = draft ?? data?.postal_address ?? "";
+
+  const { mutate: save, isPending } = useMutation({
+    mutationFn: complianceApi.updateSendingSettings,
+    onSuccess: (res) => {
+      qc.setQueryData(["sending-settings"], res);
+      qc.invalidateQueries({ queryKey: ["guardrails"] });
+      setDraft(null);
+      toast.success("Sending settings saved");
+    },
+    onError: (e: unknown) => toast.error(apiErrorMessage(e, "Failed to save sending settings")),
+  });
+
+  return (
+    <div className="p-3 rounded-lg border border-border space-y-3">
+      <div className="space-y-1.5">
+        <Label htmlFor="postal-address" className="text-sm font-medium">Postal address</Label>
+        <p className="text-[11px] text-muted-foreground">
+          Required in every commercial email (CAN-SPAM). Real sends are held until it's set.
+        </p>
+        <div className="flex gap-2">
+          <Input
+            id="postal-address"
+            placeholder="Company, street, city, postcode, country"
+            value={address}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <Button
+            size="sm" variant="outline"
+            disabled={draft === null || isPending}
+            onClick={() => save({ postal_address: address })}
+          >
+            Save
+          </Button>
+        </div>
+      </div>
+      <label className="flex items-start gap-2 text-sm cursor-pointer">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={data?.auto_reply_enabled ?? false}
+          disabled={!data || isPending}
+          onChange={(e) => save({ auto_reply_enabled: e.target.checked })}
+        />
+        <span>
+          <span className="font-medium">Let the agent draft replies to prospects</span>
+          <span className="block text-[11px] text-muted-foreground">
+            Off: every reply is flagged in the Inbox for a person. On: the agent writes a draft
+            into the thread. Drafts are never sent automatically.
+          </span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
 function ComplianceSection() {
   const qc = useQueryClient();
   const [value, setValue] = useState("");
@@ -720,6 +812,7 @@ function ComplianceSection() {
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
+        <SendingSettingsBlock />
         {guardrails && (
           <div className="p-3 rounded-lg border border-border space-y-2">
             <div className="flex items-center gap-2 text-sm">

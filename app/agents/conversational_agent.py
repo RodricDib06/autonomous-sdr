@@ -147,8 +147,11 @@ class ConversationalAgent(BaseAgent):
             objection_meta = {}
             delivery = self._deliver(channel, lead, reply, input_data)
         else:
-            # Append inbound message to thread
-            self._append_message(db, conversation, role="lead", content=inbound_message)
+            # Append inbound message to thread — unless reply handling already
+            # recorded it (the webhook path stores every reply first)
+            last = (conversation.messages or [])[-1:] or [{}]
+            if not (last[0].get("role") == "lead" and last[0].get("content") == inbound_message[:2000]):
+                self._append_message(db, conversation, role="lead", content=inbound_message)
 
             # Classify objection + sentiment before generating reply
             objection_meta = self._objection_handler.classify(
@@ -188,8 +191,10 @@ class ConversationalAgent(BaseAgent):
             )
             delivery = self._deliver(channel, lead, reply, input_data)
 
-        # Append agent reply to thread
-        self._append_message(db, conversation, role="agent", content=reply)
+        # Append agent reply to thread. Email replies are only generated, never
+        # sent from here — mark them so nobody mistakes a draft for a sent email.
+        extra = {"delivered": False} if delivery == "reply_generated_for_email" else {}
+        self._append_message(db, conversation, role="agent", content=reply, **extra)
 
         # Append event to lead event log
         try:
@@ -304,12 +309,13 @@ class ConversationalAgent(BaseAgent):
 
     # ── Conversation helpers ─────────────────────────────────────────────────
 
-    def _append_message(self, db: Session, conv: Conversation, role: str, content: str) -> None:
+    def _append_message(self, db: Session, conv: Conversation, role: str, content: str, **extra) -> None:
         messages = list(conv.messages or [])
         messages.append({
             "role": role,
             "content": content,
             "timestamp": utcnow().isoformat(),
+            **extra,
         })
         conv.messages = messages
         conv.updated_at = utcnow()

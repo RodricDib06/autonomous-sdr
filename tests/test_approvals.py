@@ -50,11 +50,12 @@ def _make_pending_email(db, lead, step=1, subject="s", body="b"):
 # Autonomy dial
 # ---------------------------------------------------------------------------
 
-def test_autonomy_defaults_to_auto(client):
+def test_autonomy_defaults_to_approve(client):
+    """Nothing reaches a prospect until a human has read it — auto is opt-in."""
     headers = _register_first_admin(client)
     r = client.get("/outreach/autonomy", headers=headers)
     assert r.status_code == 200
-    assert r.json()["mode"] == "auto"
+    assert r.json()["mode"] == "approve"
     assert r.json()["pending_count"] == 0
 
 

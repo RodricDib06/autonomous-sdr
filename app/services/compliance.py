@@ -260,15 +260,24 @@ def can_send_to_recipient(lead, now: datetime | None = None) -> tuple[bool, str]
     return True, "inside global UTC window"
 
 
-def guardrail_status(db: Session) -> dict:
+def guardrail_status(db: Session, org_id: str | None = None) -> dict:
+    from app.services.email_compose import real_send_blocker
+
     allowed, reason = can_send_now(db)
+    blocker = real_send_blocker(db, org_id)
+    if blocker:
+        allowed, reason = False, blocker
+    suppressions = db.query(SuppressionEntry)
+    if org_id is not None:
+        suppressions = suppressions.filter(SuppressionEntry.org_id == org_id)
     return {
         "can_send": allowed,
         "reason": reason,
+        "postal_address_configured": blocker is None,
         "sent_last_24h": sent_in_last_24h(db),
         "daily_limit": settings.OUTREACH_DAILY_SEND_LIMIT,
         "window_start_hour_utc": settings.OUTREACH_SEND_WINDOW_START,
         "window_end_hour_utc": settings.OUTREACH_SEND_WINDOW_END,
         "weekdays_only": settings.OUTREACH_WEEKDAYS_ONLY,
-        "suppression_count": db.query(SuppressionEntry).count(),
+        "suppression_count": suppressions.count(),
     }

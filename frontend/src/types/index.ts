@@ -476,6 +476,8 @@ export interface ConversationMessage {
   content: string;
   timestamp: string;
   channel?: string;
+  /** false = an agent email reply that was drafted but never sent */
+  delivered?: boolean;
 }
 
 export interface Conversation {

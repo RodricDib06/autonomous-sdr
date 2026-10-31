@@ -516,7 +516,19 @@ export interface Mailbox {
   warming_up: boolean;
   last_used_at: string | null;
   last_imap_poll_at: string | null;
+  dns_auth: DnsAuth | null;
   created_at: string | null;
+}
+
+/** SPF / DKIM / DMARC result for a mailbox's sending domain. ok=null means unknown. */
+export interface DnsAuth {
+  domain: string;
+  spf: { ok: boolean | null; record: string | null };
+  dkim: { ok: boolean | null; selector: string | null };
+  dmarc: { ok: boolean | null; record: string | null; policy: string | null };
+  can_send: boolean;
+  issues: string[];
+  checked_at: string;
 }
 
 export interface MailboxCreatePayload {
@@ -537,7 +549,8 @@ export type OAuthProvider = "gmail" | "microsoft";
 export const mailboxesApi = {
   list: () => api.get<{ mailboxes: Mailbox[]; total: number }>("/mailboxes").then((r) => r.data),
   create: (payload: MailboxCreatePayload) => api.post<Mailbox>("/mailboxes", payload).then((r) => r.data),
-  test: (id: string) => api.post<{ ok: boolean; message: string }>(`/mailboxes/${id}/test`).then((r) => r.data),
+  test: (id: string) =>
+    api.post<{ ok: boolean; message: string; dns_auth: DnsAuth | null }>(`/mailboxes/${id}/test`).then((r) => r.data),
   deactivate: (id: string) => api.delete(`/mailboxes/${id}`).then((r) => r.data),
   // Begin the OAuth consent flow; caller redirects to the returned URL
   oauthStart: (provider: OAuthProvider) =>
@@ -564,11 +577,21 @@ export interface GuardrailStatus {
   window_end_hour_utc: number;
   weekdays_only: boolean;
   suppression_count: number;
+  postal_address_configured?: boolean;
+}
+
+export interface SendingSettings {
+  postal_address: string;
+  auto_reply_enabled: boolean;
 }
 
 export const complianceApi = {
   guardrails: () =>
     api.get<GuardrailStatus>("/outreach/guardrails").then((r) => r.data),
+  sendingSettings: () =>
+    api.get<SendingSettings>("/outreach/sending-settings").then((r) => r.data),
+  updateSendingSettings: (payload: Partial<SendingSettings>) =>
+    api.put<SendingSettings>("/outreach/sending-settings", payload).then((r) => r.data),
   listSuppressions: (limit = 200) =>
     api.get<{ total: number; entries: SuppressionEntry[] }>("/suppressions", { params: { limit } }).then((r) => r.data),
   addSuppression: (value: string, reason?: string) =>

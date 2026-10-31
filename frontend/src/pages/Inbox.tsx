@@ -110,6 +110,9 @@ function MessageBubble({ msg }: { msg: ConversationMessage }) {
         )}>
           {msg.content}
         </div>
+        {isAgent && msg.delivered === false && (
+          <p className="text-[10px] text-yellow-500 px-1">Draft — not sent</p>
+        )}
         {msg.timestamp && (
           <p className="text-[10px] text-muted-foreground/60 px-1">
             {formatTime(msg.timestamp)}

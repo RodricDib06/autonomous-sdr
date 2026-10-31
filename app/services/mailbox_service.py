@@ -12,13 +12,10 @@ import base64
 import email as email_lib
 import hashlib
 import imaplib
-import html
 import logging
 import smtplib
 from datetime import timedelta
 from email.header import decode_header
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.orm import Session
@@ -90,15 +87,24 @@ def sends_last_24h(db: Session, mailbox_id: str) -> int:
 
 
 def pick_mailbox(db: Session, org_id: str | None) -> SendingMailbox | None:
-    """Least-recently-used active mailbox with remaining daily headroom."""
+    """
+    Least-recently-used active mailbox with remaining daily headroom, on a
+    domain that authenticates (SPF or DKIM — see sender_auth).
+    """
+    from app.services.sender_auth import mailbox_may_send
+
     q = db.query(SendingMailbox).filter(SendingMailbox.is_active.is_(True))
     if org_id is not None:
         q = q.filter(SendingMailbox.org_id == org_id)
     candidates = q.order_by(SendingMailbox.last_used_at.asc().nullsfirst()).all()
 
     for mailbox in candidates:
-        if sends_last_24h(db, mailbox.id) < effective_daily_limit(mailbox):
-            return mailbox
+        if sends_last_24h(db, mailbox.id) >= effective_daily_limit(mailbox):
+            continue
+        if not mailbox_may_send(db, mailbox):
+            log.warning(f"[mailbox] Skipping {mailbox.email}: sending domain fails SPF/DKIM")
+            continue
+        return mailbox
     return None
 
 
@@ -111,33 +117,20 @@ def send_via_mailbox(
     mailbox: SendingMailbox,
     email_record: OutreachEmail,
     to_address: str,
-    unsubscribe_url: str = "",
 ) -> str:
-    """Send one outreach email through a specific mailbox. Returns status string."""
-    plain_body = email_record.body
-    if unsubscribe_url:
-        plain_body += f"\n\n—\nDon't want to hear from us? Unsubscribe: {unsubscribe_url}"
+    """
+    Send one outreach email through a specific mailbox. Returns a status
+    string; "held: …" leaves the email scheduled for a later attempt.
+    """
+    from app.services.email_compose import build_message, real_send_blocker
+
+    blocker = real_send_blocker(db, mailbox.org_id)
+    if blocker:
+        return f"held: {blocker}"
 
     try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = email_record.subject
         from_header = f"{mailbox.display_name} <{mailbox.email}>" if mailbox.display_name else mailbox.email
-        msg["From"] = from_header
-        msg["To"] = to_address
-        if unsubscribe_url:
-            msg["List-Unsubscribe"] = f"<{unsubscribe_url}>"
-            msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
-        msg.attach(MIMEText(plain_body, "plain"))
-
-        if settings.APP_BASE_URL:
-            pixel_url = f"{settings.APP_BASE_URL}/track/open/{email_record.id}"
-            html_body = (
-                f"<html><body><pre style='font-family:sans-serif'>{html.escape(email_record.body)}</pre>"
-                f"<p style='font-size:11px;color:#888'>Don't want to hear from us? "
-                f"<a href='{unsubscribe_url}'>Unsubscribe</a></p>"
-                f"<img src='{pixel_url}' width='1' height='1' style='display:none' /></body></html>"
-            )
-            msg.attach(MIMEText(html_body, "html"))
+        msg = build_message(db, email_record, from_header, to_address, mailbox.org_id)
 
         if mailbox.provider in OAUTH_MAILBOX_PROVIDERS:
             from app.services.oauth_mailbox import send_mime

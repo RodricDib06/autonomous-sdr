@@ -39,6 +39,32 @@ describe('Inbox — reply classification chips', () => {
   });
 });
 
+describe('Inbox — agent drafts', () => {
+  it('labels an agent email reply that was never sent', async () => {
+    server.use(
+      http.get('http://localhost:8000/inbox', () =>
+        HttpResponse.json({
+          conversations: [{
+            id: 'conv-9', lead_id: 'lead-9', lead_name: 'Dana Fox', lead_email: 'dana@fox.io',
+            company: 'Fox', channel: 'email', message_count: 2, summary: null, sentiment: null,
+            classification: null, needs_human: false, human_flagged_at: null,
+            updated_at: '2026-07-16T09:00:00Z',
+            messages: [
+              { role: 'lead', content: 'Can you send pricing?', timestamp: '2026-07-16T09:00:00Z' },
+              { role: 'agent', content: 'Sure — attached.', timestamp: '2026-07-16T09:01:00Z', delivered: false },
+            ],
+          }],
+          count: 1,
+          needs_review: 0,
+        })
+      )
+    );
+    renderWithProviders(<Inbox />);
+    await waitFor(() => screen.getByText('Sure — attached.'));
+    expect(screen.getByText(/Draft — not sent/)).toBeInTheDocument();
+  });
+});
+
 describe('Analytics — objections panel', () => {
   it('renders the top objections with counts and a real example quote', async () => {
     renderWithProviders(<Analytics />);

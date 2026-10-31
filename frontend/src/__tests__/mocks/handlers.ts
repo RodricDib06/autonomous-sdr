@@ -524,6 +524,15 @@ export const handlers = [
           smtp_host: 'smtp.corp.com', imap_enabled: true, is_active: true,
           daily_limit: 50, effective_daily_limit: 25, sent_last_24h: 8, warming_up: true,
           last_used_at: '2026-07-03T09:00:00Z', last_imap_poll_at: '2026-07-03T09:30:00Z',
+          dns_auth: {
+            domain: 'corp.com',
+            spf: { ok: true, record: 'v=spf1 include:_spf.google.com ~all' },
+            dkim: { ok: true, selector: 'google' },
+            dmarc: { ok: false, record: null, policy: null },
+            can_send: true,
+            issues: ['No DMARC record: add a TXT record on _dmarc.corp.com (e.g. v=DMARC1; p=none)'],
+            checked_at: '2026-07-03T09:00:00Z',
+          },
           created_at: '2026-06-30T00:00:00Z',
         },
       ],
@@ -535,12 +544,12 @@ export const handlers = [
       id: 'mb-2', email: 'new@corp.com', display_name: '', provider: 'smtp',
       smtp_host: 'smtp.corp.com', imap_enabled: false, is_active: true,
       daily_limit: 50, effective_daily_limit: 10, sent_last_24h: 0, warming_up: true,
-      last_used_at: null, last_imap_poll_at: null, created_at: null,
+      last_used_at: null, last_imap_poll_at: null, dns_auth: null, created_at: null,
     }, { status: 201 })
   ),
 
   http.post(`${API_BASE_URL}/mailboxes/:id/test`, () =>
-    HttpResponse.json({ ok: true, message: 'SMTP login OK' })
+    HttpResponse.json({ ok: true, message: 'SMTP login OK', dns_auth: null })
   ),
 
   http.delete(`${API_BASE_URL}/mailboxes/:id`, () =>
@@ -558,8 +567,21 @@ export const handlers = [
       window_end_hour_utc: 18,
       weekdays_only: true,
       suppression_count: 1,
+      postal_address_configured: true,
     })
   ),
+
+  http.get(`${API_BASE_URL}/outreach/sending-settings`, () =>
+    HttpResponse.json({ postal_address: '1 Main St, Springfield', auto_reply_enabled: false })
+  ),
+
+  http.put(`${API_BASE_URL}/outreach/sending-settings`, async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({
+      postal_address: (body.postal_address as string) ?? '1 Main St, Springfield',
+      auto_reply_enabled: (body.auto_reply_enabled as boolean) ?? false,
+    });
+  }),
 
   http.get(`${API_BASE_URL}/suppressions`, () =>
     HttpResponse.json({
